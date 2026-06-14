@@ -1,0 +1,815 @@
+import { useRef, useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { useParams, useNavigate } from "react-router-dom";
+import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search } from "lucide-react";
+import { Header } from "@/components/Header";
+import { useQueryClient } from "@tanstack/react-query";
+
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { EmberPlayer, type EmberPlayerRef } from "@/components/audio/EmberPlayer";
+import { cn } from "@/lib/utils";
+import { sanitizeInputValue } from "@/lib/filename-validation";
+
+// Custom Hooks
+import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
+import { useSpeakerMappings } from "@/features/transcription/hooks/useTranscriptionSpeakers";
+import { useTranscriptDownload } from "@/features/transcription/hooks/useTranscriptDownload";
+import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
+
+// Sub-components
+import { TranscriptSection } from "./audio-detail/TranscriptSection";
+import { ExecutionInfoDialog } from "./audio-detail/ExecutionInfoDialog";
+import { LogsDialog } from "./audio-detail/LogsDialog";
+import { SummaryDialog } from "./audio-detail/SummaryDialog";
+import { ChatSidePanel } from "./ChatSidePanel";
+import { TranscriptionConfigDialog, type WhisperXParams } from "@/components/TranscriptionConfigDialog";
+import { WandAdvancedIcon } from "@/components/icons/WandAdvancedIcon";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/features/auth/hooks/useAuth";
+import { useSummaryTemplates, useExistingSummary, useSummarizer } from "@/features/transcription/hooks/useTranscriptionSummary";
+
+// Types
+interface AudioDetailViewProps {
+    audioId?: string; // Optional prop if used as a controlled component, though mainly route-based
+}
+
+export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }: AudioDetailViewProps) {
+    const { audioId: paramAudioId } = useParams<{ audioId: string }>();
+    const audioId = propAudioId || paramAudioId;
+    const navigate = useNavigate();
+    const { getAuthHeaders } = useAuth();
+    const queryClient = useQueryClient();
+
+    // Refs
+    const audioPlayerRef = useRef<EmberPlayerRef>(null);
+
+    // State
+    const [currentTime, setCurrentTime] = useState(0);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [newTitle, setNewTitle] = useState("");
+
+    // Lifted Transcript State
+    const [transcriptMode, setTranscriptMode] = useState<"plain" | "timeline" | "compacted">("plain");
+    const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+    const [notesOpen, setNotesOpen] = useState(false);
+    const [speakerRenameOpen, setSpeakerRenameOpen] = useState(false);
+    const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+    const [downloadFormat, setDownloadFormat] = useState<'txt' | 'json' | 'md'>('txt');
+    const [searchOpen, setSearchOpen] = useState(false);
+
+    // Dialog States
+    const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
+    const [logsDialogOpen, setLogsDialogOpen] = useState(false);
+    const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [llmReady, setLlmReady] = useState<boolean | null>(null);
+    const [autoSummaryEnabled, setAutoSummaryEnabled] = useState(false);
+    const [autoTitleEnabled, setAutoTitleEnabled] = useState(true);
+    const [configDialogOpen, setConfigDialogOpen] = useState(false);
+    const [transcriptionLoading, setTranscriptionLoading] = useState(false);
+
+    // Data Fetching
+    const { data: audioFile, isLoading, error } = useAudioDetail(audioId || "");
+    const { mutate: updateTitle } = useUpdateTitle(audioId || "");
+    // Fetch transcript & speakers here to support menu actions
+    const { data: transcript } = useTranscript(audioId || "", true);
+    const { data: speakerMappings = {} } = useSpeakerMappings(audioId || "", true);
+    const { data: summaryTemplates = [] } = useSummaryTemplates();
+    const { data: existingSummary, isLoading: existingSummaryLoading } = useExistingSummary(audioId || "");
+    const { generateSummary: generateAutoSummary } = useSummarizer(audioId || "");
+
+    // SSE: listen for real-time job updates (status changes, completion)
+    useTranscriptionEvents(audioId || null);
+
+    const autoSummaryTriggeredRef = useRef<string | null>(null);
+    const autoTitleTriggeredRef = useRef<string | null>(null);
+    const autoSpeakerViewAppliedRef = useRef<string | null>(null);
+
+    // Download Logic
+    const { downloadSRT } = useTranscriptDownload();
+
+    // State for Split View
+    const [chatOpen, setChatOpen] = useState(false);
+    const [sidebarWidth, setSidebarWidth] = useState(400);
+    const [isResizing, setIsResizing] = useState(false);
+    const splitContainerRef = useRef<HTMLDivElement>(null);
+    const isMobile = useIsMobile();
+
+    // Resizing Logic
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizing) return;
+            const containerWidth = splitContainerRef.current?.getBoundingClientRect().width || window.innerWidth;
+            const newWidth = containerWidth - e.clientX;
+            // Constraints
+            if (newWidth > 300 && newWidth < 800) {
+                setSidebarWidth(newWidth);
+            }
+        };
+
+        const handleMouseUp = () => {
+            setIsResizing(false);
+            document.body.style.cursor = 'default';
+        };
+
+        if (isResizing) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+            document.body.style.cursor = 'col-resize';
+        }
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isResizing]);
+
+    // Advanced transcription handler
+    const handleStartTranscription = useCallback(async (params: WhisperXParams) => {
+        if (!audioId) return;
+        try {
+            setTranscriptionLoading(true);
+            const response = await fetch(`/api/v1/transcription/${audioId}/start`, {
+                method: "POST",
+                headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify(params),
+            });
+            if (response.ok) {
+                setConfigDialogOpen(false);
+                // Optimistically set status to pending so spinner shows immediately
+                queryClient.setQueryData(['audio', audioId], (old: AudioFile | undefined) =>
+                    old ? { ...old, status: 'pending' as const } : old
+                );
+                queryClient.invalidateQueries({ queryKey: ['audio', audioId] });
+                queryClient.invalidateQueries({ queryKey: ['audioFiles'] });
+            } else {
+                alert("Failed to start transcription");
+            }
+        } catch {
+            alert("Error starting transcription");
+        } finally {
+            setTranscriptionLoading(false);
+        }
+    }, [audioId, getAuthHeaders, queryClient]);
+
+    // Helpers
+
+
+
+
+    // Effects
+    useEffect(() => {
+        if (audioFile) {
+            setNewTitle(audioFile.title || "");
+        }
+    }, [audioFile]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadLLMState = async () => {
+            try {
+                const response = await fetch('/api/v1/llm/config', { headers: { ...getAuthHeaders() } });
+                if (!response.ok) {
+                    if (!cancelled) setLlmReady(false);
+                    return;
+                }
+
+                const cfg = await response.json();
+                if (!cancelled) {
+                    setLlmReady(!!cfg && cfg.is_active);
+                }
+            } catch {
+                if (!cancelled) setLlmReady(false);
+            }
+        };
+
+        loadLLMState();
+        return () => {
+            cancelled = true;
+        };
+    }, [getAuthHeaders]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadUserSettings = async () => {
+            try {
+                const response = await fetch('/api/v1/user/settings', {
+                    headers: { ...getAuthHeaders() },
+                });
+
+                if (!response.ok) return;
+                const settings = await response.json();
+                if (!cancelled) {
+                    if (typeof settings?.auto_summary_enabled === "boolean") {
+                        setAutoSummaryEnabled(settings.auto_summary_enabled);
+                    }
+                    if (typeof settings?.auto_transcription_title_enabled === "boolean") {
+                        setAutoTitleEnabled(settings.auto_transcription_title_enabled);
+                    } else if (typeof settings?.auto_chat_title_enabled === "boolean") {
+                        // Backward compatibility with older backend payloads.
+                        setAutoTitleEnabled(settings.auto_chat_title_enabled);
+                    }
+                }
+            } catch {
+                if (!cancelled) {
+                    setAutoSummaryEnabled(false);
+                    setAutoTitleEnabled(true);
+                }
+            }
+        };
+
+        loadUserSettings();
+        return () => {
+            cancelled = true;
+        };
+    }, [getAuthHeaders]);
+
+    // Fallback: when polling detects completion, refetch transcript if it's still null
+    const prevStatusRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        const prev = prevStatusRef.current;
+        prevStatusRef.current = audioFile?.status;
+        if (prev && prev !== "completed" && audioFile?.status === "completed") {
+            queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
+        }
+    }, [audioFile?.status, audioId, queryClient]);
+
+    useEffect(() => {
+        autoSummaryTriggeredRef.current = null;
+        autoTitleTriggeredRef.current = null;
+        autoSpeakerViewAppliedRef.current = null;
+        setTranscriptMode("plain");
+    }, [audioId]);
+
+    useEffect(() => {
+        if (!audioId || !transcript?.segments?.some((segment: TranscriptSegment) => !!segment.speaker)) return;
+        if (autoSpeakerViewAppliedRef.current === audioId) return;
+
+        setTranscriptMode("compacted");
+        autoSpeakerViewAppliedRef.current = audioId;
+    }, [audioId, transcript]);
+
+    useEffect(() => {
+        if (!audioId) return;
+        if (!autoSummaryEnabled || llmReady !== true) return;
+        if (audioFile?.status !== "completed") return;
+        if (!transcript?.text?.trim()) return;
+        if (existingSummaryLoading) return;
+        if (existingSummary?.content?.trim()) return;
+        if (autoSummaryTriggeredRef.current === audioId) return;
+
+        const autoTemplate = summaryTemplates.find(t => t.is_default && !!t.id && !!t.model && !!t.prompt)
+            || summaryTemplates.find(t => !!t.id && !!t.model && !!t.prompt);
+        if (!autoTemplate) return;
+
+        autoSummaryTriggeredRef.current = audioId;
+        generateAutoSummary(autoTemplate.id, autoTemplate.model, autoTemplate.prompt, transcript.text);
+    }, [
+        audioId,
+        autoSummaryEnabled,
+        llmReady,
+        audioFile?.status,
+        transcript?.text,
+        existingSummaryLoading,
+        existingSummary?.content,
+        summaryTemplates,
+        generateAutoSummary,
+    ]);
+
+    useEffect(() => {
+        if (!audioId) return;
+        if (!autoTitleEnabled || llmReady !== true) return;
+        if (audioFile?.status !== "completed") return;
+        if (!transcript?.text?.trim()) return;
+        if (autoTitleTriggeredRef.current === audioId) return;
+
+        autoTitleTriggeredRef.current = audioId;
+
+        const autoGenerateTitle = async () => {
+            try {
+                const response = await fetch(`/api/v1/transcription/${audioId}/title/auto`, {
+                    method: "POST",
+                    headers: { ...getAuthHeaders() },
+                });
+
+                if (!response.ok) return;
+
+                const updated = await response.json();
+                const generatedTitle = typeof updated?.title === "string" ? updated.title.trim() : "";
+                if (generatedTitle) {
+                    setNewTitle(generatedTitle);
+                    queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
+                    queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
+                }
+            } catch {
+                // No-op: avoid interrupting playback/transcription experience on title failures.
+            }
+        };
+
+        autoGenerateTitle();
+    }, [
+        audioId,
+        autoTitleEnabled,
+        llmReady,
+        audioFile?.status,
+        transcript?.text,
+        getAuthHeaders,
+        queryClient,
+    ]);
+
+    // Handlers
+    const handleTimeUpdate = useCallback((time: number) => {
+        setCurrentTime(time);
+    }, []);
+
+    const handleTitleSave = () => {
+        if (newTitle.trim() !== audioFile?.title) {
+            updateTitle(newTitle);
+        }
+        setIsEditingTitle(false);
+    };
+
+    const handleSeek = (time: number) => {
+        if (audioPlayerRef.current) {
+            audioPlayerRef.current.seekTo(time);
+            setCurrentTime(time);
+        }
+    };
+
+    const handleConfirmDelete = useCallback(async () => {
+        if (!audioId) return;
+        try {
+            const response = await fetch(`/api/v1/transcription/${audioId}`, {
+                method: "DELETE",
+                headers: { ...getAuthHeaders() },
+            });
+            if (response.ok) {
+                queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
+                navigate("/dashboard");
+            } else {
+                alert("Failed to delete audio file");
+            }
+        } catch {
+            alert("Error deleting audio file");
+        }
+    }, [audioId, getAuthHeaders, queryClient, navigate]);
+
+    if (!audioId) return <div>Invalid Audio ID</div>;
+
+    // Handler for notes/chat exclusivity
+    const handleSetNotesOpen = (open: boolean) => {
+        if (open) setChatOpen(false);
+        setNotesOpen(open);
+    };
+
+
+    if (!audioId) return <div>Invalid Audio ID</div>;
+
+    // Render
+    if (isLoading) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+        );
+    }
+
+    if (error || !audioFile) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center gap-4">
+                <p className="text-red-500">Failed to load audio details.</p>
+                <Button onClick={() => navigate('/dashboard')}>Go to Dashboard</Button>
+            </div>
+        );
+    }
+
+    // Helper to format date "Premium" style
+    const formatDatePremium = (dateStr: string) =>
+        new Date(dateStr).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric"
+        }).toUpperCase();
+
+    const primaryDate = audioFile.recorded_at || audioFile.created_at;
+    const formattedDate = formatDatePremium(primaryDate);
+    const showImportDate = audioFile.recorded_at && audioFile.recorded_at !== audioFile.created_at;
+
+    return (
+        <div className="h-screen flex flex-col bg-[var(--bg-main)] relative selection:bg-[var(--brand-light)] overflow-hidden">
+            {/* Split Container */}
+            <div ref={splitContainerRef} className="flex-1 flex overflow-hidden relative">
+                {/* LEFT PANE (Main) */}
+                <main className="flex-1 min-w-0 flex flex-col h-full relative z-0">
+
+
+                    {/* Scrollable Content */}
+                    <div className="flex-1 overflow-y-auto scrollbar-thin">
+                        <div className="mx-auto w-full max-w-[1320px] px-3 sm:px-5 lg:px-7 py-4 pb-32">
+                            <div className="mb-4">
+                                <Header />
+                            </div>
+                            <div className="space-y-5 sm:space-y-6">
+                                {/* Sticky header: Title + Audio Player */}
+                                <div className="sticky top-0 z-10 pt-1">
+                                    {/* Title & Metadata */}
+                                    <div className="space-y-4 obsidian-pane p-4 md:p-5 mb-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div className="space-y-3 flex-1 min-w-0">
+                                            {/* Title Edit Logic */}
+                                            {isEditingTitle ? (
+                                                <Input
+                                                    value={newTitle}
+                                                    onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
+                                                    onBlur={handleTitleSave}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleTitleSave()}
+                                                    className="h-10 text-3xl font-bold tracking-tight bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
+                                                    autoFocus
+                                                />
+                                            ) : (
+                                                <div
+                                                    className="group flex items-center gap-3 cursor-text"
+                                                    onClick={() => setIsEditingTitle(true)}
+                                                >
+                                                    <h1 className="text-3xl font-bold tracking-tight text-[var(--text-primary)] truncate font-display">
+                                                        {audioFile.title || "Untitled Recording"}
+                                                    </h1>
+                                                    <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                            )}
+
+                                            {/* Badges */}
+                                            <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span className="cursor-help">{formattedDate}</span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>{audioFile.recorded_at ? "Recorded" : "Imported"}</TooltipContent>
+                                                </Tooltip>
+                                                {showImportDate && (
+                                                    <>
+                                                        <span className="w-1 h-1 rounded-full bg-[var(--text-tertiary)] opacity-50"></span>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <span className="normal-case cursor-help">{formatDatePremium(audioFile.created_at)}</span>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Imported</TooltipContent>
+                                                        </Tooltip>
+                                                    </>
+                                                )}
+                                                <span className="w-1 h-1 rounded-full bg-[var(--text-tertiary)] opacity-50"></span>
+
+                                                {/* Status Icon */}
+                                                <div>
+                                                    {audioFile.status === 'completed' && (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className="cursor-help text-emerald-500">
+                                                                    <Check className="h-5 w-5" strokeWidth={2.5} />
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Completed</TooltipContent>
+                                                        </Tooltip>
+                                                    )}
+                                                    {audioFile.status === 'processing' && (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className="cursor-help text-[var(--brand-solid)]">
+                                                                    <Loader2 className="h-5 w-5 animate-spin" strokeWidth={2.5} />
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Processing</TooltipContent>
+                                                        </Tooltip>
+                                                    )}
+                                                    {audioFile.status === 'failed' && (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className="cursor-help text-red-500">
+                                                                    <AlertCircle className="h-5 w-5" strokeWidth={2.5} />
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Failed</TooltipContent>
+                                                        </Tooltip>
+                                                    )}
+                                                    {audioFile.status === 'pending' && (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className="cursor-help text-gray-400">
+                                                                    <Clock className="h-5 w-5" strokeWidth={2.5} />
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent>Queued</TooltipContent>
+                                                        </Tooltip>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Action Menu */}
+                                        {/* ... keeping existing Logic but updating Chat action ... */}
+                                        <div className="flex items-center gap-2">
+                                            {/* AI Summary Button */}
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setSummaryDialogOpen(true)}
+                                                className="rounded-[var(--radius-btn)] border-[var(--border-subtle)] shadow-sm bg-[var(--bg-card)] hover:bg-[var(--bg-muted-pane)] transition-all gap-2 px-3 text-[var(--brand-solid)]"
+                                            >
+                                                <Bot className="h-4 w-4" />
+                                                <span className="hidden sm:inline">AI Summary</span>
+                                            </Button>
+
+                                            {/* Rename Speakers Button — only when speakers exist */}
+                                            {transcript?.segments?.some((s: TranscriptSegment) => s.speaker) && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setSpeakerRenameOpen(true)}
+                                                    className="rounded-[var(--radius-btn)] border-[var(--border-subtle)] shadow-sm bg-[var(--bg-card)] hover:bg-[var(--bg-muted-pane)] transition-all gap-2 px-3"
+                                                >
+                                                    <Users className="h-4 w-4" />
+                                                    <span className="hidden sm:inline">Rename Speakers</span>
+                                                </Button>
+                                            )}
+
+                                            {/* Search Transcript Button */}
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setSearchOpen(!searchOpen)}
+                                                className={cn(
+                                                    "rounded-[var(--radius-btn)] border-[var(--border-subtle)] shadow-sm bg-[var(--bg-card)] hover:bg-[var(--bg-muted-pane)] transition-all gap-2 px-3",
+                                                    searchOpen && "border-[var(--brand-solid)] text-[var(--brand-solid)]"
+                                                )}
+                                            >
+                                                <Search className="h-4 w-4" />
+                                                <span className="hidden sm:inline">Search</span>
+                                            </Button>
+
+                                            {/* Quick Chat Button */}
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setChatOpen(!chatOpen)}
+                                                className={cn(
+                                                    "rounded-[var(--radius-btn)] border-[var(--border-subtle)] shadow-sm bg-[var(--bg-card)] hover:bg-[var(--bg-muted-pane)] transition-all gap-2 px-3",
+                                                    chatOpen && "border-[var(--brand-solid)] text-[var(--brand-solid)]"
+                                                )}
+                                            >
+                                                <MessageCircle className="h-4 w-4" />
+                                                <span className="hidden sm:inline">Chat</span>
+                                            </Button>
+
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="icon"
+                                                        className="rounded-[var(--radius-btn)] border-[var(--border-subtle)] shadow-sm bg-[var(--bg-card)] hover:bg-[var(--bg-muted-pane)] transition-all"
+                                                    >
+                                                        <MoreVertical className="h-4 w-4 text-[var(--text-secondary)]" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end" className="w-56 rounded-[var(--radius-card)] shadow-[var(--shadow-float)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-1.5">
+                                                    {/* View Mode Switcher */}
+                                                    <DropdownMenuItem
+                                                        onClick={() => setTranscriptMode('plain')}
+                                                        className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'plain' && "text-[var(--brand-solid)]")}
+                                                    >
+                                                        <AlignLeft className="mr-2 h-4 w-4 opacity-70" /> Plain Text
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        onClick={() => setTranscriptMode('compacted')}
+                                                        className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'compacted' && "text-[var(--brand-solid)]")}
+                                                    >
+                                                        <Layers className="mr-2 h-4 w-4 opacity-70" /> Compacted View
+                                                    </DropdownMenuItem>
+                                                    {transcript?.word_segments && transcript.word_segments.length > 0 ? (
+                                                        <DropdownMenuItem
+                                                            onClick={() => setTranscriptMode('timeline')}
+                                                            className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'timeline' && "text-[var(--brand-solid)]")}
+                                                        >
+                                                            <List className="mr-2 h-4 w-4 opacity-70" /> Timeline View
+                                                        </DropdownMenuItem>
+                                                    ) : (
+                                                        <DropdownMenuItem disabled className="rounded-[8px] opacity-50 cursor-not-allowed">
+                                                            <List className="mr-2 h-4 w-4 opacity-70" /> Timeline View (No timestamps)
+                                                        </DropdownMenuItem>
+                                                    )}
+                                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem onClick={() => setAutoScrollEnabled(!autoScrollEnabled)} className="rounded-[8px] cursor-pointer">
+                                                        <ArrowDownCircle className={cn("mr-2 h-4 w-4 opacity-70", autoScrollEnabled && "text-[var(--brand-solid)]")} />
+                                                        Auto Scroll {autoScrollEnabled ? 'On' : 'Off'}
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleSetNotesOpen(!notesOpen)} className="rounded-[8px] cursor-pointer">
+                                                        <StickyNote className={cn("mr-2 h-4 w-4 opacity-70", notesOpen && "text-[var(--brand-solid)]")} />
+                                                        Notes
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem onClick={() => transcript && downloadSRT(transcript, audioFile?.title || 'transcript', speakerMappings)} className="rounded-[8px] cursor-pointer">
+                                                        <FileImage className="mr-2 h-4 w-4 opacity-70" /> Download SRT
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => { setDownloadFormat('txt'); setDownloadDialogOpen(true); }} className="rounded-[8px] cursor-pointer">
+                                                        <AlignLeft className="mr-2 h-4 w-4 opacity-70" /> Download Text
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => { setDownloadFormat('md'); setDownloadDialogOpen(true); }} className="rounded-[8px] cursor-pointer">
+                                                        <FileDown className="mr-2 h-4 w-4 opacity-70" /> Download Markdown
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => { setDownloadFormat('json'); setDownloadDialogOpen(true); }} className="rounded-[8px] cursor-pointer">
+                                                        <FileJson className="mr-2 h-4 w-4 opacity-70" /> Download JSON
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem
+                                                        onClick={() => setConfigDialogOpen(true)}
+                                                        className="rounded-[8px] cursor-pointer"
+                                                        disabled={audioFile?.status === "processing" || audioFile?.status === "pending"}
+                                                    >
+                                                        <WandAdvancedIcon className="mr-2 h-4 w-4 opacity-70" /> Re-transcribe (Advanced)
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem onClick={() => setExecutionDialogOpen(true)} className="rounded-[8px] cursor-pointer">
+                                                        <Activity className="mr-2 h-4 w-4 opacity-70" /> Execution Info
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => setLogsDialogOpen(true)} className="rounded-[8px] cursor-pointer">
+                                                        <FileText className="mr-2 h-4 w-4 opacity-70" /> View Logs
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)] my-1" />
+                                                    <DropdownMenuItem onClick={() => setDeleteDialogOpen(true)} className="rounded-[8px] cursor-pointer text-[var(--error)]">
+                                                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                    {/* Audio Player */}
+                                    <div className="obsidian-pane p-4 md:p-5 mb-8 transition-all duration-300">
+                                        <EmberPlayer
+                                            ref={audioPlayerRef}
+                                            audioId={audioId}
+                                            onTimeUpdate={handleTimeUpdate}
+                                            onPlayStateChange={setIsPlaying}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Transcript */}
+                                <TranscriptSectionWrapper
+                                    audioId={audioId}
+                                    currentTime={currentTime}
+                                    onSeek={handleSeek}
+                                    transcript={transcript}
+                                    speakerMappings={speakerMappings}
+                                    transcriptMode={transcriptMode}
+                                    autoScrollEnabled={autoScrollEnabled}
+                                    notesOpen={notesOpen}
+                                    setNotesOpen={handleSetNotesOpen}
+                                    speakerRenameOpen={speakerRenameOpen}
+                                    setSpeakerRenameOpen={setSpeakerRenameOpen}
+                                    downloadDialogOpen={downloadDialogOpen}
+                                    setDownloadDialogOpen={setDownloadDialogOpen}
+                                    downloadFormat={downloadFormat}
+                                    isPlaying={isPlaying}
+                                    searchOpen={searchOpen}
+                                    setSearchOpen={setSearchOpen}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </main>
+
+                {/* Handlers & Right Pane (Desktop Split) */}
+                {chatOpen && !isMobile && (
+                    <>
+                        {/* Resizer Handle */}
+                        <div
+                            // 1. Container: Wider hit area (w-3 = 12px) for easy grabbing, transparent bg
+                            className="w-1 flex justify-center cursor-col-resize z-30 flex-shrink-0 group relative select-none"
+                            onMouseDown={() => setIsResizing(true)}
+                        >
+                            {/* 2. Visual Line: The actual thin line the user sees */}
+                            <div className="w-[1px] h-full bg-[var(--border-subtle)] transition-colors group-hover:bg-[var(--brand-solid)] group-active:bg-[var(--brand-solid)]" />
+                        </div>
+                        {/* Right Pane */}
+                        {/* Right Pane */}
+                        <div style={{ width: sidebarWidth }} className="flex-shrink-0 h-full  bg-[var(--bg-card)] z-20">
+                            <ChatSidePanel
+                                transcriptionId={audioId}
+                                isOpen={chatOpen}
+                                onClose={() => setChatOpen(false)}
+                                isMobile={false}
+                            />
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Mobile / Overlay Chat (If we want overlay behavior even on desktop, we can adjust logic) */}
+            {/* Note: User asked for sliding over on mobile. NotesSidebar handles this via portal internally often, or we do it here.
+                 Let's do it here for Chat.
+             */}
+            {/* If we define isMobile properly (using hook), we can conditional rendering.
+                 Since I don't have the hook imported in this snippet yet, I will add it.
+              */}
+
+
+            {/* Dialogs */}
+            <ExecutionInfoDialog
+                audioId={audioId}
+                isOpen={executionDialogOpen}
+                onClose={setExecutionDialogOpen}
+            />
+            <LogsDialog
+                audioId={audioId}
+                isOpen={logsDialogOpen}
+                onClose={setLogsDialogOpen}
+            />
+            <SummaryDialog
+                audioId={audioId}
+                isOpen={summaryDialogOpen}
+                onClose={setSummaryDialogOpen}
+                llmReady={llmReady}
+            />
+
+            {/* Delete Confirmation Dialog */}
+            <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                <AlertDialogContent className="glass-card bg-[var(--bg-main)]/90 border-[var(--border-subtle)]">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="text-[var(--text-primary)]">
+                            Delete Audio File
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="text-[var(--text-secondary)]">
+                            Are you sure you want to delete "{audioFile?.title || 'Untitled Recording'}"?
+                            This action cannot be undone and will permanently remove the audio file
+                            and any transcription data.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="bg-[var(--secondary)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)]">
+                            Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-[var(--error)] text-white hover:opacity-90"
+                            onClick={handleConfirmDelete}
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Advanced Transcription Config */}
+            <TranscriptionConfigDialog
+                open={configDialogOpen}
+                onOpenChange={setConfigDialogOpen}
+                onStartTranscription={handleStartTranscription}
+                loading={transcriptionLoading}
+            />
+
+            {/* Mobile / Overlay Chat */}
+            {chatOpen && isMobile && createPortal(
+                <div className="fixed inset-0 z-[50] flex justify-end bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="w-full h-full bg-[var(--bg-card)] shadow-2xl animate-in slide-in-from-right duration-300">
+                        <ChatSidePanel
+                            transcriptionId={audioId}
+                            isOpen={chatOpen} onClose={() => setChatOpen(false)}
+                            isMobile={true}
+                        />
+                    </div>
+                </div>,
+                document.body
+            )}
+        </div>
+    );
+};
+
+// Wrapper to handle transcript word index calculation without polluting main view
+// Wrapper to handle word index calc
+function TranscriptSectionWrapper({ audioId, currentTime, transcript, isPlaying, ...props }: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    // If transcript not passed (loading?), handle it
+    let currentWordIndex = null;
+    if (transcript?.word_segments) {
+        // Simple linear find for now.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const idx = transcript.word_segments.findIndex((w: any) => w.start <= currentTime && w.end >= currentTime);
+        if (idx !== -1) currentWordIndex = idx;
+    }
+
+    return (
+        <TranscriptSection
+            audioId={audioId}
+            currentTime={currentTime}
+            currentWordIndex={currentWordIndex}
+            transcript={transcript}
+            isPlaying={isPlaying}
+            className="font-transcript"
+            {...props}
+        />
+    );
+}

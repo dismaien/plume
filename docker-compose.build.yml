@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  quill:
+    # Build from local Dockerfile; replace with `image: ghcr.io/rishikanthc/quill:latest`
+    # if you prefer pulling a prebuilt image.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: quill:local
+    # image: ghcr.io/rishikanthc/quill:v1.0.0
+    container_name: quill
+    ports:
+      - "8080:8080"
+    # environment:
+    #   - HOST=0.0.0.0
+    #   - PORT=8080
+    #   - DATABASE_PATH=/app/data/quill.db
+    #   - UPLOAD_DIR=/app/data/uploads
+    #   - PUID=${PUID:-1000}
+    #   - PGID=${PGID:-1000}
+    environment:
+      # Security: already set in container, but can be overridden
+      - APP_ENV=production
+      # CORS: comma-separated list of allowed origins for production
+      # - ALLOWED_ORIGINS=https://your-domain.com
+    volumes:
+      - ./quill-data:/app/data
+      - ./env-data:/app/whisperx-env
+    restart: unless-stopped
+
+volumes:
+  quill-data:

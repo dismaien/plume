@@ -1,0 +1,90 @@
+node_modules
+
+# Output
+.output
+.vercel
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+# .env
+# .env.*
+# !.env.example
+# !.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+.dockerdata
+.aider*
+.env
+.env
+samples
+quill
+data
+data/quill.db
+data/transcripts
+data/uploads
+data/whisperx-env/test
+data_bak
+web/landing_bak
+CLAUDE.md
+AGENTS.md
+# .env.example
+quill-data
+whisperx-env
+
+# internal/web
+env-data
+# main
+results.json
+# server
+!cmd/server/main.go
+test_word_conversion.go
+debug_whisperx_parsing.go
+debug_parsing.go
+quill-optimized
+tests/database_test.db-shm
+
+# Project documentation (local only)
+project-docs
+!internal/web/static.go
+feats.txt
+log.txt
+manifest_and_icons
+manifest_and_icons.zip
+tests/database_test.db-wal
+internal/web/dist
+dist/desktop-backend
+dist/desktop-tools
+
+
+# Development files
+prompt.txt
+# .agent/
+agent-bak/
+tmp/
+# *.svg
+# *.png
+dhl.txt
+__pycache__/
+.cache/
+
+# Build artifacts & test output
+.reports/
+coverage_dg.out
+playwright-report/
+test-results/
+
+# Build binaries (root-level only)
+/server
+/quill-server
+/sherpa-diag
+
+# Omit upstream GitHub Actions workflows from private seed until gh token has workflow scope.
+.github/workflows/
