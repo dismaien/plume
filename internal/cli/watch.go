@@ -112,7 +112,7 @@ func watchFolder(path string) {
 
 func isAudioFile(ext string) bool {
 	switch ext {
-	case ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma":
+	case ".mp3", ".wav", ".m4a", ".qta", ".flac", ".ogg", ".aac", ".wma":
 		return true
 	default:
 		return false

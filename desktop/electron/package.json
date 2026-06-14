@@ -1,8 +1,8 @@
 {
-  "name": "quill-desktop",
+  "name": "plume-desktop",
   "version": "1.6.0",
   "private": true,
-  "description": "Electron shell for Quill desktop distribution",
+  "description": "Electron shell for Plume, a private voice memo knowledge archive fork of Quill",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -13,8 +13,8 @@
     "dist:mac": "npm run build && npm run prepare:backend && npm run prepare:tools && electron-builder --mac dmg"
   },
   "build": {
-    "appId": "app.quill.desktop",
-    "productName": "Quill",
+    "appId": "app.plume.desktop",
+    "productName": "Plume",
     "directories": {
       "output": "release"
     },

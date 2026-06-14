@@ -611,7 +611,7 @@ func normalizeFolderPath(path string) (string, error) {
 func isWatchableAudioFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
-	case ".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma", ".aiff", ".mp4", ".mov", ".mkv", ".webm", ".avi":
+	case ".mp3", ".wav", ".flac", ".m4a", ".qta", ".aac", ".ogg", ".wma", ".aiff", ".mp4", ".mov", ".mkv", ".webm", ".avi":
 		return true
 	default:
 		return false

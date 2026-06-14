@@ -28,6 +28,7 @@ type Config struct {
 	UploadDir      string
 	TranscriptsDir string
 	TempDir        string
+	AudioStorageMode string
 
 	// Python/WhisperX configuration
 	WhisperXEnv string
@@ -63,22 +64,23 @@ func Load() *Config {
 	}
 
 	return &Config{
-		Port:           getEnv("PORT", "8080"),
-		Host:           getEnv("HOST", "0.0.0.0"),
-		Environment:    getEnv("APP_ENV", "development"),
-		AllowedOrigins: strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8080"), ","),
-		DatabasePath:   getEnv("DATABASE_PATH", defaultDatabasePath()),
-		JWTSecret:      getJWTSecret(),
-		UploadDir:      getEnv("UPLOAD_DIR", "data/uploads"),
-		TranscriptsDir: getEnv("TRANSCRIPTS_DIR", "data/transcripts"),
-		TempDir:        getEnv("TEMP_DIR", "data/temp"),
-		WhisperXEnv:    getEnv("WHISPERX_ENV", "data/whisperx-env"),
-		SecureCookies:  getEnv("SECURE_COOKIES", defaultSecure) == "true",
-		AuthMode:       strings.ToLower(getEnv("AUTH_MODE", "local")),
-		OpenAIAPIKey:          getEnv("OPENAI_API_KEY", ""),
-		HFToken:               getEnv("HF_TOKEN", ""),
-		TranscriptionBackend:  getEnv("TRANSCRIPTION_BACKEND", "whisperx"),
-		WhisperModel:          getEnv("WHISPER_MODEL", "small"),
+		Port:                 getEnv("PORT", "8080"),
+		Host:                 getEnv("HOST", "0.0.0.0"),
+		Environment:          getEnv("APP_ENV", "development"),
+		AllowedOrigins:       strings.Split(getEnv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8080"), ","),
+		DatabasePath:         getEnv("DATABASE_PATH", defaultDatabasePath()),
+		JWTSecret:            getJWTSecret(),
+		UploadDir:            getEnv("UPLOAD_DIR", "data/uploads"),
+		TranscriptsDir:       getEnv("TRANSCRIPTS_DIR", "data/transcripts"),
+		TempDir:              getEnv("TEMP_DIR", "data/temp"),
+		AudioStorageMode:     audioStorageMode(),
+		WhisperXEnv:          getEnv("WHISPERX_ENV", "data/whisperx-env"),
+		SecureCookies:        getEnv("SECURE_COOKIES", defaultSecure) == "true",
+		AuthMode:             strings.ToLower(getEnv("AUTH_MODE", "local")),
+		OpenAIAPIKey:         getEnv("OPENAI_API_KEY", ""),
+		HFToken:              getEnv("HF_TOKEN", ""),
+		TranscriptionBackend: getEnv("TRANSCRIPTION_BACKEND", "whisperx"),
+		WhisperModel:         getEnv("WHISPER_MODEL", "small"),
 	}
 }
 
@@ -98,6 +100,22 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func audioStorageMode() string {
+	mode := strings.ToLower(strings.TrimSpace(getEnv("AUDIO_STORAGE_MODE", "")))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(getEnv("PLUME_AUDIO_STORAGE_MODE", "")))
+	}
+	switch mode {
+	case "reference", "hardlink", "copy":
+		return mode
+	case "":
+		return "copy"
+	default:
+		logger.Warn("Unknown audio storage mode; falling back to copy", "mode", mode)
+		return "copy"
+	}
 }
 
 func defaultDatabasePath() string {

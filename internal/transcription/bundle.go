@@ -11,6 +11,25 @@ import (
 	"quill/pkg/slug"
 )
 
+type AudioStorageMode string
+
+const (
+	AudioStorageCopy      AudioStorageMode = "copy"
+	AudioStorageHardlink  AudioStorageMode = "hardlink"
+	AudioStorageReference AudioStorageMode = "reference"
+)
+
+func NormalizeAudioStorageMode(mode string) AudioStorageMode {
+	switch AudioStorageMode(strings.ToLower(strings.TrimSpace(mode))) {
+	case AudioStorageHardlink:
+		return AudioStorageHardlink
+	case AudioStorageReference:
+		return AudioStorageReference
+	default:
+		return AudioStorageCopy
+	}
+}
+
 // BundleTargetDir computes the artifact bundle directory path for a transcript.
 // Layout: {vaultPath}/Transcripts/{human-readable title}/
 // No date-based nesting — flat under Transcripts for Obsidian-like organization.
@@ -167,6 +186,78 @@ func CopyAudioToBundle(audioPath, bundleDir string) (string, error) {
 	}
 
 	return targetPath, nil
+}
+
+// HardlinkAudioToBundle hardlinks an audio file into the bundle directory as
+// "audio.{ext}". The raw archive file remains in place and local disk blocks are
+// not duplicated when the source and bundle are on the same filesystem.
+func HardlinkAudioToBundle(audioPath, bundleDir string) (string, error) {
+	sourceInfo, err := os.Stat(audioPath)
+	if err != nil {
+		return "", fmt.Errorf("source audio not found: %w", err)
+	}
+	if sourceInfo.IsDir() {
+		return "", fmt.Errorf("source audio is a directory: %s", audioPath)
+	}
+
+	ext := filepath.Ext(audioPath)
+	targetPath := filepath.Join(bundleDir, "audio"+ext)
+
+	absAudio, _ := filepath.Abs(audioPath)
+	absTarget, _ := filepath.Abs(targetPath)
+	if absAudio == absTarget {
+		return audioPath, nil
+	}
+
+	if err := os.MkdirAll(bundleDir, 0755); err != nil {
+		return "", fmt.Errorf("creating bundle dir: %w", err)
+	}
+
+	if targetInfo, err := os.Stat(targetPath); err == nil {
+		if os.SameFile(sourceInfo, targetInfo) {
+			return targetPath, nil
+		}
+		return "", fmt.Errorf("target audio already exists and is not the source hardlink: %s", targetPath)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking target audio: %w", err)
+	}
+
+	if err := os.Link(audioPath, targetPath); err != nil {
+		return "", fmt.Errorf("hardlinking audio to bundle: %w", err)
+	}
+
+	return targetPath, nil
+}
+
+func MaterializeAudioToBundle(audioPath, bundleDir string, mode AudioStorageMode) (string, error) {
+	switch NormalizeAudioStorageMode(string(mode)) {
+	case AudioStorageReference:
+		if _, err := os.Stat(audioPath); err != nil {
+			return "", fmt.Errorf("source audio not found: %w", err)
+		}
+		return audioPath, nil
+	case AudioStorageHardlink:
+		newAudioPath, err := HardlinkAudioToBundle(audioPath, bundleDir)
+		if err != nil {
+			return "", err
+		}
+		if verifyErr := VerifyAudioInBundle(bundleDir); verifyErr != nil {
+			return "", fmt.Errorf("audio verification failed after hardlink: %w", verifyErr)
+		}
+		return newAudioPath, nil
+	default:
+		newAudioPath, err := MoveAudioToBundle(audioPath, bundleDir)
+		if err != nil {
+			newAudioPath, err = CopyAudioToBundle(audioPath, bundleDir)
+		}
+		if err != nil {
+			return "", err
+		}
+		if verifyErr := VerifyAudioInBundle(bundleDir); verifyErr != nil {
+			return "", fmt.Errorf("audio verification failed after copy: %w", verifyErr)
+		}
+		return newAudioPath, nil
+	}
 }
 
 // VerifyAudioInBundle checks that an audio.* file exists in the bundle directory.

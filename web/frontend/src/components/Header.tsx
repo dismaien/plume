@@ -113,7 +113,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 				event.target.value = "";
 			} else {
 				// No valid audio files found
-				alert("No valid audio files found. Please select audio files (.mp3, .wav, .flac, .m4a, .aac, .ogg)");
+				alert("No valid audio files found. Please select audio files (.mp3, .wav, .flac, .m4a, .qta, .aac, .ogg)");
 				event.target.value = "";
 			}
 		}
@@ -306,7 +306,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 					<input
 						ref={fileInputRef}
 						type="file"
-						accept="audio/*"
+						accept="audio/*,.qta"
 						multiple
 						onChange={handleFileChange}
 						className="hidden"

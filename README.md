@@ -1,3 +1,9 @@
+## Plume
+
+Plume is a private voice-memo knowledge archive fork of Quill, tuned for a large Apple Voice Memos collection: raw-original preservation, place-local recording dates, readable summary titles, speaker review, and no unnecessary audio duplication.
+
+Current fork priorities live in [`docs/plume/voice-memo-archive.md`](docs/plume/voice-memo-archive.md).
+
 ## What is Quill?
 
 Quill is an open-source audio transcription app that runs entirely on your machine. It ships as a **native desktop app** built on a local-first vault architecture — your recordings, transcripts, and contacts live as plain files in folders you own, much like Obsidian. The database is just a cache; delete it and Quill rebuilds it from your files.
@@ -130,6 +136,7 @@ Quill works out of the box with sensible defaults. Customize with environment va
 | `UPLOAD_DIR` | `data/uploads` | Upload storage directory |
 | `TRANSCRIPTS_DIR` | `data/transcripts` | Transcript output directory |
 | `WHISPERX_ENV` | `data/whisperx-env` | Python environment path for ML models |
+| `AUDIO_STORAGE_MODE` | `copy` | Audio bundle policy: `copy`, `hardlink`, or `reference` |
 | `SECURE_COOKIES` | `true` in production | Set `false` for HTTP-only deployments |
 | `AUTH_MODE` | `local` | Authentication mode (`local` for single-user) |
 | `OPENAI_API_KEY` | `""` | OpenAI API key for LLM features |

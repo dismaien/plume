@@ -149,6 +149,75 @@ func TestMoveAudioToBundle_SourceNotExist(t *testing.T) {
 	}
 }
 
+func TestHardlinkAudioToBundle_PreservesSource(t *testing.T) {
+	srcDir := t.TempDir()
+	bundleDir := t.TempDir()
+
+	srcPath := filepath.Join(srcDir, "recording.m4a")
+	if err := os.WriteFile(srcPath, []byte("fake audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath, err := HardlinkAudioToBundle(srcPath, bundleDir)
+	if err != nil {
+		t.Fatalf("HardlinkAudioToBundle error: %v", err)
+	}
+
+	srcInfo, err := os.Stat(srcPath)
+	if err != nil {
+		t.Fatalf("source should remain: %v", err)
+	}
+	dstInfo, err := os.Stat(newPath)
+	if err != nil {
+		t.Fatalf("hardlink target should exist: %v", err)
+	}
+	if !os.SameFile(srcInfo, dstInfo) {
+		t.Fatal("target is not a hardlink to the source")
+	}
+}
+
+func TestMaterializeAudioToBundle_ReferenceDoesNotCreateBundleAudio(t *testing.T) {
+	srcDir := t.TempDir()
+	bundleDir := t.TempDir()
+
+	srcPath := filepath.Join(srcDir, "recording.m4a")
+	if err := os.WriteFile(srcPath, []byte("fake audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath, err := MaterializeAudioToBundle(srcPath, bundleDir, AudioStorageReference)
+	if err != nil {
+		t.Fatalf("MaterializeAudioToBundle reference error: %v", err)
+	}
+	if newPath != srcPath {
+		t.Fatalf("reference mode path = %q, want source %q", newPath, srcPath)
+	}
+	if err := VerifyAudioInBundle(bundleDir); err == nil {
+		t.Fatal("reference mode should not create audio.* in bundle")
+	}
+}
+
+func TestMaterializeAudioToBundle_HardlinkCreatesBundleAudio(t *testing.T) {
+	srcDir := t.TempDir()
+	bundleDir := t.TempDir()
+
+	srcPath := filepath.Join(srcDir, "recording.m4a")
+	if err := os.WriteFile(srcPath, []byte("fake audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath, err := MaterializeAudioToBundle(srcPath, bundleDir, AudioStorageHardlink)
+	if err != nil {
+		t.Fatalf("MaterializeAudioToBundle hardlink error: %v", err)
+	}
+	if filepath.Dir(newPath) != bundleDir {
+		t.Fatalf("hardlink mode path dir = %q, want %q", filepath.Dir(newPath), bundleDir)
+	}
+	if err := VerifyAudioInBundle(bundleDir); err != nil {
+		t.Fatalf("hardlink mode should create audio.* in bundle: %v", err)
+	}
+}
+
 // ---------- RenameBundleDir tests ----------
 
 // mustSetup creates a directory and writes files into it, failing the test on error.

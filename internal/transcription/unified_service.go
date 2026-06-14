@@ -57,6 +57,7 @@ type UnifiedTranscriptionService struct {
 	postprocessors        map[string]interfaces.Postprocessor
 	tempDirectory         string
 	outputDirectory       string
+	audioStorageMode      AudioStorageMode
 	envPath               string                 // Python environment root (for VAD, etc.)
 	defaultModelIDs       map[string]string      // Default model IDs for each task type
 	multiTrackTranscriber *MultiTrackTranscriber // For termination support
@@ -64,18 +65,23 @@ type UnifiedTranscriptionService struct {
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
 	postMaterializeHook   func(job *models.TranscriptionJob) // Called after successful artifact materialization
-	markSelfWriteHook func(metadataPath string) // Called after writing metadata.json to prevent watcher re-import
+	markSelfWriteHook     func(metadataPath string)           // Called after writing metadata.json to prevent watcher re-import
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
-func NewUnifiedTranscriptionService(jobRepo repository.JobRepository, tempDir, outputDir, envPath string) *UnifiedTranscriptionService {
+func NewUnifiedTranscriptionService(jobRepo repository.JobRepository, tempDir, outputDir, envPath string, audioStorageMode ...AudioStorageMode) *UnifiedTranscriptionService {
+	mode := AudioStorageCopy
+	if len(audioStorageMode) > 0 {
+		mode = NormalizeAudioStorageMode(string(audioStorageMode[0]))
+	}
 	return &UnifiedTranscriptionService{
-		registry:        registry.GetRegistry(),
-		preprocessors:   make(map[string]interfaces.Preprocessor),
-		postprocessors:  make(map[string]interfaces.Postprocessor),
-		tempDirectory:   tempDir,
-		outputDirectory: outputDir,
-		envPath:         envPath,
+		registry:         registry.GetRegistry(),
+		preprocessors:    make(map[string]interfaces.Preprocessor),
+		postprocessors:   make(map[string]interfaces.Postprocessor),
+		tempDirectory:    tempDir,
+		outputDirectory:  outputDir,
+		audioStorageMode: mode,
+		envPath:          envPath,
 		defaultModelIDs: map[string]string{
 			"transcription": ModelWhisperX,
 			"diarization":   DiarizeSherpaOnnx, // was ModelPyannote
@@ -1357,20 +1363,11 @@ func (u *UnifiedTranscriptionService) materializeTranscriptArtifacts(ctx context
 		return err
 	}
 
-	// Move audio file into the bundle directory for self-contained artifacts.
-	// This is fatal — a bundle without audio is broken.
+	// Materialize audio according to the configured storage policy.
 	if job.AudioPath != "" {
-		newAudioPath, moveErr := MoveAudioToBundle(job.AudioPath, targetDir)
+		newAudioPath, moveErr := MaterializeAudioToBundle(job.AudioPath, targetDir, u.audioStorageMode)
 		if moveErr != nil {
-			// Fallback: try copy instead of move (source may be on a different filesystem or read-only)
-			newAudioPath, moveErr = CopyAudioToBundle(job.AudioPath, targetDir)
-		}
-		if moveErr != nil {
-			return fmt.Errorf("failed to move/copy audio to bundle: %w", moveErr)
-		}
-		// Verify the audio file actually landed in the bundle
-		if verifyErr := VerifyAudioInBundle(targetDir); verifyErr != nil {
-			return fmt.Errorf("audio verification failed after move: %w", verifyErr)
+			return fmt.Errorf("failed to materialize audio using %q mode: %w", u.audioStorageMode, moveErr)
 		}
 		job.AudioPath = newAudioPath
 	}
