@@ -108,7 +108,7 @@ func audioStorageMode() string {
 		mode = strings.ToLower(strings.TrimSpace(getEnv("PLUME_AUDIO_STORAGE_MODE", "")))
 	}
 	switch mode {
-	case "reference", "hardlink", "copy":
+	case "reference", "copy":
 		return mode
 	case "":
 		return "copy"

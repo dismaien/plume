@@ -37,10 +37,9 @@ YYYY-MM-DD_HHMM - Summary Title -- Speaker Speaker -- Specific Place
 Plume adds `AUDIO_STORAGE_MODE` / `PLUME_AUDIO_STORAGE_MODE`:
 
 - `copy`: existing Quill behavior; bundle contains its own `audio.*`.
-- `hardlink`: bundle contains `audio.*`, but local disk blocks are shared with the raw archive on the same filesystem.
 - `reference`: bundle stores transcripts and metadata while `audio_path` points to the raw archive file.
 
-For the voice memo archive, use `reference` or `hardlink` after a canary import proves the raw archive path is stable.
+For the voice memo archive, use `reference` only after a canary import proves every audio-serving, speaker-snippet, contact-signature, and restore flow works against raw archive paths. Otherwise use `copy` and accept the storage cost until the reference path is proven.
 
 ## Target Products
 

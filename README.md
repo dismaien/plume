@@ -136,7 +136,7 @@ Quill works out of the box with sensible defaults. Customize with environment va
 | `UPLOAD_DIR` | `data/uploads` | Upload storage directory |
 | `TRANSCRIPTS_DIR` | `data/transcripts` | Transcript output directory |
 | `WHISPERX_ENV` | `data/whisperx-env` | Python environment path for ML models |
-| `AUDIO_STORAGE_MODE` | `copy` | Audio bundle policy: `copy`, `hardlink`, or `reference` |
+| `AUDIO_STORAGE_MODE` | `copy` | Audio bundle policy: `copy` or `reference` |
 | `SECURE_COOKIES` | `true` in production | Set `false` for HTTP-only deployments |
 | `AUTH_MODE` | `local` | Authentication mode (`local` for single-user) |
 | `OPENAI_API_KEY` | `""` | OpenAI API key for LLM features |
