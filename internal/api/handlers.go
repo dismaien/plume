@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2179,8 +2180,17 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 	if looksLikeTimestamp(title) {
 		return true
 	}
+	if looksLikeAppleVoiceMemoFallbackTitle(title) {
+		return true
+	}
 
 	return false
+}
+
+var appleVoiceMemoFallbackTitleRE = regexp.MustCompile(`^\d{6} \d{2}:\d{2} 20\d{6} \d{6}-[0-9A-Fa-f]{8,}$`)
+
+func looksLikeAppleVoiceMemoFallbackTitle(title string) bool {
+	return appleVoiceMemoFallbackTitleRE.MatchString(strings.TrimSpace(title))
 }
 
 // looksLikeTimestamp returns true when the title is purely a date/time stamp
