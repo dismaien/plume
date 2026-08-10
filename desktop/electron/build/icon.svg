@@ -5,12 +5,12 @@
       <stop offset="55%" stop-color="#0b2116"/>
       <stop offset="100%" stop-color="#06110c"/>
     </linearGradient>
-    <linearGradient id="plume-feather" x1="18%" y1="6%" x2="88%" y2="92%">
+    <linearGradient id="plume-feather" x1="40%" y1="4%" x2="62%" y2="100%">
       <stop offset="0%" stop-color="#f5dda0"/>
       <stop offset="42%" stop-color="#c8a34b"/>
       <stop offset="100%" stop-color="#72561c"/>
     </linearGradient>
-    <linearGradient id="plume-shadow" x1="22%" y1="10%" x2="85%" y2="95%">
+    <linearGradient id="plume-shadow" x1="32%" y1="4%" x2="68%" y2="100%">
       <stop offset="0%" stop-color="#6daa75"/>
       <stop offset="100%" stop-color="#102d1b"/>
     </linearGradient>
@@ -38,33 +38,32 @@
     opacity="0.12"/>
   <rect width="1024" height="1024" rx="224" fill="none" stroke="#d8b75d" stroke-width="3" opacity="0.18"/>
 
-  <g transform="translate(65 45) scale(7.45)">
-    <g fill="none" stroke="#1f6a49" stroke-linecap="round" stroke-linejoin="round" opacity="0.44">
-      <path d="M89 10C76 27 67 43 58 62 50 79 41 94 27 111" stroke-width="8"/>
-      <path d="M80 25C66 27 54 34 43 45" stroke-width="7"/>
-      <path d="M70 44C56 48 44 56 33 69" stroke-width="7"/>
-      <path d="M59 64C49 70 40 79 32 90" stroke-width="7"/>
-      <path d="M80 25C91 31 98 41 100 54" stroke-width="7"/>
-      <path d="M70 44C81 53 86 65 82 79" stroke-width="7"/>
-      <path d="M59 64C67 73 69 85 63 97" stroke-width="7"/>
-    </g>
-    <g fill="none">
-      <path d="M87 8C74 25 65 41 56 60 48 77 39 92 25 109" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.8"/>
-      <path d="M78 23C64 25 52 32 41 43" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-      <path d="M68 42C54 46 42 54 31 67" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-      <path d="M57 62C47 68 38 77 30 88" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-      <path d="M78 23C89 29 96 39 98 52" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-      <path d="M68 42C79 51 84 63 80 77" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-      <path d="M57 62C65 71 67 83 61 95" stroke="#f0cb74" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.2"/>
-    </g>
-    <path d="M87.3 16.2 90.4 20.3l4.9 1-4.1 3.1-.4 5-3.2-4-5-1.1 4.2-3.1.5-5Z" fill="#f5dda0" opacity="0.92"/>
+  <g transform="translate(78 48) scale(7.45)" filter="url(#plume-glow)">
     <path
-      d="M24.5 108.7c-2.4 1.4-5.2 2.6-8.4 3.5 1.6-2.8 3.6-5.1 6-6.9"
+      d="M75.7 9.6c-22.6 5.2-42.4 22.2-51.6 45.3 13.7-6.1 27.3-8.8 40.6-7.9-16.3 9.5-29.8 25-37.2 45 14.1-9.2 27-14.5 39-16.3-5.3 12.9-13.2 26.4-24.3 41.5 21.2-8.4 39.2-24 49.1-43.4 12.7-24.9 7-51-15.6-64.2Z"
+      fill="url(#plume-shadow)"
+      opacity="0.5"
+      transform="translate(4 4)"/>
+    <path
+      d="M72.4 7.4c-22.6 5.2-42.4 22.2-51.6 45.3 13.7-6.1 27.3-8.8 40.6-7.9-16.3 9.5-29.8 25-37.2 45 14.1-9.2 27-14.5 39-16.3-5.3 12.9-13.2 26.4-24.3 41.5 21.2-8.4 39.2-24 49.1-43.4 12.7-24.9 7-51-15.6-64.2Z"
+      fill="url(#plume-feather)"/>
+    <g fill="none" stroke="#102d1b" stroke-linecap="round" stroke-linejoin="round" opacity="0.42">
+      <path d="M68.5 28.3C53.2 29.8 40.8 35.8 31.6 45.9" stroke-width="3.8"/>
+      <path d="M62.2 47.5C48.4 55.1 37.9 66 30.5 80.3" stroke-width="3.8"/>
+      <path d="M62 72.3C53 81.2 46.1 91.7 41.3 103.8" stroke-width="3.6"/>
+      <path d="M73 24.2C84.1 34.5 89.9 47.8 90.3 64" stroke-width="3.8"/>
+      <path d="M66 52.9C77 62.4 83.4 73.5 85 86.2" stroke-width="3.6"/>
+    </g>
+    <path d="M73 9C66 34 58.1 72.8 42.4 115" fill="none" stroke="#102d1b" stroke-linecap="round" stroke-width="4.8" opacity="0.5"/>
+    <path d="M72.2 8.2C65.2 33.3 57.3 72.1 41.7 114.4" fill="none" stroke="#f8e5ae" stroke-linecap="round" stroke-width="2.8" opacity="0.95"/>
+    <path
+      d="M40.8 113.6 29.4 117.2l8.1-17.1"
       fill="none"
-      stroke="#f5dda0"
+      stroke="#f8e5ae"
       stroke-linecap="round"
       stroke-linejoin="round"
-      stroke-width="3.6"
-      opacity="0.9"/>
+      stroke-width="3.8"
+      opacity="0.95"/>
+    <path d="M78.5 11.7 81.2 15.4l4.5.8-3.7 2.8-.5 4.5-2.8-3.6-4.5-.9 3.7-2.8.6-4.5Z" fill="#f5dda0" opacity="0.92"/>
   </g>
 </svg>
