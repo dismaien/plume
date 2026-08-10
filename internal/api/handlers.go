@@ -1254,16 +1254,21 @@ func (h *Handler) populateJobComputedFields(ctx context.Context, job *models.Tra
 			job.HasAudio = true
 		}
 	}
-	if duration := durationMillisFromTranscript(job.Transcript); duration > 0 {
-		job.Duration = duration
-		return
+	var audioDuration int64
+	if job.HasAudio {
+		audioDuration = durationMillisFromAudio(ctx, job.AudioPath)
 	}
-	if !job.HasAudio {
-		return
+	job.Duration = preferredRecordingDurationMillis(audioDuration, durationMillisFromTranscript(job.Transcript))
+}
+
+func preferredRecordingDurationMillis(audioDuration int64, transcriptDuration int64) int64 {
+	if audioDuration > 0 {
+		return audioDuration
 	}
-	if duration := durationMillisFromAudio(ctx, job.AudioPath); duration > 0 {
-		job.Duration = duration
+	if transcriptDuration > 0 {
+		return transcriptDuration
 	}
+	return 0
 }
 
 func durationMillisFromTranscript(raw *string) int64 {

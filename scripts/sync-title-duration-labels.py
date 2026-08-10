@@ -5,7 +5,8 @@ Voice memo archive titles previously used minute-level labels such as
 ``{00:06}``, which is ambiguous for short recordings and visibly disagrees with
 the exact duration shown by Plume. This local repair tool replaces only the
 trailing duration label with an exact clock duration, using the same source
-order as the app: transcript segment end time first, then ffprobe when needed.
+order as the app: audio metadata first, then transcript segment end time when
+the audio file is unavailable.
 
 Examples:
   260810 09:31 Visiting Dreams [Leona] {00:06}
@@ -204,7 +205,7 @@ def load_jobs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(
         conn.execute(
             """
-            SELECT id, title, transcript, summary, audio_path, artifact_dir,
+            SELECT id, title, status, transcript, summary, audio_path, artifact_dir,
                    transcript_json_path, transcript_markdown_path
             FROM transcription_jobs
             WHERE deleted_at IS NULL
@@ -242,6 +243,7 @@ def sync_duration_labels(args: argparse.Namespace) -> dict[str, int]:
         "skipped_no_duration": 0,
         "skipped_same": 0,
         "skipped_conflict": 0,
+        "skipped_active": 0,
         "renamed_bundles": 0,
     }
 
@@ -276,11 +278,31 @@ def sync_duration_labels(args: argparse.Namespace) -> dict[str, int]:
                     continue
                 counts["with_suffix"] += 1
 
-                duration_seconds = duration_seconds_from_transcript(job["transcript"])
-                source = "transcript"
-                if duration_seconds <= 0 and ffprobe:
+                if not args.include_active and str(job["status"]) in {"pending", "processing"}:
+                    counts["skipped_active"] += 1
+                    ledger.write(
+                        json.dumps(
+                            {
+                                "at": iso_now(),
+                                "event": "skip_active_job",
+                                "job_id": job["id"],
+                                "status": job["status"],
+                                "title": old_title,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                    continue
+
+                duration_seconds = 0.0
+                source = ""
+                if ffprobe:
                     duration_seconds = duration_seconds_from_audio(ffprobe, job["audio_path"])
                     source = "audio"
+                if duration_seconds <= 0:
+                    duration_seconds = duration_seconds_from_transcript(job["transcript"])
+                    source = "transcript"
 
                 if duration_seconds <= 0:
                     counts["skipped_no_duration"] += 1
@@ -422,6 +444,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="Directory for JSONL ledger")
     parser.add_argument("--ffprobe", default=str(DEFAULT_FFPROBE), help="ffprobe executable path")
     parser.add_argument("--apply", action="store_true", help="Apply changes; default is dry-run")
+    parser.add_argument(
+        "--include-active",
+        action="store_true",
+        help="Also update pending/processing jobs. Default skips active jobs to avoid renaming files in use.",
+    )
     return parser.parse_args(argv)
 
 
