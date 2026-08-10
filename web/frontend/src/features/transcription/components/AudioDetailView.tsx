@@ -428,7 +428,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
                                                     onBlur={handleTitleSave}
                                                     onKeyDown={(e) => e.key === 'Enter' && handleTitleSave()}
-                                                    className="h-10 text-3xl font-bold tracking-tight bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
+                                                    className="recording-title h-10 text-2xl sm:text-3xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
                                                     autoFocus
                                                 />
                                             ) : (
@@ -436,7 +436,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     className="group flex items-center gap-3 cursor-text"
                                                     onClick={() => setIsEditingTitle(true)}
                                                 >
-                                                    <h1 className="text-3xl font-bold tracking-tight text-[var(--text-primary)] truncate font-display">
+                                                    <h1 className="recording-title text-2xl sm:text-3xl text-[var(--text-primary)] truncate">
                                                         {audioFile.title || "Untitled Recording"}
                                                     </h1>
                                                     <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
