@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search, ArrowLeft } from "lucide-react";
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { sanitizeInputValue } from "@/lib/filename-validation";
 
 // Custom Hooks
-import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
+import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type Transcript, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
 import { useSpeakerMappings } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import { useTranscriptDownload } from "@/features/transcription/hooks/useTranscriptDownload";
 import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
@@ -37,6 +37,32 @@ interface AudioDetailViewProps {
     audioId?: string; // Optional prop if used as a controlled component, though mainly route-based
 }
 
+type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
+
+function countDistinctDisplaySpeakers(
+    transcript: Transcript | null | undefined,
+    speakerMappings: Record<string, string>,
+) {
+    const speakers = new Set<string>();
+    const addSpeaker = (speaker?: string) => {
+        const rawSpeaker = speaker?.trim();
+        if (!rawSpeaker) return;
+
+        const displayName = (speakerMappings[rawSpeaker] || rawSpeaker).trim();
+        if (displayName) {
+            speakers.add(displayName.toLowerCase());
+        }
+    };
+
+    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker));
+
+    if (speakers.size === 0) {
+        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker));
+    }
+
+    return speakers.size;
+}
+
 export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }: AudioDetailViewProps) {
     const { audioId: paramAudioId } = useParams<{ audioId: string }>();
     const audioId = propAudioId || paramAudioId;
@@ -55,7 +81,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [newTitle, setNewTitle] = useState("");
 
     // Lifted Transcript State
-    const [transcriptMode, setTranscriptMode] = useState<"plain" | "timeline" | "compacted">("plain");
+    const [transcriptMode, setTranscriptModeState] = useState<AudioDetailTranscriptMode>("plain");
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
     const [notesOpen, setNotesOpen] = useState(false);
     const [speakerRenameOpen, setSpeakerRenameOpen] = useState(false);
@@ -89,7 +115,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
     const autoSummaryTriggeredRef = useRef<string | null>(null);
     const autoTitleTriggeredRef = useRef<string | null>(null);
-    const autoSpeakerViewAppliedRef = useRef<string | null>(null);
+    const transcriptModeUserSelectedRef = useRef(false);
     const isEditingTitleRef = useRef(false);
     const suppressTitleBlurSaveRef = useRef(false);
 
@@ -106,6 +132,16 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [isResizing, setIsResizing] = useState(false);
     const splitContainerRef = useRef<HTMLDivElement>(null);
     const isMobile = useIsMobile();
+
+    const detectedSpeakerCount = useMemo(
+        () => countDistinctDisplaySpeakers(transcript, speakerMappings),
+        [transcript, speakerMappings],
+    );
+
+    const setTranscriptModeFromUser = useCallback((mode: AudioDetailTranscriptMode) => {
+        transcriptModeUserSelectedRef.current = true;
+        setTranscriptModeState(mode);
+    }, []);
 
     // Resizing Logic
     useEffect(() => {
@@ -252,17 +288,15 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         autoSummaryTriggeredRef.current = null;
         autoTitleTriggeredRef.current = null;
-        autoSpeakerViewAppliedRef.current = null;
-        setTranscriptMode("plain");
+        transcriptModeUserSelectedRef.current = false;
+        setTranscriptModeState("plain");
     }, [audioId]);
 
     useEffect(() => {
-        if (!audioId || !transcript?.segments?.some((segment: TranscriptSegment) => !!segment.speaker)) return;
-        if (autoSpeakerViewAppliedRef.current === audioId) return;
+        if (!audioId || transcriptModeUserSelectedRef.current) return;
 
-        setTranscriptMode("compacted");
-        autoSpeakerViewAppliedRef.current = audioId;
-    }, [audioId, transcript]);
+        setTranscriptModeState(detectedSpeakerCount > 1 ? "compacted" : "plain");
+    }, [audioId, detectedSpeakerCount]);
 
     useEffect(() => {
         if (!audioId) return;
@@ -628,20 +662,20 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                 <DropdownMenuContent align="end" className="w-56 rounded-[var(--radius-card)] shadow-[var(--shadow-float)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-1.5">
                                                     {/* View Mode Switcher */}
                                                     <DropdownMenuItem
-                                                        onClick={() => setTranscriptMode('plain')}
+                                                        onClick={() => setTranscriptModeFromUser('plain')}
                                                         className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'plain' && "text-[var(--brand-solid)]")}
                                                     >
                                                         <AlignLeft className="mr-2 h-4 w-4 opacity-70" /> Plain Text
                                                     </DropdownMenuItem>
                                                     <DropdownMenuItem
-                                                        onClick={() => setTranscriptMode('compacted')}
+                                                        onClick={() => setTranscriptModeFromUser('compacted')}
                                                         className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'compacted' && "text-[var(--brand-solid)]")}
                                                     >
                                                         <Layers className="mr-2 h-4 w-4 opacity-70" /> Compacted View
                                                     </DropdownMenuItem>
                                                     {transcript?.word_segments && transcript.word_segments.length > 0 ? (
                                                         <DropdownMenuItem
-                                                            onClick={() => setTranscriptMode('timeline')}
+                                                            onClick={() => setTranscriptModeFromUser('timeline')}
                                                             className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'timeline' && "text-[var(--brand-solid)]")}
                                                         >
                                                             <List className="mr-2 h-4 w-4 opacity-70" /> Timeline View
