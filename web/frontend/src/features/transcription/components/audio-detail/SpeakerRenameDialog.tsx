@@ -87,8 +87,8 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(0);
   const [promotedSpeakers, setPromotedSpeakers] = useState<Set<string>>(new Set());
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
-  const [retranscribeFamily, setRetranscribeFamily] = useState("mlx_whisper");
-  const [retranscribeModel, setRetranscribeModel] = useState("large-v3-turbo");
+  const [retranscribeFamily, setRetranscribeFamily] = useState("whisper");
+  const [retranscribeModel, setRetranscribeModel] = useState("large-v3");
   const [retranscribeNumSpeakers, setRetranscribeNumSpeakers] = useState("");
   const [retranscribeDiarizeMode, setRetranscribeDiarizeMode] = useState<"local" | "pyannote" | "sherpa-onnx">("sherpa-onnx");
   const [isRetranscribing, setIsRetranscribing] = useState(false);
@@ -385,6 +385,7 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
     try {
       const numSpeakers = retranscribeNumSpeakers ? parseInt(retranscribeNumSpeakers, 10) : undefined;
       const isSortformer = retranscribeDiarizeMode === "local";
+      const isWhisperX = retranscribeFamily === "whisper";
       const diarizeModel = isSortformer ? "nvidia_sortformer"
         : retranscribeDiarizeMode === "sherpa-onnx" ? "sherpa-onnx"
         : "pyannote";
@@ -392,8 +393,11 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       const params: Record<string, unknown> = {
         model_family: retranscribeFamily,
         model: retranscribeModel,
-        vad_preprocess: true,
-        vad_method: "pyannote",
+        device: "cpu",
+        batch_size: 8,
+        compute_type: isWhisperX ? "int8" : "float32",
+        vad_preprocess: !isWhisperX,
+        vad_method: isWhisperX ? "silero" : "pyannote",
         vad_onset: 0.5,
         vad_offset: 0.363,
         chunk_size: 30,
