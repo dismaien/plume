@@ -108,6 +108,10 @@ export function usePromoteSpeakerSuggestion() {
                 queryKey: ["speakerMappings", params.transcriptionId],
             });
 
+            queryClient.invalidateQueries({
+                queryKey: ["audio", params.transcriptionId],
+            });
+
             // Invalidate audioFiles so the list reflects updated speaker names
             queryClient.invalidateQueries({
                 queryKey: ["audioFiles"],
@@ -146,4 +150,3 @@ export function useDismissSpeakerSuggestion() {
         },
     });
 }
-

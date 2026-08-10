@@ -194,6 +194,10 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 		return
 	}
 
+	// Best-effort derived title refresh: when a speaker name changes, keep the
+	// bracketed speaker suffix in the recording title in sync.
+	h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, updatedMappings)
+
 	// Best-effort transcript file rewrite: update speaker_name in JSON segments
 	// and regenerate the markdown with display names.
 	if rewriteErr := transcription.RewriteTranscriptFiles(job, updatedMappings); rewriteErr != nil {
@@ -293,6 +297,8 @@ func (h *Handler) PromoteSpeakerSuggestion(c *gin.Context) {
 
 	// Best-effort side effects (same as bulk update).
 	if len(allMappings) > 0 {
+		h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, allMappings)
+
 		if rewriteErr := transcription.RewriteTranscriptFiles(job, allMappings); rewriteErr != nil {
 			logger.Warn("promote: transcript file rewrite failed", "job_id", jobID, "error", rewriteErr)
 		}

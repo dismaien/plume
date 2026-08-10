@@ -257,6 +257,8 @@ export function TranscriptSection({
                 initialSpeakers={getDetectedSpeakers()}
                 onSpeakerMappingsUpdate={() => {
                     queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
+                    queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
+                    queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
                     queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] });
                     queryClient.invalidateQueries({ queryKey: ["contacts"] });
                 }}
