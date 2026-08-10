@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { AudioFilesTable } from "./AudioFilesTable";
@@ -18,11 +19,29 @@ import {
 import { useGlobalUpload } from "@/contexts/GlobalUploadContext";
 
 export function Dashboard() {
+	const location = useLocation();
+	const navigate = useNavigate();
 	// Folder state: null = all files, "" = root/unfiled, "Work" = specific folder
-	const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+	const [selectedFolder, setSelectedFolder] = useState<string | null>(() => {
+		const params = new URLSearchParams(window.location.search);
+		return params.has("folder") ? params.get("folder") ?? "" : null;
+	});
+
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		setSelectedFolder(params.has("folder") ? params.get("folder") ?? "" : null);
+	}, [location.search]);
+
 	const handleFolderSelect = useCallback((folder: string | null) => {
 		setSelectedFolder(folder);
-	}, []);
+		const params = new URLSearchParams(location.search);
+		if (folder === null) {
+			params.delete("folder");
+		} else {
+			params.set("folder", folder);
+		}
+		navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : "" }, { replace: true, preventScrollReset: true });
+	}, [location.pathname, location.search, navigate]);
 
 	// Get upload functionality from global context
 	const {

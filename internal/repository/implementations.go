@@ -215,10 +215,10 @@ func (r *jobRepository) ListWithParams(ctx context.Context, params ListParams) (
 		if sortOrder != "asc" && sortOrder != "desc" {
 			sortOrder = "desc"
 		}
-		db = db.Order(sortBy + " " + sortOrder)
+		db = db.Order(sortBy + " " + sortOrder).Order("created_at " + sortOrder)
 	} else {
 		// Default sort
-		db = db.Order("created_at desc")
+		db = db.Order("recorded_at desc").Order("created_at desc")
 	}
 
 	// Apply pagination

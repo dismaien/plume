@@ -28,9 +28,10 @@ interface HeaderProps {
 	onFileSelect?: (files: File | File[] | FileWithType | FileWithType[]) => void;
 	onMultiTrackClick?: () => void;
 	onDownloadComplete?: () => void;
+	homePath?: string;
 }
 
-export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: HeaderProps) {
+export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete, homePath = "/" }: HeaderProps) {
 	const navigate = useNavigate();
 	const { logout, isLocalMode } = useAuth();
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,7 +90,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 	};
 
 	const handleHomeClick = () => {
-		navigate("/");
+		navigate(homePath);
 	};
 
 	const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {

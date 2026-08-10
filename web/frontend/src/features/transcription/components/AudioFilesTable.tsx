@@ -43,7 +43,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { type WhisperXParams } from "@/components/TranscriptionConfigDialog";
 import { TranscribeDDialog } from "@/components/TranscribeDDialog";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { useAudioListInfinite, type AudioFile, type SpeakerAttentionSummary } from "@/features/transcription/hooks/useAudioFiles";
 import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
@@ -73,12 +73,51 @@ interface AudioFilesTableProps {
 }
 
 const SCROLL_STORAGE_KEY = 'dashboard-scroll';
+const LIST_LOCATION_STORAGE_KEY = 'dashboard-list-location';
+const DEFAULT_SORT_BY = "recorded_at";
+const DEFAULT_SORT_ORDER: ListFilters["sortOrder"] = "desc";
+const SORT_COLUMNS = new Set(["created_at", "updated_at", "recorded_at", "title", "status"]);
+
+const parseListState = (search: string) => {
+	const params = new URLSearchParams(search);
+	const sortByParam = params.get("sort_by") || DEFAULT_SORT_BY;
+	const sortOrderParam = params.get("sort_order");
+	const sortBy = SORT_COLUMNS.has(sortByParam) ? sortByParam : DEFAULT_SORT_BY;
+	const sortOrder: ListFilters["sortOrder"] = sortOrderParam === "asc" || sortOrderParam === "desc"
+		? sortOrderParam
+		: DEFAULT_SORT_ORDER;
+
+	return {
+		search: params.get("q") ?? "",
+		filters: {
+			status: params.get("status") ?? "",
+			speaker: params.get("speaker") ?? "",
+			speakerStatus: params.get("speaker_status") ?? "",
+			sortBy,
+			sortOrder,
+		} satisfies ListFilters,
+	};
+};
+
+const filtersEqual = (a: ListFilters, b: ListFilters) =>
+	a.status === b.status &&
+	a.speaker === b.speaker &&
+	a.speakerStatus === b.speakerStatus &&
+	a.sortBy === b.sortBy &&
+	a.sortOrder === b.sortOrder;
+
+interface StoredScrollPosition {
+	scrollTop: number;
+	pageCount: number;
+	search: string;
+}
 
 export const AudioFilesTable = memo(function AudioFilesTable({
 	onTranscribe,
 	selectedFolder = null,
 }: AudioFilesTableProps) {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const { getAuthHeaders } = useAuth();
 	const { toast } = useToast();
 	const { shouldShowHint, markHintShown } = useSwipeHint();
@@ -87,16 +126,91 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 	const batchDelete = useBatchDelete();
 	const batchMove = useBatchMove();
 	const batchStart = useBatchStart();
+	const listRootRef = useRef<HTMLDivElement | null>(null);
+
+	const getScrollElement = useCallback((): HTMLElement | Element => {
+		let element = listRootRef.current?.parentElement;
+		while (element && element !== document.body) {
+			const style = window.getComputedStyle(element);
+			if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight) {
+				return element;
+			}
+			element = element.parentElement;
+		}
+		return document.scrollingElement || document.documentElement;
+	}, []);
+
+	const getScrollTop = useCallback(() => {
+		const element = getScrollElement();
+		if (element === document.scrollingElement || element === document.documentElement) {
+			return window.scrollY || element.scrollTop;
+		}
+		return element.scrollTop;
+	}, [getScrollElement]);
+
+	const restoreScrollTop = useCallback((scrollTop: number) => {
+		const element = getScrollElement();
+		if (element === document.scrollingElement || element === document.documentElement) {
+			window.scrollTo(0, scrollTop);
+			return;
+		}
+		element.scrollTop = scrollTop;
+	}, [getScrollElement]);
 
 	// Table State
-	const [globalFilter, setGlobalFilter] = useState("");
-	const [filters, setFilters] = useState<ListFilters>({
-		status: "",
-		speaker: "",
-		speakerStatus: "",
-		sortBy: "created_at",
-		sortOrder: "desc",
-	});
+	const initialListState = useMemo(() => parseListState(window.location.search), []);
+	const [globalFilter, setGlobalFilter] = useState(initialListState.search);
+	const [filters, setFiltersState] = useState<ListFilters>(initialListState.filters);
+
+	const updateListLocation = useCallback((searchValue: string, nextFilters: ListFilters) => {
+		const params = new URLSearchParams(location.search);
+
+		const trimmedSearch = searchValue.trim();
+		if (trimmedSearch) {
+			params.set("q", trimmedSearch);
+		} else {
+			params.delete("q");
+		}
+
+		if (nextFilters.status) params.set("status", nextFilters.status);
+		else params.delete("status");
+
+		if (nextFilters.speaker) params.set("speaker", nextFilters.speaker);
+		else params.delete("speaker");
+
+		if (nextFilters.speakerStatus) params.set("speaker_status", nextFilters.speakerStatus);
+		else params.delete("speaker_status");
+
+		if (nextFilters.sortBy !== DEFAULT_SORT_BY || nextFilters.sortOrder !== DEFAULT_SORT_ORDER) {
+			params.set("sort_by", nextFilters.sortBy);
+			params.set("sort_order", nextFilters.sortOrder);
+		} else {
+			params.delete("sort_by");
+			params.delete("sort_order");
+		}
+
+		const nextSearch = params.toString();
+		const currentSearch = location.search.startsWith("?") ? location.search.slice(1) : location.search;
+		if (nextSearch !== currentSearch) {
+			navigate({ pathname: location.pathname, search: nextSearch ? `?${nextSearch}` : "" }, { replace: true, preventScrollReset: true });
+		}
+	}, [location.pathname, location.search, navigate]);
+
+	useEffect(() => {
+		const parsed = parseListState(location.search);
+		setGlobalFilter((current) => current === parsed.search ? current : parsed.search);
+		setFiltersState((current) => filtersEqual(current, parsed.filters) ? current : parsed.filters);
+	}, [location.search]);
+
+	const handleSearchChange = useCallback((value: string) => {
+		setGlobalFilter(value);
+		updateListLocation(value, filters);
+	}, [filters, updateListLocation]);
+
+	const handleFiltersChange = useCallback((nextFilters: ListFilters) => {
+		setFiltersState(nextFilters);
+		updateListLocation(globalFilter, nextFilters);
+	}, [globalFilter, updateListLocation]);
 
 	// Query
 	const {
@@ -169,7 +283,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 
 	// --- Scroll position restoration ---
 	const pageCountRef = useRef(0);
-	const scrollRestoreTarget = useRef<{ scrollY: number; pageCount: number } | null>(null);
+	const scrollRestoreTarget = useRef<StoredScrollPosition | null>(null);
 	const scrollRestored = useRef(false);
 
 	// Track current page count (read in handleAudioClick via ref to avoid dep churn)
@@ -182,11 +296,14 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		const raw = sessionStorage.getItem(SCROLL_STORAGE_KEY);
 		if (raw) {
 			try {
-				scrollRestoreTarget.current = JSON.parse(raw);
+				const parsed = JSON.parse(raw) as StoredScrollPosition;
+				if (parsed.search === location.search) {
+					scrollRestoreTarget.current = parsed;
+				}
 			} catch { /* ignore malformed data */ }
 			sessionStorage.removeItem(SCROLL_STORAGE_KEY);
 		}
-	}, []);
+	}, [location.search]);
 
 	// Preload pages and restore scroll position when enough content is loaded
 	useEffect(() => {
@@ -203,9 +320,9 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		scrollRestored.current = true;
 		scrollRestoreTarget.current = null;
 		requestAnimationFrame(() => {
-			window.scrollTo(0, target.scrollY);
+			restoreScrollTop(target.scrollTop);
 		});
-	}, [infiniteData, hasNextPage, isFetchingNextPage, fetchNextPage]);
+	}, [infiniteData, hasNextPage, isFetchingNextPage, fetchNextPage, restoreScrollTop]);
 
 	// Local state for UI
 	// queuePositions state removed
@@ -223,12 +340,15 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 	const LONG_PRESS_CANCEL_THRESHOLD = 10;
 
 	const handleAudioClick = useCallback((audioId: string) => {
+		const returnPath = `${location.pathname}${location.search}`;
+		sessionStorage.setItem(LIST_LOCATION_STORAGE_KEY, returnPath);
 		sessionStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify({
-			scrollY: window.scrollY,
+			scrollTop: getScrollTop(),
 			pageCount: pageCountRef.current,
+			search: location.search,
 		}));
-		navigate(`/audio/${audioId}`);
-	}, [navigate]);
+		navigate(`/audio/${audioId}`, { state: { from: returnPath } });
+	}, [getScrollTop, location.pathname, location.search, navigate]);
 
 	const toggleSelection = useCallback((id: string) => {
 		setRowSelection(prev => {
@@ -887,17 +1007,17 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 
 	// RENDER: Floating Row List (Premium UI)
 	return (
-		<div className="space-y-6">
+		<div ref={listRootRef} className="space-y-6">
 			{/* Toolbar */}
 			<div className="flex flex-col gap-3">
 				<div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
 					<DebouncedSearchInput
 						placeholder="Search recordings..."
 						value={globalFilter ?? ""}
-						onChange={(value) => setGlobalFilter(String(value))}
+						onChange={(value) => handleSearchChange(String(value))}
 						className="w-full sm:w-80 shadow-sm border-[var(--border-subtle)] focus:border-[var(--brand-solid)] bg-[var(--bg-muted-pane)]"
 					/>
-					<ListFilterBar filters={filters} onFiltersChange={setFilters} />
+					<ListFilterBar filters={filters} onFiltersChange={handleFiltersChange} />
 				</div>
 			</div>
 

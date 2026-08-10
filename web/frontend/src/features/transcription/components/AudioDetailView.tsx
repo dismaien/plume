@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search } from "lucide-react";
 import { Header } from "@/components/Header";
 import { useQueryClient } from "@tanstack/react-query";
@@ -41,6 +41,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const { audioId: paramAudioId } = useParams<{ audioId: string }>();
     const audioId = propAudioId || paramAudioId;
     const navigate = useNavigate();
+    const location = useLocation();
     const { getAuthHeaders } = useAuth();
     const queryClient = useQueryClient();
 
@@ -92,6 +93,10 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
     // Download Logic
     const { downloadSRT } = useTranscriptDownload();
+    const dashboardReturnPath =
+        (location.state as { from?: string } | null)?.from ||
+        sessionStorage.getItem("dashboard-list-location") ||
+        "/";
 
     // State for Split View
     const [chatOpen, setChatOpen] = useState(false);
@@ -350,14 +355,14 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
             });
             if (response.ok) {
                 queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
-                navigate("/dashboard");
+                navigate(dashboardReturnPath);
             } else {
                 alert("Failed to delete audio file");
             }
         } catch {
             alert("Error deleting audio file");
         }
-    }, [audioId, getAuthHeaders, queryClient, navigate]);
+    }, [audioId, dashboardReturnPath, getAuthHeaders, queryClient, navigate]);
 
     if (!audioId) return <div>Invalid Audio ID</div>;
 
@@ -383,7 +388,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         return (
             <div className="h-full flex flex-col items-center justify-center gap-4">
                 <p className="text-red-500">Failed to load audio details.</p>
-                <Button onClick={() => navigate('/dashboard')}>Go to Dashboard</Button>
+                <Button onClick={() => navigate(dashboardReturnPath)}>Go to Dashboard</Button>
             </div>
         );
     }
@@ -412,7 +417,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                     <div className="flex-1 overflow-y-auto scrollbar-thin">
                         <div className="mx-auto w-full max-w-[1320px] px-3 sm:px-5 lg:px-7 py-4 pb-32">
                             <div className="mb-4">
-                                <Header />
+                                <Header homePath={dashboardReturnPath} />
                             </div>
                             <div className="space-y-5 sm:space-y-6">
                                 {/* Sticky header: Title + Audio Player */}
