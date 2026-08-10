@@ -2218,16 +2218,19 @@ func looksLikeTimestamp(s string) bool {
 func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string) (string, error) {
 	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations — phone calls, voice memos, casual chats, interviews, brainstorms, podcasts, and similar recordings. They are NOT corporate meeting minutes.
 
-Generate a short title (4-8 words) that captures the main idea of the conversation.
+Generate a short subject title (4-8 words) that captures the main idea of the recording.
 
 Rules:
 - Use Title Case (Every Important Word Capitalized)
 - Lead with the topic or subject, not a verb
-- If speakers are identifiable, you may reference them (e.g. "Sarah and Tom on Moving Plans")
+- Do not include speaker names unless they are essential to the subject; speaker brackets are added separately
+- Do not include date/time prefixes, file names, locations, @location suffixes, speaker brackets, or duration braces
 - Be specific: prefer "Weekend Camping Trip Plans" over "Planning Discussion"
 - No quotation marks, brackets, or trailing punctuation
 - No emojis or special characters
-- Never use generic labels like "Conversation", "Chat", "Discussion", "Audio Recording"
+- Never use generic labels like "Brief Note", "Personal Issue", "Conversation", "Chat", "Discussion", "Audio Recording"
+- Never return raw file names such as "20260724 183644-60C99703"
+- Never return hallucinated filler such as "Thank You"
 
 Examples:
 - "Jake's Birthday Party Planning"
@@ -2241,30 +2244,36 @@ Examples:
 
 Return ONLY the title, nothing else.`
 
-	chatMsgs := []llm.ChatMessage{
-		{Role: "system", Content: prompt},
-		{Role: "user", Content: transcript},
+	var lastRejected string
+	for attempt := 0; attempt < 2; attempt++ {
+		userContent := transcript
+		if attempt > 0 {
+			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, or filename-like. Generate a specific subject title from this transcript instead.\n\n%s", lastRejected, transcript)
+		}
+
+		chatMsgs := []llm.ChatMessage{
+			{Role: "system", Content: prompt},
+			{Role: "user", Content: userContent},
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		resp, err := svc.ChatCompletion(timeoutCtx, model, chatMsgs, 0.0)
+		cancel()
+		if err != nil {
+			return "", err
+		}
+		if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			return "", fmt.Errorf("empty response from LLM")
+		}
+
+		title := normalizeGeneratedTranscriptTitle(resp.Choices[0].Message.Content)
+		if !isWeakGeneratedTranscriptTitle(title) {
+			return title, nil
+		}
+		lastRejected = title
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	resp, err := svc.ChatCompletion(timeoutCtx, model, chatMsgs, 0.0)
-	if err != nil {
-		return "", err
-	}
-	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("empty response from LLM")
-	}
-
-	title := strings.TrimSpace(resp.Choices[0].Message.Content)
-	title = strings.Trim(title, "'\"`")
-	title = strings.ReplaceAll(title, "\n", " ")
-	title = strings.ReplaceAll(title, "\r", " ")
-	if len(title) > 60 {
-		title = title[:57] + "..."
-	}
-	return title, nil
+	return "", fmt.Errorf("generated title was too generic: %q", lastRejected)
 }
 
 func buildTranscriptTitleSource(transcript string) string {
@@ -2282,6 +2291,80 @@ func buildTranscriptTitleSource(transcript string) string {
 	head := strings.TrimSpace(trimmed[:sectionChars])
 	tail := strings.TrimSpace(trimmed[len(trimmed)-sectionChars:])
 	return head + "\n...\n" + tail
+}
+
+func normalizeGeneratedTranscriptTitle(title string) string {
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "'\"`")
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = strings.ReplaceAll(title, "\r", " ")
+	title = strings.Join(strings.Fields(title), " ")
+	title = strings.TrimSpace(strings.Trim(title, ".:;-"))
+	if len(title) > 60 {
+		title = strings.TrimSpace(title[:57]) + "..."
+	}
+	return title
+}
+
+var titleMetadataRE = regexp.MustCompile(`^\d{6}\s+\d{2}:\d{2}\s+`)
+var titleDurationSuffixRE = regexp.MustCompile(`\s+\{\d{1,2}:?\d{2}(?::\d{2})?\}\s*$`)
+
+func isWeakGeneratedTranscriptTitle(title string) bool {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return true
+	}
+	if looksLikeTimestamp(trimmed) || looksLikeAppleVoiceMemoFallbackTitle(trimmed) {
+		return true
+	}
+
+	subject := titleDurationSuffixRE.ReplaceAllString(trimmed, "")
+	subject = titleMetadataRE.ReplaceAllString(subject, "")
+	subject = strings.TrimSpace(subject)
+	lower := strings.ToLower(subject)
+	if lower == "" {
+		return true
+	}
+	if strings.Contains(lower, "thank you") {
+		return true
+	}
+	if strings.Contains(lower, "title not available") {
+		return true
+	}
+	if strings.Contains(lower, "part 01 of") || strings.Contains(lower, "part 1 of") {
+		return true
+	}
+
+	for _, generic := range []string{
+		"brief note",
+		"personal issue",
+		"personal update",
+		"new recording",
+		"recording",
+		"audio recording",
+		"voice memo",
+		"conversation",
+		"chat",
+		"discussion",
+		"untitled recording",
+	} {
+		if lower == generic || strings.HasPrefix(lower, generic+" ") {
+			return true
+		}
+	}
+
+	for _, prefix := range []string{
+		"rua ",
+		"malplaquetstraße",
+		"neue aufnahme",
+		"nueva grabación",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // @Summary Delete transcription job
