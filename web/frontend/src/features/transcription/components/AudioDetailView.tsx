@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search } from "lucide-react";
+import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search, ArrowLeft } from "lucide-react";
 import { Header } from "@/components/Header";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -345,6 +345,10 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
             setCurrentTime(time);
         }
     };
+
+    const handleBackToRecordings = useCallback(() => {
+        navigate(dashboardReturnPath, { preventScrollReset: true });
+    }, [dashboardReturnPath, navigate]);
 
     const handleConfirmDelete = useCallback(async () => {
         if (!audioId) return;
@@ -714,6 +718,23 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                     </>
                 )}
             </div>
+
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label="Back to recordings"
+                        onClick={handleBackToRecordings}
+                        className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)]/95 text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-md hover:bg-[var(--bg-muted-pane)] hover:border-[var(--brand-solid)]/50 active:translate-y-px gap-2"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                        <span>Recordings</span>
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Back to recordings</TooltipContent>
+            </Tooltip>
 
             {/* Mobile / Overlay Chat (If we want overlay behavior even on desktop, we can adjust logic) */}
             {/* Note: User asked for sliding over on mobile. NotesSidebar handles this via portal internally often, or we do it here.
