@@ -144,9 +144,10 @@
   --shadow-float:
     0 14px 34px rgba(10, 16, 32, 0.12);
 
-  --success: #10B981;
-  --success-solid: #10B981;
-  --success-translucent: rgba(16, 185, 129, 0.15);
+  --success: #4f7553;
+  --success-solid: #4f7553;
+  --success-border: rgba(79, 117, 83, 0.3);
+  --success-translucent: rgba(79, 117, 83, 0.14);
   --error: #EF4444;
   --warning: #F59E0B;
   --warning-solid: #F59E0B;
@@ -219,6 +220,11 @@
     0 0 0 1px rgba(10, 12, 18, 0.35);
   --shadow-float:
     0 18px 36px rgba(5, 8, 14, 0.55);
+
+  --success: #8f9f63;
+  --success-solid: #8f9f63;
+  --success-border: rgba(143, 159, 99, 0.26);
+  --success-translucent: rgba(127, 155, 103, 0.12);
 
   --background: var(--bg-main);
   --foreground: var(--text-primary);

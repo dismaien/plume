@@ -21,7 +21,7 @@ function stepStatusLabel(status: RuntimeWarmupStepStatus): string {
 function stepStatusClass(status: RuntimeWarmupStepStatus): string {
   switch (status) {
     case "ready":
-      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-300";
+      return "border-[var(--success-border)] bg-[var(--success-translucent)] text-[var(--success-solid)]";
     case "running":
       return "border-sky-500/25 bg-sky-500/10 text-sky-300";
     case "failed":
@@ -61,8 +61,8 @@ function bannerCopy(status: RuntimeWarmupStatus): {
       detail:
         status.current_step_detail ||
         "Quill is finishing local speaker and voice-signature tools in the background. Basic transcription is ready now.",
-      toneClass: "border-emerald-500/25 bg-emerald-500/10",
-      indicatorClassName: "bg-emerald-400",
+      toneClass: "border-[var(--success-border)] bg-[var(--success-translucent)]",
+      indicatorClassName: "bg-[var(--success-solid)]",
     };
   }
 
@@ -140,7 +140,7 @@ export function RuntimeWarmupBanner() {
               {data.state === "failed" ? (
                 <AlertTriangle className="h-4 w-4 text-amber-300" />
               ) : data.transcription_ready ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+                <CheckCircle2 className="h-4 w-4 text-[var(--success-solid)]" />
               ) : (
                 <Loader2 className="h-4 w-4 animate-spin text-sky-300" />
               )}
