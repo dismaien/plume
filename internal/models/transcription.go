@@ -32,6 +32,11 @@ type TranscriptionJob struct {
 	OriginalFilename       string         `json:"original_filename,omitempty" gorm:"type:text"`
 	FileHash               string         `json:"file_hash,omitempty" gorm:"type:varchar(64);index"`
 	RecordedAt             *time.Time     `json:"recorded_at,omitempty" gorm:"type:datetime"`
+	IsSourcePart           bool           `json:"is_source_part" gorm:"type:boolean;default:false;index"`
+	SourceParentID         string         `json:"source_parent_id,omitempty" gorm:"type:varchar(36);index"`
+	SourceGroupID          string         `json:"source_group_id,omitempty" gorm:"type:text;index"`
+	SourcePartIndex        int            `json:"source_part_index,omitempty" gorm:"type:int;default:0"`
+	SourcePartCount        int            `json:"source_part_count,omitempty" gorm:"type:int;default:0"`
 	ObsidianSyncedAt       *time.Time     `json:"obsidian_synced_at,omitempty" gorm:"type:datetime"`
 	CreatedAt              time.Time      `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt              time.Time      `json:"updated_at" gorm:"autoUpdateTime"`

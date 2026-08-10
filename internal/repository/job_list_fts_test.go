@@ -168,3 +168,74 @@ func TestListWithParams_EmptyFTSJobIDs_FallsBackToLIKE(t *testing.T) {
 		t.Errorf("expected job-standup, got %v", jobs)
 	}
 }
+
+func TestListWithParams_ExcludesSourcePartsByDefault(t *testing.T) {
+	db := newJobTestDB(t)
+	repo := NewJobRepository(db)
+	ctx := context.Background()
+
+	parentTitle := "260803 04:20 Siren Dj's 3"
+	if err := repo.Create(ctx, &models.TranscriptionJob{
+		ID:     "parent",
+		Status: models.StatusUploaded,
+		Title:  &parentTitle,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	partTitle := "260803 04:20 part 01 of 07 (260803 04:20 Siren Dj's 3)"
+	if err := repo.Create(ctx, &models.TranscriptionJob{
+		ID:              "part-01",
+		Status:          models.StatusUploaded,
+		Title:           &partTitle,
+		IsSourcePart:    true,
+		SourceParentID:  "parent",
+		SourceGroupID:   "parent",
+		SourcePartIndex: 1,
+		SourcePartCount: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, total, err := repo.ListWithParams(ctx, ListParams{Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWithParams: %v", err)
+	}
+	if total != 1 || len(jobs) != 1 || jobs[0].ID != "parent" {
+		t.Fatalf("expected only parent in default listing, got total=%d jobs=%v", total, jobs)
+	}
+}
+
+func TestListWithParams_CanIncludeSourceParts(t *testing.T) {
+	db := newJobTestDB(t)
+	repo := NewJobRepository(db)
+	ctx := context.Background()
+
+	parentTitle := "260803 04:20 Siren Dj's 3"
+	partTitle := "260803 04:20 part 01 of 07 (260803 04:20 Siren Dj's 3)"
+	for _, job := range []models.TranscriptionJob{
+		{ID: "parent", Status: models.StatusUploaded, Title: &parentTitle},
+		{
+			ID:              "part-01",
+			Status:          models.StatusUploaded,
+			Title:           &partTitle,
+			IsSourcePart:    true,
+			SourceParentID:  "parent",
+			SourceGroupID:   "parent",
+			SourcePartIndex: 1,
+			SourcePartCount: 7,
+		},
+	} {
+		if err := repo.Create(ctx, &job); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	jobs, total, err := repo.ListWithParams(ctx, ListParams{Offset: 0, Limit: 10, IncludeSourceParts: true})
+	if err != nil {
+		t.Fatalf("ListWithParams: %v", err)
+	}
+	if total != 2 || len(jobs) != 2 {
+		t.Fatalf("expected parent and source part when requested, got total=%d jobs=%v", total, jobs)
+	}
+}

@@ -50,19 +50,20 @@ func (r *userRepository) CountWithAutoTranscription(ctx context.Context) (int64,
 // ListParams consolidates all filtering, sorting, and pagination parameters
 // for listing transcription jobs.
 type ListParams struct {
-	Offset       int
-	Limit        int
-	SortBy       string
-	SortOrder    string
-	SearchQuery  string
-	FTSJobIDs    []string // Pre-resolved FTS matches; when set, replaces LIKE search
-	UpdatedAfter *time.Time
-	VaultID      *uint
-	Folder       *string // nil = all, pointer to "" = root/unfiled, pointer to "X" = specific folder
-	FolderPrefix string  // filter by folder prefix (e.g., "Work" matches "Work" and "Work/Meetings")
-	Status        string // filter by job status (e.g., "completed", "failed")
-	Speaker       string // filter by speaker custom name (subquery on speaker_mappings)
-	SpeakerStatus string // filter by speaker identification status ("needs_attention", "identified")
+	Offset             int
+	Limit              int
+	SortBy             string
+	SortOrder          string
+	SearchQuery        string
+	FTSJobIDs          []string // Pre-resolved FTS matches; when set, replaces LIKE search
+	UpdatedAfter       *time.Time
+	VaultID            *uint
+	Folder             *string // nil = all, pointer to "" = root/unfiled, pointer to "X" = specific folder
+	FolderPrefix       string  // filter by folder prefix (e.g., "Work" matches "Work" and "Work/Meetings")
+	Status             string  // filter by job status (e.g., "completed", "failed")
+	Speaker            string  // filter by speaker custom name (subquery on speaker_mappings)
+	SpeakerStatus      string  // filter by speaker identification status ("needs_attention", "identified")
+	IncludeSourceParts bool    // include internal chunk/source-part rows used for long-recording processing
 }
 
 // allowedSortColumns defines the columns that can be used for sorting.
@@ -142,6 +143,10 @@ func (r *jobRepository) ListWithParams(ctx context.Context, params ListParams) (
 	}
 
 	db = db.Model(&models.TranscriptionJob{})
+
+	if !params.IncludeSourceParts {
+		db = db.Where("(is_source_part = ? OR is_source_part IS NULL)", false)
+	}
 
 	if params.UpdatedAfter != nil {
 		db = db.Where("updated_at > ?", *params.UpdatedAfter)
@@ -230,7 +235,16 @@ func (r *jobRepository) ListDistinctSpeakers(ctx context.Context, vaultID *uint)
 	db := r.db.WithContext(ctx).Model(&models.SpeakerMapping{}).
 		Where("custom_name != '' AND contact_id IS NOT NULL")
 	if vaultID != nil {
-		db = db.Where("transcription_job_id IN (SELECT id FROM transcription_jobs WHERE vault_id = ?)", *vaultID)
+		db = db.Where(`transcription_job_id IN (
+			SELECT id FROM transcription_jobs
+			WHERE vault_id = ?
+			AND (is_source_part = ? OR is_source_part IS NULL)
+		)`, *vaultID, false)
+	} else {
+		db = db.Where(`transcription_job_id IN (
+			SELECT id FROM transcription_jobs
+			WHERE is_source_part = ? OR is_source_part IS NULL
+		)`, false)
 	}
 	err := db.Distinct("custom_name").Order("custom_name ASC").Pluck("custom_name", &speakers).Error
 	return speakers, err
@@ -317,7 +331,8 @@ func (r *jobRepository) UpdateSummary(ctx context.Context, jobID string, summary
 func (r *jobRepository) ListFolders(ctx context.Context, vaultID *uint) ([]string, error) {
 	var folders []string
 	db := r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
-		Where("folder IS NOT NULL AND folder != ''")
+		Where("folder IS NOT NULL AND folder != ''").
+		Where("(is_source_part = ? OR is_source_part IS NULL)", false)
 	if vaultID != nil {
 		db = db.Where("vault_id = ?", *vaultID)
 	}

@@ -159,6 +159,12 @@ func (h *Handler) ftsUpsertJob(job *models.TranscriptionJob) {
 	if h.ftsManager == nil || job == nil {
 		return
 	}
+	if job.IsSourcePart {
+		if err := h.ftsManager.Delete(job.ID); err != nil {
+			logger.Warn("FTS delete for source part failed", "job_id", job.ID, "error", err)
+		}
+		return
+	}
 	title := ""
 	if job.Title != nil {
 		title = *job.Title
@@ -1129,17 +1135,18 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 
 	searchQuery := c.Query("q")
 	params := repository.ListParams{
-		Offset:        offset,
-		Limit:         limit,
-		SortBy:        c.Query("sort_by"),
-		SortOrder:     c.Query("sort_order"),
-		SearchQuery:   searchQuery,
-		UpdatedAfter:  updatedAfter,
-		VaultID:       activeVaultID,
-		Folder:        folderPtr,
-		Status:        c.Query("status"),
-		Speaker:       c.Query("speaker"),
-		SpeakerStatus: c.Query("speaker_status"),
+		Offset:             offset,
+		Limit:              limit,
+		SortBy:             c.Query("sort_by"),
+		SortOrder:          c.Query("sort_order"),
+		SearchQuery:        searchQuery,
+		UpdatedAfter:       updatedAfter,
+		VaultID:            activeVaultID,
+		Folder:             folderPtr,
+		Status:             c.Query("status"),
+		Speaker:            c.Query("speaker"),
+		SpeakerStatus:      c.Query("speaker_status"),
+		IncludeSourceParts: strings.EqualFold(strings.TrimSpace(c.Query("include_source_parts")), "true"),
 	}
 
 	// Use FTS5 for search when available — fall back to LIKE via SearchQuery

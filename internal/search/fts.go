@@ -126,6 +126,7 @@ func (m *FTSManager) Rebuild() error {
 		SELECT id, COALESCE(title, ''), COALESCE(transcript, ''), COALESCE(summary, '')
 		FROM transcription_jobs
 		WHERE deleted_at IS NULL
+		AND (is_source_part = false OR is_source_part IS NULL)
 	`).Rows()
 	if err != nil {
 		return err
