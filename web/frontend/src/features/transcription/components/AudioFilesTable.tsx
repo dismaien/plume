@@ -979,7 +979,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 										{/* Text */}
 										<div className="min-w-0">
 											<div className="flex items-center gap-2">
-												<h4 className="recording-title text-gray-900 dark:text-gray-100 truncate text-base sm:text-lg leading-tight group-hover:text-[var(--brand-solid)] transition-colors">
+												<h4 className="recording-title text-[var(--text-primary)] truncate text-[1.02rem] sm:text-[1.1rem] group-hover:text-[var(--brand-solid)] transition-colors">
 													{file.title || getFileName(file.audio_path)}
 												</h4>
 												{/* Speaker attention badges */}
