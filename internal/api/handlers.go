@@ -1425,6 +1425,7 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 		InterpolateMethod:              "nearest",
 		NoAlign:                        false,
 		ReturnCharAlignments:           false,
+		VadPreprocess:                  true,
 		VadMethod:                      "pyannote",
 		VadOnset:                       0.5,
 		VadOffset:                      0.363,

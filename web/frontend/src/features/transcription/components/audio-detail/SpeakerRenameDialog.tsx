@@ -392,6 +392,18 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       const params: Record<string, unknown> = {
         model_family: retranscribeFamily,
         model: retranscribeModel,
+        vad_preprocess: true,
+        vad_method: "pyannote",
+        vad_onset: 0.5,
+        vad_offset: 0.363,
+        chunk_size: 30,
+        temperature: 0,
+        best_of: 5,
+        beam_size: 5,
+        condition_on_previous_text: false,
+        compression_ratio_threshold: 2.4,
+        logprob_threshold: -1.0,
+        no_speech_threshold: 0.6,
         diarize: true,
         diarize_model: diarizeModel,
       };
