@@ -145,6 +145,21 @@ func TestMLXWhisperBuildTranscribeScript(t *testing.T) {
 	if !strings.Contains(script, "word_timestamps=True") {
 		t.Error("script missing word_timestamps")
 	}
+	if !strings.Contains(script, "temperature=0.00") {
+		t.Error("script missing explicit zero temperature")
+	}
+	if !strings.Contains(script, "condition_on_previous_text=False") {
+		t.Error("script missing anti-hallucination context setting")
+	}
+	if !strings.Contains(script, "compression_ratio_threshold=2.40") {
+		t.Error("script missing compression ratio threshold")
+	}
+	if !strings.Contains(script, "no_speech_threshold=0.60") {
+		t.Error("script missing no-speech threshold")
+	}
+	if !strings.Contains(script, "hallucination_silence_threshold=2.00") {
+		t.Error("script missing hallucination silence threshold")
+	}
 	// task=transcribe should NOT add explicit task param (it's the default)
 	if strings.Contains(script, `task="transcribe"`) {
 		t.Error("script should not include default task=transcribe")

@@ -291,11 +291,11 @@ function buildBackendEnv(port: number): NodeJS.ProcessEnv {
   }
 
   // Whisper model to pre-download during startup warmup.
-  // Defaults to large-v3-turbo-q4 for MLX Whisper (quantized, fastest large model on Apple Silicon).
+  // Defaults to non-quantized large-v3-turbo for better archive-quality transcripts on Apple Silicon.
   if (process.env.WHISPER_MODEL) {
     env.WHISPER_MODEL = process.env.WHISPER_MODEL;
   } else if (env.TRANSCRIPTION_BACKEND === "mlx_whisper") {
-    env.WHISPER_MODEL = "large-v3-turbo-q4";
+    env.WHISPER_MODEL = "large-v3-turbo";
   }
 
   return env;

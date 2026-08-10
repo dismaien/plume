@@ -1157,15 +1157,11 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 		return
 	}
 
-	// Compute HasAudio for each job
+	// Compute response-only fields for each job.
 	jobIDs := make([]string, len(jobs))
 	for i := range jobs {
 		jobIDs[i] = jobs[i].ID
-		if jobs[i].AudioPath != "" {
-			if _, statErr := os.Stat(jobs[i].AudioPath); statErr == nil {
-				jobs[i].HasAudio = true
-			}
-		}
+		h.populateJobComputedFields(c.Request.Context(), &jobs[i])
 	}
 
 	// Count pending speaker suggestions per job for badge display.
@@ -1236,14 +1232,83 @@ func (h *Handler) GetTranscriptionJob(c *gin.Context) {
 		return
 	}
 
-	// Compute HasAudio
+	h.populateJobComputedFields(c.Request.Context(), job)
+
+	c.JSON(http.StatusOK, job)
+}
+
+func (h *Handler) populateJobComputedFields(ctx context.Context, job *models.TranscriptionJob) {
+	if job == nil {
+		return
+	}
 	if job.AudioPath != "" {
 		if _, statErr := os.Stat(job.AudioPath); statErr == nil {
 			job.HasAudio = true
 		}
 	}
+	if duration := durationMillisFromTranscript(job.Transcript); duration > 0 {
+		job.Duration = duration
+		return
+	}
+	if !job.HasAudio {
+		return
+	}
+	if duration := durationMillisFromAudio(ctx, job.AudioPath); duration > 0 {
+		job.Duration = duration
+	}
+}
 
-	c.JSON(http.StatusOK, job)
+func durationMillisFromTranscript(raw *string) int64 {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return 0
+	}
+
+	var payload struct {
+		Segments []struct {
+			End float64 `json:"end"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal([]byte(*raw), &payload); err != nil {
+		return 0
+	}
+
+	maxEnd := 0.0
+	for _, segment := range payload.Segments {
+		if segment.End > maxEnd {
+			maxEnd = segment.End
+		}
+	}
+	if maxEnd <= 0 {
+		return 0
+	}
+	return int64(maxEnd * 1000)
+}
+
+func durationMillisFromAudio(ctx context.Context, audioPath string) int64 {
+	if strings.TrimSpace(audioPath) == "" {
+		return 0
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		probeCtx,
+		binaries.FFprobe(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		audioPath,
+	).Output()
+	if err != nil {
+		return 0
+	}
+
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return int64(seconds * 1000)
 }
 
 // @Summary Start transcription for uploaded file

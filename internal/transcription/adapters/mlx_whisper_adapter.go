@@ -74,7 +74,7 @@ func NewMLXWhisperAdapter(envPath string) *MLXWhisperAdapter {
 			Name:        "model",
 			Type:        "string",
 			Required:    false,
-			Default:     "large-v3-turbo-q4",
+			Default:     "large-v3-turbo",
 			Options:     []string{"small", "small.en", "medium", "medium.en", "large-v3", "large-v3-turbo", "large-v3-turbo-q4"},
 			Description: "Whisper model size",
 			Group:       "basic",
@@ -102,6 +102,54 @@ func NewMLXWhisperAdapter(envPath string) *MLXWhisperAdapter {
 			Required:    false,
 			Default:     0.0,
 			Description: "Sampling temperature",
+			Group:       "advanced",
+		},
+		{
+			Name:        "condition_on_previous_text",
+			Type:        "bool",
+			Required:    false,
+			Default:     false,
+			Description: "Condition each decoding window on prior text",
+			Group:       "advanced",
+		},
+		{
+			Name:        "compression_ratio_threshold",
+			Type:        "float",
+			Required:    false,
+			Default:     2.4,
+			Description: "Reject likely hallucinated text with high compression ratio",
+			Group:       "advanced",
+		},
+		{
+			Name:        "logprob_threshold",
+			Type:        "float",
+			Required:    false,
+			Default:     -1.0,
+			Description: "Reject low-confidence decoding windows",
+			Group:       "advanced",
+		},
+		{
+			Name:        "no_speech_threshold",
+			Type:        "float",
+			Required:    false,
+			Default:     0.6,
+			Description: "Skip windows likely to contain no speech",
+			Group:       "advanced",
+		},
+		{
+			Name:        "hallucination_silence_threshold",
+			Type:        "float",
+			Required:    false,
+			Default:     2.0,
+			Description: "Suppress hallucinated text after sustained silence",
+			Group:       "advanced",
+		},
+		{
+			Name:        "initial_prompt",
+			Type:        "string",
+			Required:    false,
+			Default:     "",
+			Description: "Optional prompt for names and vocabulary",
 			Group:       "advanced",
 		},
 		{
@@ -170,7 +218,7 @@ func (m *MLXWhisperAdapter) PrepareEnvironment(ctx context.Context) error {
 // WarmModel ensures the requested model weights are cached locally.
 func (m *MLXWhisperAdapter) WarmModel(ctx context.Context, modelName string) error {
 	if strings.TrimSpace(modelName) == "" {
-		modelName = "large-v3-turbo-q4"
+		modelName = "large-v3-turbo"
 	}
 
 	if err := m.PrepareEnvironment(ctx); err != nil {
@@ -306,6 +354,12 @@ func (m *MLXWhisperAdapter) buildTranscribeScript(audioPath, outputFile string, 
 	task := m.GetStringParameter(params, "task")
 	wordTimestamps := m.GetBoolParameter(params, "word_timestamps")
 	temperature := m.GetFloatParameter(params, "temperature")
+	conditionOnPreviousText := m.GetBoolParameter(params, "condition_on_previous_text")
+	compressionRatioThreshold := m.GetFloatParameter(params, "compression_ratio_threshold")
+	logprobThreshold := m.GetFloatParameter(params, "logprob_threshold")
+	noSpeechThreshold := m.GetFloatParameter(params, "no_speech_threshold")
+	hallucinationSilenceThreshold := m.GetFloatParameter(params, "hallucination_silence_threshold")
+	initialPrompt := m.GetStringParameter(params, "initial_prompt")
 
 	// Build Python script that outputs WhisperX-compatible JSON
 	var sb strings.Builder
@@ -321,8 +375,20 @@ func (m *MLXWhisperAdapter) buildTranscribeScript(audioPath, outputFile string, 
 	if wordTimestamps {
 		sb.WriteString(", word_timestamps=True")
 	}
-	if temperature > 0 {
-		sb.WriteString(fmt.Sprintf(", temperature=%.2f", temperature))
+	sb.WriteString(fmt.Sprintf(", temperature=%.2f", temperature))
+	if conditionOnPreviousText {
+		sb.WriteString(", condition_on_previous_text=True")
+	} else {
+		sb.WriteString(", condition_on_previous_text=False")
+	}
+	sb.WriteString(fmt.Sprintf(", compression_ratio_threshold=%.2f", compressionRatioThreshold))
+	sb.WriteString(fmt.Sprintf(", logprob_threshold=%.2f", logprobThreshold))
+	sb.WriteString(fmt.Sprintf(", no_speech_threshold=%.2f", noSpeechThreshold))
+	if hallucinationSilenceThreshold > 0 {
+		sb.WriteString(fmt.Sprintf(", hallucination_silence_threshold=%.2f", hallucinationSilenceThreshold))
+	}
+	if initialPrompt != "" {
+		sb.WriteString(fmt.Sprintf(", initial_prompt=%q", initialPrompt))
 	}
 	sb.WriteString(")\n")
 

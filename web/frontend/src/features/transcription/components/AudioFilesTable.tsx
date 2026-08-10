@@ -822,7 +822,47 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		}
 	}, [trackProgress, queuePositions]);
 
-	// formatDuration removed as requested
+	const formatRecordingDuration = useCallback((durationMs?: number) => {
+		if (!durationMs || durationMs <= 0) return null;
+
+		const totalSeconds = Math.round(durationMs / 1000);
+		const hours = Math.floor(totalSeconds / 3600);
+		const minutes = Math.floor((totalSeconds % 3600) / 60);
+		const seconds = totalSeconds % 60;
+		const pad = (value: number) => value.toString().padStart(2, "0");
+
+		if (hours > 0) {
+			return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+		}
+		return `${minutes}:${pad(seconds)}`;
+	}, []);
+
+	const durationFromTitle = useCallback((title?: string) => {
+		if (!title) return undefined;
+
+		const match = title.match(/\{(\d{1,2}:?\d{2}(?::\d{2})?)\}\s*$/);
+		if (!match) return undefined;
+
+		const raw = match[1];
+		const parts = raw.includes(":")
+			? raw.split(":").map((part) => Number(part))
+			: raw.length > 2
+				? [Number(raw.slice(0, -2)), Number(raw.slice(-2))]
+				: [Number(raw)];
+
+		if (parts.some((part) => Number.isNaN(part))) return undefined;
+
+		let seconds = 0;
+		if (parts.length === 3) {
+			seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+		} else if (parts.length === 2) {
+			seconds = parts[0] * 60 + parts[1];
+		} else {
+			seconds = parts[0] * 60;
+		}
+
+		return seconds > 0 ? seconds * 1000 : undefined;
+	}, []);
 
 	const formatDate = useCallback((dateString: string) => {
 		return new Date(dateString).toLocaleDateString("en-US", {
@@ -993,8 +1033,18 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 													);
 												})()}
 											</div>
-											<div className="flex items-center gap-1.5 mt-1 text-sm text-gray-500">
+											<div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
 												{formatDate(file.recorded_at || file.created_at)}
+												{(() => {
+													const formattedDuration = formatRecordingDuration(file.duration || durationFromTitle(file.title));
+													if (!formattedDuration) return null;
+													return (
+														<>
+															<span className="w-1 h-1 rounded-full bg-current opacity-45" />
+															<span>{formattedDuration}</span>
+														</>
+													);
+												})()}
 											</div>
 										</div>
 									</div>

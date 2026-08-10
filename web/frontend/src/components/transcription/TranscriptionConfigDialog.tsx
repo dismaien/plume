@@ -160,7 +160,7 @@ const applyDiarizationMode = (
 
 const DEFAULT_PARAMS: WhisperXParams = {
     model_family: "mlx_whisper",
-    model: "large-v3-turbo-q4",
+    model: "large-v3-turbo",
     model_cache_only: false,
     device: "cpu",
     device_index: 0,
@@ -209,7 +209,7 @@ const WHISPER_MODELS: { value: string; label: string; description: string }[] = 
     { value: "medium.en", label: "medium.en", description: "~1.5 GB — English-only, good accuracy" },
     { value: "large-v3", label: "large-v3", description: "~3.1 GB — Best accuracy, slowest" },
     { value: "large-v3-turbo", label: "large-v3-turbo", description: "~1.6 GB — Near large-v3 accuracy, 4x faster" },
-    { value: "large-v3-turbo-q4", label: "large-v3-turbo-q4", description: "~442 MB — Quantized turbo, fastest large model. Minimal accuracy loss vs turbo." },
+    { value: "large-v3-turbo-q4", label: "large-v3-turbo-q4", description: "~442 MB — Fast draft model; use turbo for archive quality" },
 ];
 
 const LANGUAGES = [
@@ -1238,7 +1238,7 @@ function MLXOrCppConfig({ params, updateParam, isMultiTrack, family }: ConfigPro
             <Section title="Model Settings">
                 <div className="space-y-4">
                     <FormField label="Model Size" description="Whisper model size. Larger models are more accurate but slower.">
-                        <Select value={params.model || "large-v3-turbo-q4"} onValueChange={(v) => updateParam('model', v)}>
+                        <Select value={params.model || "large-v3-turbo"} onValueChange={(v) => updateParam('model', v)}>
                             <SelectTrigger className={selectTriggerClassName}>
                                 <SelectValue />
                             </SelectTrigger>
