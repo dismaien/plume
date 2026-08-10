@@ -90,6 +90,8 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const autoSummaryTriggeredRef = useRef<string | null>(null);
     const autoTitleTriggeredRef = useRef<string | null>(null);
     const autoSpeakerViewAppliedRef = useRef<string | null>(null);
+    const isEditingTitleRef = useRef(false);
+    const suppressTitleBlurSaveRef = useRef(false);
 
     // Download Logic
     const { downloadSRT } = useTranscriptDownload();
@@ -169,10 +171,13 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
     // Effects
     useEffect(() => {
-        if (audioFile) {
-            setNewTitle(audioFile.title || "");
-        }
-    }, [audioFile]);
+        isEditingTitleRef.current = isEditingTitle;
+    }, [isEditingTitle]);
+
+    useEffect(() => {
+        if (!audioFile || isEditingTitle) return;
+        setNewTitle(audioFile.title || "");
+    }, [audioFile?.id, audioFile?.title, isEditingTitle]);
 
     useEffect(() => {
         let cancelled = false;
@@ -306,7 +311,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
                 const updated = await response.json();
                 const generatedTitle = typeof updated?.title === "string" ? updated.title.trim() : "";
-                if (generatedTitle) {
+                if (generatedTitle && !isEditingTitleRef.current) {
                     setNewTitle(generatedTitle);
                     queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
@@ -332,12 +337,40 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         setCurrentTime(time);
     }, []);
 
-    const handleTitleSave = () => {
-        if (newTitle.trim() !== audioFile?.title) {
-            updateTitle(newTitle);
+    const handleStartTitleEdit = useCallback(() => {
+        setNewTitle(audioFile?.title || "");
+        setIsEditingTitle(true);
+    }, [audioFile?.title]);
+
+    const handleTitleCancel = useCallback(() => {
+        suppressTitleBlurSaveRef.current = true;
+        setNewTitle(audioFile?.title || "");
+        setIsEditingTitle(false);
+    }, [audioFile?.title]);
+
+    const handleTitleSave = useCallback(() => {
+        const nextTitle = newTitle.trim();
+        const currentTitle = audioFile?.title || "";
+
+        if (!nextTitle) {
+            handleTitleCancel();
+            return;
+        }
+
+        if (nextTitle !== currentTitle) {
+            updateTitle(nextTitle);
         }
         setIsEditingTitle(false);
-    };
+    }, [audioFile?.title, handleTitleCancel, newTitle, updateTitle]);
+
+    const handleTitleBlur = useCallback(() => {
+        if (suppressTitleBlurSaveRef.current) {
+            suppressTitleBlurSaveRef.current = false;
+            return;
+        }
+
+        handleTitleSave();
+    }, [handleTitleSave]);
 
     const handleSeek = (time: number) => {
         if (audioPlayerRef.current) {
@@ -435,15 +468,23 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                 <Input
                                                     value={newTitle}
                                                     onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
-                                                    onBlur={handleTitleSave}
-                                                    onKeyDown={(e) => e.key === 'Enter' && handleTitleSave()}
+                                                    onBlur={handleTitleBlur}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            handleTitleSave();
+                                                        } else if (e.key === 'Escape') {
+                                                            e.preventDefault();
+                                                            handleTitleCancel();
+                                                        }
+                                                    }}
                                                     className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
                                                     autoFocus
                                                 />
                                             ) : (
                                                 <div
                                                     className="group flex items-center gap-3 cursor-text"
-                                                    onClick={() => setIsEditingTitle(true)}
+                                                    onClick={handleStartTitleEdit}
                                                 >
                                                     <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] truncate">
                                                         {audioFile.title || "Untitled Recording"}
