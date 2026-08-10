@@ -93,9 +93,9 @@ type WhisperXParams struct {
 	// VAD (Voice Activity Detection) settings
 	VadPreprocess bool    `json:"vad_preprocess" gorm:"type:boolean;default:true"` // Silero VAD: strip silence before transcription for speed
 	VadMethod     string  `json:"vad_method" gorm:"type:varchar(20);default:'pyannote'"`
-	VadOnset  float64 `json:"vad_onset" gorm:"type:real;default:0.5"`
-	VadOffset float64 `json:"vad_offset" gorm:"type:real;default:0.363"`
-	ChunkSize int     `json:"chunk_size" gorm:"type:int;default:30"`
+	VadOnset      float64 `json:"vad_onset" gorm:"type:real;default:0.5"`
+	VadOffset     float64 `json:"vad_offset" gorm:"type:real;default:0.363"`
+	ChunkSize     int     `json:"chunk_size" gorm:"type:int;default:30"`
 
 	// Diarization settings
 	Diarize           bool   `json:"diarize" gorm:"type:boolean;default:false"`
@@ -362,13 +362,13 @@ func (tje *TranscriptionJobExecution) CalculateProcessingDuration() {
 type SpeakerMapping struct {
 	ID                 uint      `json:"id" gorm:"primaryKey;autoIncrement"`
 	TranscriptionJobID string    `json:"transcription_job_id" gorm:"type:varchar(36);not null;index"`
-	OriginalSpeaker    string    `json:"original_speaker" gorm:"type:varchar(50);not null"`  // e.g., "speaker_00"
-	CustomName         string    `json:"custom_name" gorm:"type:varchar(100);not null"`      // e.g., "John Doe"
-	ContactID          *uint     `json:"contact_id,omitempty" gorm:"index"`                  // FK to contacts table (nullable for manual mappings)
-	ConfidenceScore    float64   `json:"confidence_score" gorm:"type:real;default:0"`        // cosine similarity score (0.0–1.0)
-	MatchSource        string    `json:"match_source" gorm:"type:varchar(30);default:''"`    // "auto", "manual", "suggestion_promoted", "retroactive"
-	MatchTier          string    `json:"match_tier" gorm:"type:varchar(20);default:''"`      // "auto", "suggest", "unknown", or ""
-	ReviewStatus       string    `json:"review_status" gorm:"type:varchar(20);default:''"`   // "pending", "accepted", "dismissed", or "" (for auto/manual)
+	OriginalSpeaker    string    `json:"original_speaker" gorm:"type:varchar(50);not null"` // e.g., "speaker_00"
+	CustomName         string    `json:"custom_name" gorm:"type:varchar(100);not null"`     // e.g., "John Doe"
+	ContactID          *uint     `json:"contact_id,omitempty" gorm:"index"`                 // FK to contacts table (nullable for manual mappings)
+	ConfidenceScore    float64   `json:"confidence_score" gorm:"type:real;default:0"`       // cosine similarity score (0.0–1.0)
+	MatchSource        string    `json:"match_source" gorm:"type:varchar(30);default:''"`   // "auto", "manual", "suggestion_promoted", "retroactive"
+	MatchTier          string    `json:"match_tier" gorm:"type:varchar(20);default:''"`     // "auto", "suggest", "unknown", or ""
+	ReviewStatus       string    `json:"review_status" gorm:"type:varchar(20);default:''"`  // "pending", "accepted", "dismissed", or "" (for auto/manual)
 	CreatedAt          time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt          time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 

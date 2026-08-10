@@ -23,6 +23,27 @@ type SileroVadPreprocessor struct {
 	EnvPath string // Python environment path (for uv run)
 }
 
+const sileroVadPyprojectTOML = `[project]
+name = "quill-silero-vad"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.1.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cpu", marker = "platform_machine != 'x86_64' and sys_platform != 'darwin'" },
+]
+`
+
 // AppliesTo returns true when VAD preprocessing is enabled by the user.
 // It is model-agnostic — works with any transcription adapter.
 func (s *SileroVadPreprocessor) AppliesTo(capabilities interfaces.ModelCapabilities) bool {
@@ -39,6 +60,10 @@ func (s *SileroVadPreprocessor) GetRequiredFormats() []string {
 // stored in Metadata so the caller can remap timestamps after transcription.
 func (s *SileroVadPreprocessor) Process(ctx context.Context, input interfaces.AudioInput) (interfaces.AudioInput, error) {
 	logger.Info("Running Silero VAD preprocessing", "file", input.FilePath)
+
+	if err := s.prepareEnvironment(ctx); err != nil {
+		return input, err
+	}
 
 	// Create output paths next to the input.
 	dir := filepath.Dir(input.FilePath)
@@ -100,6 +125,38 @@ func (s *SileroVadPreprocessor) Process(ctx context.Context, input interfaces.Au
 	}
 
 	return result, nil
+}
+
+func (s *SileroVadPreprocessor) prepareEnvironment(ctx context.Context) error {
+	if strings.TrimSpace(s.EnvPath) == "" {
+		return fmt.Errorf("silero VAD environment path is empty")
+	}
+
+	if err := os.MkdirAll(s.EnvPath, 0755); err != nil {
+		return fmt.Errorf("create silero VAD environment: %w", err)
+	}
+
+	pyprojectPath := filepath.Join(s.EnvPath, "pyproject.toml")
+	if _, err := os.Stat(pyprojectPath); os.IsNotExist(err) {
+		if writeErr := os.WriteFile(pyprojectPath, []byte(sileroVadPyprojectTOML), 0644); writeErr != nil {
+			return fmt.Errorf("write silero VAD pyproject: %w", writeErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat silero VAD pyproject: %w", err)
+	}
+
+	readyCmd := exec.CommandContext(ctx, binaries.UV(), "run", "--native-tls", "--project", s.EnvPath, "python", "-c", "import numpy, torch; print('ok')")
+	if err := readyCmd.Run(); err == nil {
+		return nil
+	}
+
+	cmd := exec.CommandContext(ctx, binaries.UV(), "sync", "--native-tls")
+	cmd.Dir = s.EnvPath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("prepare silero VAD environment: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	return nil
 }
 
 // buildSileroVadScript generates a Python script that:

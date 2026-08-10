@@ -55,9 +55,9 @@ type Handler struct {
 	chatRepo            repository.ChatRepository
 	noteRepo            repository.NoteRepository
 	speakerMappingRepo  repository.SpeakerMappingRepository
-	contactRepo           repository.ContactRepository
-	refreshTokenRepo      repository.RefreshTokenRepository
-	cloudProviderRepo     repository.CloudProviderConfigRepository
+	contactRepo         repository.ContactRepository
+	refreshTokenRepo    repository.RefreshTokenRepository
+	cloudProviderRepo   repository.CloudProviderConfigRepository
 	taskQueue           *queue.TaskQueue
 	unifiedProcessor    *transcription.UnifiedJobProcessor
 	quickTranscription  *transcription.QuickTranscriptionService
@@ -110,10 +110,10 @@ func NewHandler(
 		chatRepo:            chatRepo,
 		noteRepo:            noteRepo,
 		speakerMappingRepo:  speakerMappingRepo,
-		contactRepo:           contactRepo,
-		refreshTokenRepo:      refreshTokenRepo,
-		cloudProviderRepo:     cloudProviderRepo,
-		taskQueue:             taskQueue,
+		contactRepo:         contactRepo,
+		refreshTokenRepo:    refreshTokenRepo,
+		cloudProviderRepo:   cloudProviderRepo,
+		taskQueue:           taskQueue,
 		unifiedProcessor:    unifiedProcessor,
 		quickTranscription:  quickTranscription,
 		multiTrackProcessor: multiTrackProcessor,
@@ -406,8 +406,8 @@ func (h *Handler) UploadAudio(c *gin.Context) {
 				existingTitle = *existing.Title
 			}
 			c.JSON(http.StatusConflict, gin.H{
-				"error":       "This file has already been uploaded",
-				"existing_id": existing.ID,
+				"error":          "This file has already been uploaded",
+				"existing_id":    existing.ID,
 				"existing_title": existingTitle,
 			})
 			return
@@ -1129,14 +1129,14 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 
 	searchQuery := c.Query("q")
 	params := repository.ListParams{
-		Offset:       offset,
-		Limit:        limit,
-		SortBy:       c.Query("sort_by"),
-		SortOrder:    c.Query("sort_order"),
-		SearchQuery:  searchQuery,
-		UpdatedAfter: updatedAfter,
-		VaultID:      activeVaultID,
-		Folder:       folderPtr,
+		Offset:        offset,
+		Limit:         limit,
+		SortBy:        c.Query("sort_by"),
+		SortOrder:     c.Query("sort_order"),
+		SearchQuery:   searchQuery,
+		UpdatedAfter:  updatedAfter,
+		VaultID:       activeVaultID,
+		Folder:        folderPtr,
 		Status:        c.Query("status"),
 		Speaker:       c.Query("speaker"),
 		SpeakerStatus: c.Query("speaker_status"),

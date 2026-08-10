@@ -65,7 +65,7 @@ type UnifiedTranscriptionService struct {
 	webhookService        *webhook.Service
 	broadcaster           *sse.Broadcaster
 	postMaterializeHook   func(job *models.TranscriptionJob) // Called after successful artifact materialization
-	markSelfWriteHook     func(metadataPath string)           // Called after writing metadata.json to prevent watcher re-import
+	markSelfWriteHook     func(metadataPath string)          // Called after writing metadata.json to prevent watcher re-import
 }
 
 // NewUnifiedTranscriptionService creates a new unified transcription service
@@ -279,7 +279,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	if job.Parameters.VadPreprocess && u.envPath != "" {
 		jobPipeline.RegisterPreprocessor(&pipeline.SileroVadPreprocessor{
 			Enabled: true,
-			EnvPath: u.envPath,
+			EnvPath: filepath.Join(u.envPath, "silero-vad"),
 		})
 	}
 
@@ -814,13 +814,22 @@ func (u *UnifiedTranscriptionService) convertToVoxtralParams(params models.Whisp
 // convertToMLXWhisperParams converts to MLX Whisper-specific parameters
 func (u *UnifiedTranscriptionService) convertToMLXWhisperParams(params models.WhisperXParams) map[string]interface{} {
 	paramMap := map[string]interface{}{
-		"model":     params.Model,
-		"task":      params.Task,
-		"beam_size": params.BeamSize,
+		"model":                       params.Model,
+		"task":                        params.Task,
+		"beam_size":                   params.BeamSize,
+		"temperature":                 params.Temperature,
+		"condition_on_previous_text":  params.ConditionOnPreviousText,
+		"compression_ratio_threshold": params.CompressionRatioThreshold,
+		"logprob_threshold":           params.LogprobThreshold,
+		"no_speech_threshold":         params.NoSpeechThreshold,
+		"word_timestamps":             true,
 	}
 
 	if params.Language != nil {
 		paramMap["language"] = *params.Language
+	}
+	if params.InitialPrompt != nil {
+		paramMap["initial_prompt"] = *params.InitialPrompt
 	}
 
 	return paramMap
