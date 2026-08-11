@@ -113,13 +113,31 @@ def read_transcript(path: Path) -> tuple[str, float]:
     return " ".join(texts), duration
 
 
-def scan_candidates(db_path: Path, min_score: int, include_large_v3: bool) -> list[Candidate]:
+def scan_candidates(
+    db_path: Path,
+    min_score: int,
+    include_large_v3: bool,
+    skip_human_speaker_mappings: bool = False,
+) -> list[Candidate]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """
-        SELECT id, title, model_family, model, transcript_json_path,
-               transcript_markdown_path, audio_path, artifact_dir
+        SELECT transcription_jobs.id, title, model_family, model, transcript_json_path,
+               transcript_markdown_path, audio_path, artifact_dir,
+               (
+                   SELECT COUNT(*)
+                   FROM speaker_mappings
+                   WHERE transcription_job_id = transcription_jobs.id
+                     AND (
+                         match_source = 'manual'
+                         OR review_status IN ('accepted', 'corrected')
+                         OR (
+                             COALESCE(match_source, '') = ''
+                             AND COALESCE(custom_name, '') != COALESCE(original_speaker, '')
+                         )
+                     )
+               ) AS human_speaker_mapping_count
         FROM transcription_jobs
         WHERE status = 'completed'
           AND deleted_at IS NULL
@@ -131,6 +149,9 @@ def scan_candidates(db_path: Path, min_score: int, include_large_v3: bool) -> li
 
     out: list[Candidate] = []
     for row in rows:
+        if skip_human_speaker_mappings and row["human_speaker_mapping_count"] > 0:
+            continue
+
         model_family = row["model_family"] or ""
         model = row["model"] or ""
         if not include_large_v3 and model_family == "whisper" and model == "large-v3":
@@ -260,12 +281,22 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--limit", type=int, default=25)
     parser.add_argument("--max-hours", type=float, default=60.0)
     parser.add_argument("--include-large-v3", action="store_true")
+    parser.add_argument(
+        "--skip-human-speaker-mappings",
+        action="store_true",
+        help="Skip recordings with manual or accepted speaker-name mappings.",
+    )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
     db_path = Path(args.db).expanduser()
     run_dir = Path(args.runs_dir).expanduser() / args.run_name
-    candidates = scan_candidates(db_path, args.min_score, args.include_large_v3)
+    candidates = scan_candidates(
+        db_path,
+        args.min_score,
+        args.include_large_v3,
+        args.skip_human_speaker_mappings,
+    )
     selected = select_batch(candidates, args.limit, args.max_hours)
     if not selected:
         print("No candidates selected.", file=sys.stderr)
@@ -285,6 +316,7 @@ def main(argv: list[str]) -> int:
             "limit": args.limit,
             "max_hours": args.max_hours,
             "include_large_v3": args.include_large_v3,
+            "skip_human_speaker_mappings": args.skip_human_speaker_mappings,
             "selected_count": len(selected),
             "selected_audio_hours": round(total_hours(selected), 3),
         },
