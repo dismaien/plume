@@ -1644,8 +1644,10 @@ func (h *Handler) AutoGenerateTranscriptionTitle(c *gin.Context) {
 		return
 	}
 
-	// Do not overwrite likely user-defined titles.
-	if !isLikelyDefaultTranscriptionTitle(job) {
+	// Automatic calls preserve user-defined titles. Explicit UI regeneration can
+	// opt in to replacing the derived subject while retaining source metadata.
+	force := strings.EqualFold(strings.TrimSpace(c.Query("force")), "true")
+	if !force && !isLikelyDefaultTranscriptionTitle(job) {
 		logger.Debug("Auto-title API skipped: title appears user-defined",
 			"job_id", jobID, "title", job.Title, "audio_path", job.AudioPath)
 		c.JSON(http.StatusOK, gin.H{
@@ -1967,10 +1969,30 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		return "", "", fmt.Errorf("transcript content is required")
 	}
 
-	title, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
+	subject, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
 	if err != nil {
 		return "", "", err
 	}
+
+	var currentTitle string
+	if job.Title != nil {
+		currentTitle = strings.TrimSpace(*job.Title)
+	}
+	mappings, _ := h.speakerMappingRepo.ListByJob(ctx, job.ID)
+	speakers := transcription.SpeakerTitleNamesFromTranscript(*job.Transcript, mappings)
+	durationMillis := preferredRecordingDurationMillis(
+		durationMillisFromAudio(ctx, job.AudioPath),
+		durationMillisFromTranscript(job.Transcript),
+	)
+	title := transcription.FormatGeneratedArchiveTitle(transcription.GeneratedArchiveTitleInput{
+		RecordedAt:       job.RecordedAt,
+		CreatedAt:        job.CreatedAt,
+		Subject:          subject,
+		CurrentTitle:     currentTitle,
+		OriginalFilename: job.OriginalFilename,
+		Speakers:         speakers,
+		DurationMillis:   durationMillis,
+	})
 
 	originalAudioPath := job.AudioPath
 	renamedAudioPath := originalAudioPath
@@ -2043,6 +2065,9 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 			"from", originalAudioPath,
 			"to", renamedAudioPath)
 	}
+
+	h.ftsUpsertJob(job)
+	h.syncMetadataToBundle(ctx, job.ID)
 
 	return title, selectedModel, nil
 }
@@ -2167,11 +2192,22 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 
 	base := strings.TrimSpace(filepath.Base(job.AudioPath))
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	originalBase := strings.TrimSpace(filepath.Base(job.OriginalFilename))
+	originalStem := strings.TrimSuffix(originalBase, filepath.Ext(originalBase))
 
 	if base != "" && strings.EqualFold(title, base) {
 		return true
 	}
 	if stem != "" && strings.EqualFold(title, stem) {
+		return true
+	}
+	// Bundling renames imported audio to audio.{ext}; compare against the source
+	// filename as well so a filename-derived title remains eligible for AI title
+	// generation after that move.
+	if originalBase != "" && strings.EqualFold(title, originalBase) {
+		return true
+	}
+	if originalStem != "" && strings.EqualFold(title, originalStem) {
 		return true
 	}
 	if strings.HasPrefix(title, "Multi-track Job ") {

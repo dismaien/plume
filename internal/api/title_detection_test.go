@@ -23,3 +23,16 @@ func TestIsLikelyDefaultTranscriptionTitle_PreservesLocationTitles(t *testing.T)
 		t.Fatal("human-readable Apple location titles should not be treated as filename fallbacks")
 	}
 }
+
+func TestIsLikelyDefaultTranscriptionTitle_DetectsOriginalFilenameAfterBundling(t *testing.T) {
+	title := "dream"
+	job := &models.TranscriptionJob{
+		Title:            &title,
+		AudioPath:        "/vault/Transcripts/dream/audio.m4a",
+		OriginalFilename: "dream.m4a",
+	}
+
+	if !isLikelyDefaultTranscriptionTitle(job) {
+		t.Fatal("source filename title should remain eligible after audio is moved into a bundle")
+	}
+}

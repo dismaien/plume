@@ -730,7 +730,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 	const handleGenerateTitle = useCallback(async (jobId: string) => {
 		setTitleGenerating(prev => new Set(prev).add(jobId));
 		try {
-			const response = await fetch(`/api/v1/transcription/${jobId}/title/auto`, {
+			const response = await fetch(`/api/v1/transcription/${jobId}/title/auto?force=true`, {
 				method: "POST",
 				headers: { ...getAuthHeaders() },
 			});
