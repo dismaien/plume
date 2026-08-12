@@ -293,7 +293,17 @@ def weak_subject(subject: str) -> bool:
 
 
 def build_title(candidate: Candidate, subject: str) -> str:
-    parts = [date_prefix_from(candidate.title, candidate.recorded_at), subject]
+    marked_dream = bool(re.search(r"\(dream(?:\b|!)", candidate.title, re.IGNORECASE))
+    subject_dream = bool(re.search(r"(?i)^dreams?(?:$|\s|[:\-])|\sdream$", subject))
+    music_context = bool(re.search(r"(?i)\b(?:song|singing|lyrics?|music|dreamscape)\b", subject))
+    dream = marked_dream or (subject_dream and not music_context)
+    subject = re.sub(r"(?i)^dream(?: account| note| recording)?\s*[:\-]\s*", "", subject).strip()
+    if dream:
+        subject = re.sub(r"(?i)\s+dream$", "", subject).strip() or subject
+    parts = [date_prefix_from(candidate.title, candidate.recorded_at)]
+    if dream:
+        parts.append("(dream)")
+    parts.append(subject)
     if candidate.speakers:
         parts.append(f"[{', '.join(candidate.speakers)}]")
     location = existing_location(candidate.title)

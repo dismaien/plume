@@ -1990,6 +1990,7 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		Subject:          subject,
 		CurrentTitle:     currentTitle,
 		OriginalFilename: job.OriginalFilename,
+		Transcript:       *job.Transcript,
 		Speakers:         speakers,
 		DurationMillis:   durationMillis,
 	})
@@ -2272,6 +2273,7 @@ Rules:
 - Never use generic labels like "Brief Note", "Personal Issue", "Conversation", "Chat", "Discussion", "Audio Recording"
 - Never return raw file names such as "20260724 183644-60C99703"
 - Never return hallucinated filler such as "Thank You"
+- If this is primarily a personal dream account, begin the subject with "Dream: "; Plume converts that into its visible (dream) type marker
 
 Examples:
 - "Jake's Birthday Party Planning"
