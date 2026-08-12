@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search, ArrowLeft } from "lucide-react";
+import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search, ArrowLeft, PanelLeft } from "lucide-react";
 import { Header } from "@/components/Header";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -25,6 +25,7 @@ import { TranscriptSection } from "./audio-detail/TranscriptSection";
 import { ExecutionInfoDialog } from "./audio-detail/ExecutionInfoDialog";
 import { LogsDialog } from "./audio-detail/LogsDialog";
 import { SummaryDialog } from "./audio-detail/SummaryDialog";
+import { RecordingListSidebar } from "./audio-detail/RecordingListSidebar";
 import { ChatSidePanel } from "./ChatSidePanel";
 import { TranscriptionConfigDialog, type WhisperXParams } from "@/components/TranscriptionConfigDialog";
 import { WandAdvancedIcon } from "@/components/icons/WandAdvancedIcon";
@@ -38,6 +39,7 @@ interface AudioDetailViewProps {
 }
 
 type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
+const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar";
 
 function countDistinctDisplaySpeakers(
     transcript: Transcript | null | undefined,
@@ -88,6 +90,9 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
     const [downloadFormat, setDownloadFormat] = useState<'txt' | 'json' | 'md'>('txt');
     const [searchOpen, setSearchOpen] = useState(false);
+    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(
+        () => localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY) === "true",
+    );
 
     // Dialog States
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -141,6 +146,11 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const setTranscriptModeFromUser = useCallback((mode: AudioDetailTranscriptMode) => {
         transcriptModeUserSelectedRef.current = true;
         setTranscriptModeState(mode);
+    }, []);
+
+    const setRecordingsSidebar = useCallback((open: boolean) => {
+        setRecordingsSidebarOpen(open);
+        localStorage.setItem(RECORDINGS_SIDEBAR_STORAGE_KEY, String(open));
     }, []);
 
     const handleSpeakerMappingsSaved = useCallback((mappings: SpeakerMapping[]) => {
@@ -494,6 +504,21 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         <div className="h-screen flex flex-col bg-[var(--bg-main)] relative selection:bg-[var(--brand-light)] overflow-hidden">
             {/* Split Container */}
             <div ref={splitContainerRef} className="flex-1 flex overflow-hidden relative">
+                {recordingsSidebarOpen && (
+                    <>
+                        <button
+                            type="button"
+                            aria-label="Hide recordings list"
+                            onClick={() => setRecordingsSidebar(false)}
+                            className="absolute inset-0 z-30 bg-black/40 lg:hidden"
+                        />
+                        <RecordingListSidebar
+                            currentAudioId={audioId}
+                            dashboardReturnPath={dashboardReturnPath}
+                            onClose={() => setRecordingsSidebar(false)}
+                        />
+                    </>
+                )}
                 {/* LEFT PANE (Main) */}
                 <main className="flex-1 min-w-0 flex flex-col h-full relative z-0">
 
@@ -611,6 +636,25 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                         {/* Action Menu */}
                                         {/* ... keeping existing Logic but updating Chat action ... */}
                                         <div className="flex items-center gap-2">
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        aria-label={recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}
+                                                        aria-pressed={recordingsSidebarOpen}
+                                                        onClick={() => setRecordingsSidebar(!recordingsSidebarOpen)}
+                                                        className={cn(
+                                                            "rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-sm hover:bg-[var(--bg-muted-pane)]",
+                                                            recordingsSidebarOpen && "border-[var(--brand-solid)]/50 text-[var(--brand-solid)]",
+                                                        )}
+                                                    >
+                                                        <PanelLeft className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}</TooltipContent>
+                                            </Tooltip>
                                             {/* AI Summary Button */}
                                             <Button
                                                 variant="outline"
@@ -809,22 +853,24 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                 )}
             </div>
 
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        aria-label="Back to recordings"
-                        onClick={handleBackToRecordings}
-                        className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)]/95 text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-md hover:bg-[var(--bg-muted-pane)] hover:border-[var(--brand-solid)]/50 active:translate-y-px gap-2"
-                    >
-                        <ArrowLeft className="h-4 w-4" />
-                        <span>Recordings</span>
-                    </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">Back to recordings</TooltipContent>
-            </Tooltip>
+            {!recordingsSidebarOpen && (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            aria-label="Back to recordings"
+                            onClick={handleBackToRecordings}
+                            className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)]/95 text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-md hover:bg-[var(--bg-muted-pane)] hover:border-[var(--brand-solid)]/50 active:translate-y-px gap-2"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            <span>Recordings</span>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Back to recordings</TooltipContent>
+                </Tooltip>
+            )}
 
             {/* Mobile / Overlay Chat (If we want overlay behavior even on desktop, we can adjust logic) */}
             {/* Note: User asked for sliding over on mobile. NotesSidebar handles this via portal internally often, or we do it here.
