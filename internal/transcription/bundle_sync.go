@@ -275,6 +275,11 @@ func (s *BundleSyncService) importBundle(ctx context.Context, meta *BundleMetada
 				TranscriptionJobID: meta.ID,
 				OriginalSpeaker:    m.OriginalSpeaker,
 				CustomName:         m.CustomName,
+				ContactID:          m.ContactID,
+				ConfidenceScore:    m.ConfidenceScore,
+				MatchSource:        m.MatchSource,
+				MatchTier:          m.MatchTier,
+				ReviewStatus:       m.ReviewStatus,
 			})
 		}
 		if err := s.speakerMappingRepo.UpdateMappings(ctx, meta.ID, mappings); err != nil {
@@ -394,6 +399,11 @@ func (s *BundleSyncService) updateFromMetadata(ctx context.Context, job *models.
 				TranscriptionJobID: meta.ID,
 				OriginalSpeaker:    m.OriginalSpeaker,
 				CustomName:         m.CustomName,
+				ContactID:          m.ContactID,
+				ConfidenceScore:    m.ConfidenceScore,
+				MatchSource:        m.MatchSource,
+				MatchTier:          m.MatchTier,
+				ReviewStatus:       m.ReviewStatus,
 			})
 		}
 		_ = s.speakerMappingRepo.UpdateMappings(ctx, meta.ID, mappings)

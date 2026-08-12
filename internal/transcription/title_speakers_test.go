@@ -33,6 +33,15 @@ func TestWithSpeakerTitleBlock_InsertsBeforeDuration(t *testing.T) {
 	}
 }
 
+func TestWithSpeakerTitleBlock_RemovesRejectedSpeakerBlock(t *testing.T) {
+	title := "260812 05:21 Dream [Mama] @Rua Regedoura {00:58}"
+	got := WithSpeakerTitleBlock(title, nil)
+	want := "260812 05:21 Dream @Rua Regedoura {00:58}"
+	if got != want {
+		t.Fatalf("WithSpeakerTitleBlock() = %q, want %q", got, want)
+	}
+}
+
 func TestSpeakerTitleNamesFromTranscript_UsesMappingOverStaleSpeakerName(t *testing.T) {
 	raw := `{
 		"segments": [
@@ -53,6 +62,24 @@ func TestSpeakerTitleNamesFromTranscript_UsesMappingOverStaleSpeakerName(t *test
 		if got[i] != want[i] {
 			t.Fatalf("name[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestSpeakerTitleNamesFromTranscript_IgnoresPendingAndDismissedGuesses(t *testing.T) {
+	raw := `{
+		"segments": [
+			{"start": 0, "speaker": "speaker_00", "speaker_name": "Mama", "text": "guess"},
+			{"start": 5, "speaker": "speaker_01", "speaker_name": "Leona", "text": "confirmed"}
+		]
+	}`
+	mappings := []models.SpeakerMapping{
+		{OriginalSpeaker: "speaker_00", CustomName: "Mama", MatchTier: "suggest", ReviewStatus: "dismissed"},
+		{OriginalSpeaker: "speaker_01", CustomName: "Leona", MatchTier: "auto"},
+	}
+	got := SpeakerTitleNamesFromTranscript(raw, mappings)
+	want := []string{"Leona"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("SpeakerTitleNamesFromTranscript() = %v, want %v", got, want)
 	}
 }
 

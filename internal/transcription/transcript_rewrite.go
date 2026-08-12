@@ -49,8 +49,9 @@ func RewriteTranscriptJSON(jsonPath string, mappings map[string]string) error {
 				}
 				if displayName, mapped := mappings[speakerStr]; mapped {
 					seg["speaker_name"] = displayName
+				} else {
+					delete(seg, "speaker_name")
 				}
-				// If no mapping exists we intentionally leave speaker_name absent.
 			}
 		}
 	}
@@ -91,11 +92,11 @@ func RewriteTranscriptJSON(jsonPath string, mappings map[string]string) error {
 // transcriptSegmentForRewrite is the segment representation used when
 // reading JSON to regenerate the markdown file.
 type transcriptSegmentForRewrite struct {
-	Start       float64  `json:"start"`
-	End         float64  `json:"end"`
-	Text        string   `json:"text"`
-	Speaker     *string  `json:"speaker,omitempty"`
-	SpeakerName *string  `json:"speaker_name,omitempty"`
+	Start       float64 `json:"start"`
+	End         float64 `json:"end"`
+	Text        string  `json:"text"`
+	Speaker     *string `json:"speaker,omitempty"`
+	SpeakerName *string `json:"speaker_name,omitempty"`
 }
 
 // transcriptPayloadForRewrite is the top-level JSON structure used when
@@ -165,17 +166,17 @@ func RewriteTranscriptMarkdown(mdPath string, jsonPath string, job *models.Trans
 }
 
 // resolveDisplayName picks the best display name for a segment speaker.
-// Priority: speaker_name field > mappings lookup > raw speaker key.
+// Priority: confirmed mappings lookup > speaker_name field > raw speaker key.
 func resolveDisplayName(speaker *string, speakerName *string, mappings map[string]string) *string {
-	// Use existing speaker_name if present and non-empty.
-	if speakerName != nil && strings.TrimSpace(*speakerName) != "" {
-		return speakerName
-	}
-	// Try mappings.
 	if speaker != nil {
 		if display, ok := mappings[*speaker]; ok && display != "" {
 			return &display
 		}
+	}
+	if speakerName != nil && strings.TrimSpace(*speakerName) != "" {
+		return speakerName
+	}
+	if speaker != nil {
 		// Fallback to raw speaker key.
 		return speaker
 	}
@@ -199,7 +200,9 @@ func RewriteTranscriptFiles(job *models.TranscriptionJob, speakerMappings []mode
 	// Build the lookup map.
 	mappings := make(map[string]string, len(speakerMappings))
 	for _, m := range speakerMappings {
-		mappings[m.OriginalSpeaker] = m.CustomName
+		if m.IsConfirmedIdentity() {
+			mappings[m.OriginalSpeaker] = m.CustomName
+		}
 	}
 
 	// Stamp UpdatedAt so the markdown front-matter stays current.

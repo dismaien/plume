@@ -15,12 +15,12 @@ const metadataFileName = "metadata.json"
 // BundleMetadata contains all metadata needed to reconstruct a DB record from disk.
 // This file lives alongside transcript.json, transcript.md, and audio.* in each bundle.
 type BundleMetadata struct {
-	ID               string    `json:"id"`
-	Title            string    `json:"title"`
-	Status           string    `json:"status"`
-	Diarization      bool      `json:"diarization"`
-	IsMultiTrack     bool      `json:"is_multi_track,omitempty"`
-	Folder           string    `json:"folder,omitempty"`
+	ID               string     `json:"id"`
+	Title            string     `json:"title"`
+	Status           string     `json:"status"`
+	Diarization      bool       `json:"diarization"`
+	IsMultiTrack     bool       `json:"is_multi_track,omitempty"`
+	Folder           string     `json:"folder,omitempty"`
 	OriginalFilename string     `json:"original_filename,omitempty"`
 	FileHash         string     `json:"file_hash,omitempty"`
 	RecordedAt       *time.Time `json:"recorded_at,omitempty"`
@@ -34,8 +34,13 @@ type BundleMetadata struct {
 
 // SpeakerMappingEntry represents a speaker mapping in the metadata sidecar.
 type SpeakerMappingEntry struct {
-	OriginalSpeaker string `json:"original_speaker"`
-	CustomName      string `json:"custom_name"`
+	OriginalSpeaker string  `json:"original_speaker"`
+	CustomName      string  `json:"custom_name"`
+	ContactID       *uint   `json:"contact_id,omitempty"`
+	ConfidenceScore float64 `json:"confidence_score,omitempty"`
+	MatchSource     string  `json:"match_source,omitempty"`
+	MatchTier       string  `json:"match_tier,omitempty"`
+	ReviewStatus    string  `json:"review_status,omitempty"`
 }
 
 // SummaryEntry represents a summary in the metadata sidecar.
@@ -250,6 +255,11 @@ func BuildMetadataFromJob(
 		meta.SpeakerMappings = append(meta.SpeakerMappings, SpeakerMappingEntry{
 			OriginalSpeaker: m.OriginalSpeaker,
 			CustomName:      m.CustomName,
+			ContactID:       m.ContactID,
+			ConfidenceScore: m.ConfidenceScore,
+			MatchSource:     m.MatchSource,
+			MatchTier:       m.MatchTier,
+			ReviewStatus:    m.ReviewStatus,
 		})
 	}
 

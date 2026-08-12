@@ -386,6 +386,18 @@ func (SpeakerMapping) TableName() string {
 	return "speaker_mappings"
 }
 
+// IsConfirmedIdentity reports whether this mapping may be used as a real
+// speaker identity. Suggest-tier guesses remain inert until explicitly accepted.
+func (m SpeakerMapping) IsConfirmedIdentity() bool {
+	if m.ReviewStatus == "pending" || m.ReviewStatus == "dismissed" {
+		return false
+	}
+	if m.MatchTier == "suggest" {
+		return m.ReviewStatus == "accepted" || m.MatchSource == "suggestion_promoted"
+	}
+	return true
+}
+
 // MultiTrackFile represents an individual audio track in a multi-track recording
 type MultiTrackFile struct {
 	ID                 uint      `json:"id" gorm:"primaryKey;autoIncrement"`

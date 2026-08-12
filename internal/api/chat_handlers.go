@@ -707,7 +707,9 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 		speakerMap := make(map[string]string)
 		if err == nil {
 			for _, m := range mappings {
-				speakerMap[m.OriginalSpeaker] = m.CustomName
+				if m.IsConfirmedIdentity() {
+					speakerMap[m.OriginalSpeaker] = m.CustomName
+				}
 			}
 		} else {
 			fmt.Printf("Failed to get speaker mappings for job %s: %v\n", session.TranscriptionID, err)

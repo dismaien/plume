@@ -411,6 +411,18 @@ func (h *Handler) DismissSpeakerSuggestion(c *gin.Context) {
 		return
 	}
 
+	// A rejected suggestion must stop acting as a real speaker identity across
+	// every derived surface, while the row remains as evidence of the rejection.
+	job, jobErr := h.jobRepo.FindByID(c.Request.Context(), jobID)
+	updatedMappings, mappingsErr := h.speakerMappingRepo.ListByJob(c.Request.Context(), jobID)
+	if jobErr == nil && mappingsErr == nil {
+		h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, updatedMappings)
+		if rewriteErr := transcription.RewriteTranscriptFiles(job, updatedMappings); rewriteErr != nil {
+			logger.Warn("dismiss: transcript file rewrite failed", "job_id", jobID, "error", rewriteErr)
+		}
+		h.syncMetadataToBundle(c.Request.Context(), jobID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "dismissed"})
 }
 

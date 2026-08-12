@@ -31,10 +31,15 @@ type titleSpeakerPayload struct {
 // re-rename immediately updates derived titles.
 func SpeakerTitleNamesFromTranscript(rawTranscript string, mappings []models.SpeakerMapping) []string {
 	mappingBySpeaker := make(map[string]string, len(mappings))
+	knownMappingSpeakers := make(map[string]struct{}, len(mappings))
 	for _, mapping := range mappings {
 		original := strings.TrimSpace(mapping.OriginalSpeaker)
 		custom := strings.TrimSpace(mapping.CustomName)
-		if original == "" || custom == "" || isGenericSpeakerLabel(custom) {
+		if original == "" {
+			continue
+		}
+		knownMappingSpeakers[original] = struct{}{}
+		if !mapping.IsConfirmedIdentity() || custom == "" || isGenericSpeakerLabel(custom) {
 			continue
 		}
 		mappingBySpeaker[original] = custom
@@ -59,8 +64,12 @@ func SpeakerTitleNamesFromTranscript(rawTranscript string, mappings []models.Spe
 	if strings.TrimSpace(rawTranscript) != "" && json.Unmarshal([]byte(rawTranscript), &payload) == nil {
 		for _, segment := range payload.Segments {
 			if segment.Speaker != nil {
-				if mapped, ok := mappingBySpeaker[strings.TrimSpace(*segment.Speaker)]; ok {
+				speaker := strings.TrimSpace(*segment.Speaker)
+				if mapped, ok := mappingBySpeaker[speaker]; ok {
 					add(mapped)
+					continue
+				}
+				if _, hasMapping := knownMappingSpeakers[speaker]; hasMapping {
 					continue
 				}
 			}
@@ -77,7 +86,9 @@ func SpeakerTitleNamesFromTranscript(rawTranscript string, mappings []models.Spe
 		return ordered[i].OriginalSpeaker < ordered[j].OriginalSpeaker
 	})
 	for _, mapping := range ordered {
-		add(mapping.CustomName)
+		if mapping.IsConfirmedIdentity() {
+			add(mapping.CustomName)
+		}
 	}
 
 	return names
@@ -106,11 +117,14 @@ func SpeakerTitleName(displayName string) string {
 // inserts one before @location / {duration} when the title has no speaker block.
 func WithSpeakerTitleBlock(title string, speakers []string) string {
 	cleaned := normalizeSpeakerTitleNames(speakers)
+	trimmed := strings.TrimSpace(title)
 	if len(cleaned) == 0 {
-		return strings.TrimSpace(title)
+		if loc := speakerBlockRange(trimmed); loc != nil {
+			return strings.TrimSpace(trimmed[:loc[0]] + trimmed[loc[1]:])
+		}
+		return trimmed
 	}
 
-	trimmed := strings.TrimSpace(title)
 	block := " [" + strings.Join(cleaned, ", ") + "]"
 
 	if loc := speakerBlockRange(trimmed); loc != nil {

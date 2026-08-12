@@ -222,6 +222,23 @@ func TestRewriteTranscriptJSON_ReRename(t *testing.T) {
 	}
 }
 
+func TestRewriteTranscriptJSON_RemovesStaleRejectedSpeakerName(t *testing.T) {
+	dir := t.TempDir()
+	jsonPath := writeTempJSON(t, dir, sampleJSONPayload([]map[string]interface{}{
+		{"start": 0.0, "end": 5.0, "text": "hello", "speaker": "speaker_00", "speaker_name": "Mama"},
+	}))
+
+	if err := RewriteTranscriptJSON(jsonPath, map[string]string{}); err != nil {
+		t.Fatalf("RewriteTranscriptJSON returned error: %v", err)
+	}
+
+	data := readJSONFile(t, jsonPath)
+	segs := segmentsFromJSON(t, data)
+	if segmentHasField(segs[0], "speaker_name") {
+		t.Fatal("rejected speaker_name should be removed")
+	}
+}
+
 // TestRewriteTranscriptJSON_MissingFile verifies that a non-existent file
 // returns an error.
 func TestRewriteTranscriptJSON_MissingFile(t *testing.T) {
