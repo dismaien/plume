@@ -946,10 +946,22 @@ func (r *speakerMappingRepository) GetSpeakerAttentionSummary(ctx context.Contex
 	err := r.db.WithContext(ctx).
 		Model(&models.SpeakerMapping{}).
 		Select(`transcription_job_id,
-			COUNT(*) as total,
-			SUM(CASE WHEN review_status = 'pending' THEN 1 ELSE 0 END) as pending,
-			SUM(CASE WHEN match_tier = 'auto' THEN 1 ELSE 0 END) as auto,
-			SUM(CASE WHEN custom_name != '' AND custom_name != original_speaker AND COALESCE(review_status, '') NOT IN ('pending', 'dismissed') THEN 1 ELSE 0 END) as renamed`).
+			COUNT(DISTINCT CASE
+				WHEN custom_name != '' AND custom_name != original_speaker
+					THEN LOWER(TRIM(custom_name))
+				ELSE LOWER(TRIM(original_speaker))
+			END) as total,
+			COUNT(DISTINCT CASE
+				WHEN review_status = 'pending' THEN LOWER(TRIM(custom_name))
+			END) as pending,
+			COUNT(DISTINCT CASE
+				WHEN match_tier = 'auto' THEN LOWER(TRIM(custom_name))
+			END) as auto,
+			COUNT(DISTINCT CASE
+				WHEN custom_name != '' AND custom_name != original_speaker
+					AND COALESCE(review_status, '') NOT IN ('pending', 'dismissed')
+					THEN LOWER(TRIM(custom_name))
+			END) as renamed`).
 		Where("transcription_job_id IN ?", jobIDs).
 		Group("transcription_job_id").
 		Scan(&rows).Error

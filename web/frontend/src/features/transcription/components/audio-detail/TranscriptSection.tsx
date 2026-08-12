@@ -14,6 +14,7 @@ import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { X, StickyNote } from "lucide-react";
 import { computeWordOffsets } from "@/features/transcription/hooks/useKaraokeHighlight";
 import type { Transcript } from "@/features/transcription/hooks/useAudioDetail";
+import type { SpeakerMapping } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import type { TranscriptMode } from "@/components/transcript/TranscriptView";
 import { cn } from "@/lib/utils";
 import { useTranscriptSearch } from "@/features/transcription/hooks/useTranscriptSearch";
@@ -39,6 +40,7 @@ interface TranscriptSectionProps {
     downloadFormat: 'txt' | 'json';
     searchOpen: boolean;
     setSearchOpen: (open: boolean) => void;
+    onSpeakerMappingsSaved?: (mappings: SpeakerMapping[]) => void;
 }
 
 export function TranscriptSection({
@@ -60,6 +62,7 @@ export function TranscriptSection({
     downloadFormat,
     searchOpen,
     setSearchOpen,
+    onSpeakerMappingsSaved,
     className
 }: TranscriptSectionProps & { className?: string }) {
     const isMobile = useIsMobile();
@@ -255,12 +258,14 @@ export function TranscriptSection({
                 onOpenChange={setSpeakerRenameOpen}
                 transcriptionId={audioId}
                 initialSpeakers={getDetectedSpeakers()}
-                onSpeakerMappingsUpdate={() => {
+                onSpeakerMappingsUpdate={(mappings) => {
                     queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
+                    queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
                     queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] });
                     queryClient.invalidateQueries({ queryKey: ["contacts"] });
+                    onSpeakerMappingsSaved?.(mappings);
                 }}
             />
             {/* Portals */}

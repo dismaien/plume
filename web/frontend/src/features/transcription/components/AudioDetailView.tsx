@@ -16,7 +16,7 @@ import { sanitizeInputValue } from "@/lib/filename-validation";
 
 // Custom Hooks
 import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type Transcript, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
-import { useSpeakerMappings } from "@/features/transcription/hooks/useTranscriptionSpeakers";
+import { useSpeakerMappings, type SpeakerMapping } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import { useTranscriptDownload } from "@/features/transcription/hooks/useTranscriptDownload";
 import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
 
@@ -142,6 +142,20 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         transcriptModeUserSelectedRef.current = true;
         setTranscriptModeState(mode);
     }, []);
+
+    const handleSpeakerMappingsSaved = useCallback((mappings: SpeakerMapping[]) => {
+        const mappingLookup = Object.fromEntries(
+            mappings
+                .map((mapping) => [mapping.original_speaker, mapping.custom_name.trim()] as const)
+                .filter(([, customName]) => customName !== ""),
+        );
+        const logicalSpeakerCount = countDistinctDisplaySpeakers(transcript, mappingLookup);
+
+        // Saving duplicate names is an explicit correction to diarization. Reset
+        // the automatic view choice so one logical speaker becomes one text.
+        transcriptModeUserSelectedRef.current = false;
+        setTranscriptModeState(logicalSpeakerCount > 1 ? "compacted" : "plain");
+    }, [transcript]);
 
     // Resizing Logic
     useEffect(() => {
@@ -762,6 +776,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     isPlaying={isPlaying}
                                     searchOpen={searchOpen}
                                     setSearchOpen={setSearchOpen}
+                                    onSpeakerMappingsSaved={handleSpeakerMappingsSaved}
                                 />
                             </div>
                         </div>
