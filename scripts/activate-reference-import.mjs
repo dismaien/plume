@@ -11,8 +11,7 @@ const backupApp = args.backupApp || "/Applications/Plume-before-reference-202608
 const importScript = args.importScript || new URL("./import-voice-memo-archive.mjs", import.meta.url).pathname;
 const syncReport = requiredArg("syncReport");
 const qualityPlist = args.qualityPlist || "/tmp/com.plume.quality-reruns-20260816.plist";
-const apiBase = args.apiBase || "http://127.0.0.1:49291/api/v1";
-const healthURL = `${new URL(apiBase).origin}/health`;
+let apiBase = args.apiBase || "";
 const minimumFreeGB = Number(args.minimumFreeGb || 12);
 
 log("controller_started", { staged_app: stagedApp, sync_report: syncReport });
@@ -90,13 +89,24 @@ function startPlume() {
 async function waitForBackend() {
   for (let attempt = 0; attempt < 180; attempt += 1) {
     try {
-      execFileSync("curl", ["-sS", "--fail", healthURL], { stdio: "ignore", timeout: 5_000 });
+      if (!apiBase) apiBase = discoverAPIBase();
+      execFileSync("curl", ["-sS", "--fail", `${new URL(apiBase).origin}/health`], { stdio: "ignore", timeout: 5_000 });
       return;
     } catch {
+      if (!args.apiBase) apiBase = "";
       await sleep(1_000);
     }
   }
   throw new Error("Updated Plume backend did not become ready");
+}
+
+function discoverAPIBase() {
+  const pids = plumeBackendPIDs();
+  if (!pids.length) throw new Error("Plume backend is not running yet");
+  const command = execFileSync("ps", ["eww", "-p", pids[0], "-o", "command="], { encoding: "utf8" });
+  const port = command.match(/(?:^|\s)PORT=(\d+)(?:\s|$)/)?.[1];
+  if (!port) throw new Error("Could not discover Plume backend port");
+  return `http://127.0.0.1:${port}/api/v1`;
 }
 
 function requireReferenceBackend() {
