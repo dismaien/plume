@@ -12,6 +12,18 @@ export interface SpeakerMapping {
     review_status?: string; // "" | "pending" | "accepted" | "dismissed"
 }
 
+export function isConfirmedSpeakerMapping(mapping: SpeakerMapping): boolean {
+    if (mapping.review_status === "pending" || mapping.review_status === "dismissed") {
+        return false;
+    }
+
+    if (mapping.match_tier === "suggest") {
+        return mapping.review_status === "accepted" || mapping.match_source === "suggestion_promoted";
+    }
+
+    return true;
+}
+
 export interface SpeakerContactBootstrapSummary {
     started_count: number;
     created_count: number;
@@ -40,7 +52,11 @@ export function useSpeakerMappings(audioId: string, enabled: boolean) {
             // so the UI falls through to the friendly "Speaker A/B/C" format.
             const mappingObj: Record<string, string> = {};
             mappings.forEach(mapping => {
-                if (mapping.custom_name && mapping.custom_name !== mapping.original_speaker) {
+                if (
+                    isConfirmedSpeakerMapping(mapping)
+                    && mapping.custom_name
+                    && mapping.custom_name !== mapping.original_speaker
+                ) {
                     mappingObj[mapping.original_speaker] = mapping.custom_name;
                 }
             });
@@ -108,6 +124,10 @@ export function usePromoteSpeakerSuggestion() {
                 queryKey: ["speakerMappings", params.transcriptionId],
             });
 
+            queryClient.invalidateQueries({
+                queryKey: ["audio", params.transcriptionId],
+            });
+
             // Invalidate audioFiles so the list reflects updated speaker names
             queryClient.invalidateQueries({
                 queryKey: ["audioFiles"],
@@ -139,6 +159,14 @@ export function useDismissSpeakerSuggestion() {
                 queryKey: ["speakerSuggestions", params.transcriptionId],
             });
 
+            queryClient.invalidateQueries({
+                queryKey: ["speakerMappings", params.transcriptionId],
+            });
+
+            queryClient.invalidateQueries({
+                queryKey: ["audio", params.transcriptionId],
+            });
+
             // Invalidate audioFiles so badge counts update
             queryClient.invalidateQueries({
                 queryKey: ["audioFiles"],
@@ -146,4 +174,3 @@ export function useDismissSpeakerSuggestion() {
         },
     });
 }
-

@@ -149,6 +149,27 @@ func TestMoveAudioToBundle_SourceNotExist(t *testing.T) {
 	}
 }
 
+func TestMaterializeAudioToBundle_ReferenceDoesNotCreateBundleAudio(t *testing.T) {
+	srcDir := t.TempDir()
+	bundleDir := t.TempDir()
+
+	srcPath := filepath.Join(srcDir, "recording.m4a")
+	if err := os.WriteFile(srcPath, []byte("fake audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath, err := MaterializeAudioToBundle(srcPath, bundleDir, AudioStorageReference)
+	if err != nil {
+		t.Fatalf("MaterializeAudioToBundle reference error: %v", err)
+	}
+	if newPath != srcPath {
+		t.Fatalf("reference mode path = %q, want source %q", newPath, srcPath)
+	}
+	if err := VerifyAudioInBundle(bundleDir); err == nil {
+		t.Fatal("reference mode should not create audio.* in bundle")
+	}
+}
+
 // ---------- RenameBundleDir tests ----------
 
 // mustSetup creates a directory and writes files into it, failing the test on error.

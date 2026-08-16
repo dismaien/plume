@@ -145,11 +145,10 @@ export function useAudioUpload() {
             formData.append(fieldName, file);
             const trimmedTitle = typeof title === "string" ? title.trim() : undefined;
 
-            // Backward compatibility: when caller does not provide a title,
-            // preserve existing filename-based title behavior.
-            if (trimmedTitle === undefined) {
-                formData.append('title', file.name.replace(/\.[^/.]+$/, ''));
-            } else if (trimmedTitle !== "") {
+            // Omit the title unless the user explicitly supplied one. The
+            // backend retains original_filename separately and can then
+            // distinguish a source label from an authored Plume title.
+            if (trimmedTitle !== undefined && trimmedTitle !== "") {
                 // Explicit title provided by caller.
                 formData.append('title', trimmedTitle);
             }

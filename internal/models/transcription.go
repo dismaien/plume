@@ -32,6 +32,11 @@ type TranscriptionJob struct {
 	OriginalFilename       string         `json:"original_filename,omitempty" gorm:"type:text"`
 	FileHash               string         `json:"file_hash,omitempty" gorm:"type:varchar(64);index"`
 	RecordedAt             *time.Time     `json:"recorded_at,omitempty" gorm:"type:datetime"`
+	IsSourcePart           bool           `json:"is_source_part" gorm:"type:boolean;default:false;index"`
+	SourceParentID         string         `json:"source_parent_id,omitempty" gorm:"type:varchar(36);index"`
+	SourceGroupID          string         `json:"source_group_id,omitempty" gorm:"type:text;index"`
+	SourcePartIndex        int            `json:"source_part_index,omitempty" gorm:"type:int;default:0"`
+	SourcePartCount        int            `json:"source_part_count,omitempty" gorm:"type:int;default:0"`
 	ObsidianSyncedAt       *time.Time     `json:"obsidian_synced_at,omitempty" gorm:"type:datetime"`
 	CreatedAt              time.Time      `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt              time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
@@ -41,7 +46,8 @@ type TranscriptionJob struct {
 	Parameters WhisperXParams `json:"parameters" gorm:"embedded"`
 
 	// Computed fields (not persisted)
-	HasAudio bool `json:"has_audio" gorm:"-"`
+	HasAudio bool  `json:"has_audio" gorm:"-"`
+	Duration int64 `json:"duration,omitempty" gorm:"-"` // Recording duration in milliseconds
 
 	// Relationships
 	MultiTrackFiles []MultiTrackFile `json:"multi_track_files,omitempty" gorm:"foreignKey:TranscriptionJobID"`
@@ -92,9 +98,9 @@ type WhisperXParams struct {
 	// VAD (Voice Activity Detection) settings
 	VadPreprocess bool    `json:"vad_preprocess" gorm:"type:boolean;default:true"` // Silero VAD: strip silence before transcription for speed
 	VadMethod     string  `json:"vad_method" gorm:"type:varchar(20);default:'pyannote'"`
-	VadOnset  float64 `json:"vad_onset" gorm:"type:real;default:0.5"`
-	VadOffset float64 `json:"vad_offset" gorm:"type:real;default:0.363"`
-	ChunkSize int     `json:"chunk_size" gorm:"type:int;default:30"`
+	VadOnset      float64 `json:"vad_onset" gorm:"type:real;default:0.5"`
+	VadOffset     float64 `json:"vad_offset" gorm:"type:real;default:0.363"`
+	ChunkSize     int     `json:"chunk_size" gorm:"type:int;default:30"`
 
 	// Diarization settings
 	Diarize           bool   `json:"diarize" gorm:"type:boolean;default:false"`
@@ -361,13 +367,13 @@ func (tje *TranscriptionJobExecution) CalculateProcessingDuration() {
 type SpeakerMapping struct {
 	ID                 uint      `json:"id" gorm:"primaryKey;autoIncrement"`
 	TranscriptionJobID string    `json:"transcription_job_id" gorm:"type:varchar(36);not null;index"`
-	OriginalSpeaker    string    `json:"original_speaker" gorm:"type:varchar(50);not null"`  // e.g., "speaker_00"
-	CustomName         string    `json:"custom_name" gorm:"type:varchar(100);not null"`      // e.g., "John Doe"
-	ContactID          *uint     `json:"contact_id,omitempty" gorm:"index"`                  // FK to contacts table (nullable for manual mappings)
-	ConfidenceScore    float64   `json:"confidence_score" gorm:"type:real;default:0"`        // cosine similarity score (0.0–1.0)
-	MatchSource        string    `json:"match_source" gorm:"type:varchar(30);default:''"`    // "auto", "manual", "suggestion_promoted", "retroactive"
-	MatchTier          string    `json:"match_tier" gorm:"type:varchar(20);default:''"`      // "auto", "suggest", "unknown", or ""
-	ReviewStatus       string    `json:"review_status" gorm:"type:varchar(20);default:''"`   // "pending", "accepted", "dismissed", or "" (for auto/manual)
+	OriginalSpeaker    string    `json:"original_speaker" gorm:"type:varchar(50);not null"` // e.g., "speaker_00"
+	CustomName         string    `json:"custom_name" gorm:"type:varchar(100);not null"`     // e.g., "John Doe"
+	ContactID          *uint     `json:"contact_id,omitempty" gorm:"index"`                 // FK to contacts table (nullable for manual mappings)
+	ConfidenceScore    float64   `json:"confidence_score" gorm:"type:real;default:0"`       // cosine similarity score (0.0–1.0)
+	MatchSource        string    `json:"match_source" gorm:"type:varchar(30);default:''"`   // "auto", "manual", "suggestion_promoted", "retroactive"
+	MatchTier          string    `json:"match_tier" gorm:"type:varchar(20);default:''"`     // "auto", "suggest", "unknown", or ""
+	ReviewStatus       string    `json:"review_status" gorm:"type:varchar(20);default:''"`  // "pending", "accepted", "dismissed", or "" (for auto/manual)
 	CreatedAt          time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt          time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 
@@ -378,6 +384,18 @@ type SpeakerMapping struct {
 // Ensure unique constraint on job_id + original_speaker combination
 func (SpeakerMapping) TableName() string {
 	return "speaker_mappings"
+}
+
+// IsConfirmedIdentity reports whether this mapping may be used as a real
+// speaker identity. Suggest-tier guesses remain inert until explicitly accepted.
+func (m SpeakerMapping) IsConfirmedIdentity() bool {
+	if m.ReviewStatus == "pending" || m.ReviewStatus == "dismissed" {
+		return false
+	}
+	if m.MatchTier == "suggest" {
+		return m.ReviewStatus == "accepted" || m.MatchSource == "suggestion_promoted"
+	}
+	return true
 }
 
 // MultiTrackFile represents an individual audio track in a multi-track recording

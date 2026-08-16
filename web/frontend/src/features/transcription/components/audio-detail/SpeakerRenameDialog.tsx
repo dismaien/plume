@@ -19,7 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useContacts, useCreateContact } from "@/features/contacts/hooks/useContacts";
 import type { Contact } from "@/features/contacts/types";
 import type { SpeakerMapping, SpeakerMappingsUpdateResponse } from "@/features/transcription/hooks/useTranscriptionSpeakers";
-import { usePromoteSpeakerSuggestion, useSpeakerSuggestions, useDismissSpeakerSuggestion } from "@/features/transcription/hooks/useTranscriptionSpeakers";
+import { isConfirmedSpeakerMapping, usePromoteSpeakerSuggestion, useSpeakerSuggestions, useDismissSpeakerSuggestion } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import { speakerIndexToLabel } from "@/lib/speaker-utils";
 import { sanitizeInputValue } from "@/lib/filename-validation";
 
@@ -87,8 +87,8 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(0);
   const [promotedSpeakers, setPromotedSpeakers] = useState<Set<string>>(new Set());
   const [retranscribeOpen, setRetranscribeOpen] = useState(false);
-  const [retranscribeFamily, setRetranscribeFamily] = useState("mlx_whisper");
-  const [retranscribeModel, setRetranscribeModel] = useState("large-v3-turbo-q4");
+  const [retranscribeFamily, setRetranscribeFamily] = useState("whisper");
+  const [retranscribeModel, setRetranscribeModel] = useState("large-v3");
   const [retranscribeNumSpeakers, setRetranscribeNumSpeakers] = useState("");
   const [retranscribeDiarizeMode, setRetranscribeDiarizeMode] = useState<"local" | "pyannote" | "sherpa-onnx">("sherpa-onnx");
   const [isRetranscribing, setIsRetranscribing] = useState(false);
@@ -141,9 +141,11 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
         // so the placeholder shows the friendly "Speaker A" / "Speaker B" format
         const isRawLabel = mapping.custom_name === mapping.original_speaker ||
           /^speaker[_ ]\d+$/i.test(mapping.custom_name);
-        mappingObj[mapping.original_speaker] = isRawLabel ? '' : mapping.custom_name;
+        mappingObj[mapping.original_speaker] = isRawLabel || !isConfirmedSpeakerMapping(mapping)
+          ? ''
+          : mapping.custom_name;
         detailsMap.set(mapping.original_speaker, mapping);
-        if (mapping.match_source === 'suggestion_promoted') {
+        if (mapping.match_source === 'suggestion_promoted' && isConfirmedSpeakerMapping(mapping)) {
           alreadyPromoted.add(mapping.original_speaker);
         }
       });
@@ -328,12 +330,24 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
     try {
       // Convert mappings to API format, including promoted speakers so the
       // backend's DELETE ALL + INSERT cycle preserves their metadata.
-      const mappingsArray = Object.entries(speakerMappings)
-        .filter(([, custom_name]) => custom_name.trim() !== '')
-        .map(([original_speaker, custom_name]) => ({
-          original_speaker,
-          custom_name,
-        }));
+      const mappingsArray = Object.entries(speakerMappings).flatMap(([original_speaker, custom_name]) => {
+        const trimmedName = custom_name.trim();
+        if (trimmedName !== '') {
+          return [{ original_speaker, custom_name: trimmedName }];
+        }
+
+        // Keep unresolved review rows in the database so a dismissed contact
+        // is not silently suggested again after saving unrelated speaker edits.
+        const detail = mappingDetails.get(original_speaker);
+        if (
+          (detail?.review_status === 'pending' || detail?.review_status === 'dismissed')
+          && detail.custom_name.trim() !== ''
+        ) {
+          return [{ original_speaker, custom_name: detail.custom_name }];
+        }
+
+        return [];
+      });
 
       if (mappingsArray.length === 0) {
         onOpenChange(false);
@@ -385,6 +399,7 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
     try {
       const numSpeakers = retranscribeNumSpeakers ? parseInt(retranscribeNumSpeakers, 10) : undefined;
       const isSortformer = retranscribeDiarizeMode === "local";
+      const isWhisperX = retranscribeFamily === "whisper";
       const diarizeModel = isSortformer ? "nvidia_sortformer"
         : retranscribeDiarizeMode === "sherpa-onnx" ? "sherpa-onnx"
         : "pyannote";
@@ -392,6 +407,21 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       const params: Record<string, unknown> = {
         model_family: retranscribeFamily,
         model: retranscribeModel,
+        device: "cpu",
+        batch_size: 8,
+        compute_type: isWhisperX ? "int8" : "float32",
+        vad_preprocess: !isWhisperX,
+        vad_method: isWhisperX ? "silero" : "pyannote",
+        vad_onset: 0.5,
+        vad_offset: 0.363,
+        chunk_size: 30,
+        temperature: 0,
+        best_of: 5,
+        beam_size: 5,
+        condition_on_previous_text: false,
+        compression_ratio_threshold: 2.4,
+        logprob_threshold: -1.0,
+        no_speech_threshold: 0.6,
         diarize: true,
         diarize_model: diarizeModel,
       };
@@ -455,7 +485,9 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       // even if match_source is 'auto' or 'retroactive'.
       if (detail?.review_status === 'pending' && voiceSuggestions.has(speaker)) {
         suggest.push(speaker);
-      } else if ((!isRawMapping && (detail?.match_source === 'auto' || detail?.match_source === 'retroactive' || detail?.match_source === 'suggestion_promoted')) || promotedSpeakers.has(speaker)) {
+      } else if (detail?.review_status === 'dismissed') {
+        unmapped.push(speaker);
+      } else if ((isConfirmedSpeakerMapping(detail ?? { original_speaker: speaker, custom_name: '' }) && !isRawMapping && (detail?.match_source === 'auto' || detail?.match_source === 'retroactive' || detail?.match_source === 'suggestion_promoted')) || promotedSpeakers.has(speaker)) {
         auto.push(speaker);
       } else if (voiceSuggestions.has(speaker)) {
         suggest.push(speaker);
@@ -706,6 +738,15 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                                     { transcriptionId, mappingId: suggestion.id },
                                     {
                                       onSuccess: () => {
+                                        setSpeakerMappings((prev) => ({ ...prev, [speaker]: '' }));
+                                        setMappingDetails((prev) => {
+                                          const next = new Map(prev);
+                                          const current = next.get(speaker);
+                                          if (current) {
+                                            next.set(speaker, { ...current, review_status: 'dismissed' });
+                                          }
+                                          return next;
+                                        });
                                         toast({ title: `Suggestion dismissed for ${speakerDisplayLabel(speaker)}` });
                                       },
                                     },

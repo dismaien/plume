@@ -87,6 +87,35 @@ func TestGetSpeakerAttentionSummary_EmptyInputReturnsEmptyMap(t *testing.T) {
 	}
 }
 
+func TestGetSpeakerAttentionSummary_ConsolidatesDuplicateDisplayNames(t *testing.T) {
+	db := newSpeakerMappingTestDB(t)
+	repo := NewSpeakerMappingRepository(db)
+	ctx := context.Background()
+
+	seedJob(t, db, "job-one-logical-speaker")
+	mappings := []models.SpeakerMapping{
+		{TranscriptionJobID: "job-one-logical-speaker", OriginalSpeaker: "speaker_00", CustomName: "Leona", MatchSource: "manual"},
+		{TranscriptionJobID: "job-one-logical-speaker", OriginalSpeaker: "speaker_01", CustomName: "leona", MatchSource: "manual"},
+		{TranscriptionJobID: "job-one-logical-speaker", OriginalSpeaker: "speaker_02", CustomName: " Leona ", MatchSource: "manual"},
+	}
+	if err := db.Create(&mappings).Error; err != nil {
+		t.Fatalf("seed mappings: %v", err)
+	}
+
+	summaries, err := repo.GetSpeakerAttentionSummary(ctx, []string{"job-one-logical-speaker"})
+	if err != nil {
+		t.Fatalf("GetSpeakerAttentionSummary: %v", err)
+	}
+
+	summary := summaries["job-one-logical-speaker"]
+	if summary.TotalMappings != 1 {
+		t.Errorf("TotalMappings: got %d, want 1 logical speaker", summary.TotalMappings)
+	}
+	if summary.Renamed != 1 {
+		t.Errorf("Renamed: got %d, want 1 logical speaker", summary.Renamed)
+	}
+}
+
 // TestGetSpeakerAttentionSummary_JobWithNoMappingsAbsent verifies that jobs
 // with no speaker mappings are absent from the result map.
 func TestGetSpeakerAttentionSummary_JobWithNoMappingsAbsent(t *testing.T) {

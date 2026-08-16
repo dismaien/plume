@@ -194,6 +194,10 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 		return
 	}
 
+	// Best-effort derived title refresh: when a speaker name changes, keep the
+	// bracketed speaker suffix in the recording title in sync.
+	h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, updatedMappings)
+
 	// Best-effort transcript file rewrite: update speaker_name in JSON segments
 	// and regenerate the markdown with display names.
 	if rewriteErr := transcription.RewriteTranscriptFiles(job, updatedMappings); rewriteErr != nil {
@@ -293,6 +297,8 @@ func (h *Handler) PromoteSpeakerSuggestion(c *gin.Context) {
 
 	// Best-effort side effects (same as bulk update).
 	if len(allMappings) > 0 {
+		h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, allMappings)
+
 		if rewriteErr := transcription.RewriteTranscriptFiles(job, allMappings); rewriteErr != nil {
 			logger.Warn("promote: transcript file rewrite failed", "job_id", jobID, "error", rewriteErr)
 		}
@@ -403,6 +409,18 @@ func (h *Handler) DismissSpeakerSuggestion(c *gin.Context) {
 	if err := h.speakerMappingRepo.UpdateReviewStatus(c.Request.Context(), req.MappingID, "dismissed"); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to dismiss suggestion"})
 		return
+	}
+
+	// A rejected suggestion must stop acting as a real speaker identity across
+	// every derived surface, while the row remains as evidence of the rejection.
+	job, jobErr := h.jobRepo.FindByID(c.Request.Context(), jobID)
+	updatedMappings, mappingsErr := h.speakerMappingRepo.ListByJob(c.Request.Context(), jobID)
+	if jobErr == nil && mappingsErr == nil {
+		h.refreshTitleSpeakersFromMappings(c.Request.Context(), job, updatedMappings)
+		if rewriteErr := transcription.RewriteTranscriptFiles(job, updatedMappings); rewriteErr != nil {
+			logger.Warn("dismiss: transcript file rewrite failed", "job_id", jobID, "error", rewriteErr)
+		}
+		h.syncMetadataToBundle(c.Request.Context(), jobID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "dismissed"})

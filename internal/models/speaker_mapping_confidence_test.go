@@ -7,6 +7,29 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestSpeakerMapping_IsConfirmedIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		mapping SpeakerMapping
+		want    bool
+	}{
+		{name: "manual", mapping: SpeakerMapping{MatchSource: "manual"}, want: true},
+		{name: "automatic", mapping: SpeakerMapping{MatchSource: "auto", MatchTier: "auto"}, want: true},
+		{name: "pending suggestion", mapping: SpeakerMapping{MatchSource: "auto", MatchTier: "suggest", ReviewStatus: "pending"}, want: false},
+		{name: "dismissed suggestion", mapping: SpeakerMapping{MatchSource: "auto", MatchTier: "suggest", ReviewStatus: "dismissed"}, want: false},
+		{name: "accepted suggestion", mapping: SpeakerMapping{MatchSource: "suggestion_promoted", MatchTier: "suggest", ReviewStatus: "accepted"}, want: true},
+		{name: "legacy promoted suggestion", mapping: SpeakerMapping{MatchSource: "suggestion_promoted", MatchTier: "suggest"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.mapping.IsConfirmedIdentity(); got != tt.want {
+				t.Fatalf("IsConfirmedIdentity() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSpeakerMapping_ConfidenceFields verifies that the SpeakerMapping model
 // can round-trip the new confidence tracking fields through GORM/SQLite.
 func TestSpeakerMapping_ConfidenceFields(t *testing.T) {

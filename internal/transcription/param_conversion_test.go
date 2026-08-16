@@ -49,3 +49,39 @@ func TestConvertToSortformerParams_AlwaysIncludesDefaults(t *testing.T) {
 		t.Errorf("expected auto_convert_audio=true, got %v", result["auto_convert_audio"])
 	}
 }
+
+func TestConvertToMLXWhisperParams_IncludesQualityGuards(t *testing.T) {
+	svc := &UnifiedTranscriptionService{}
+
+	prompt := "Use speaker names Leona, Abraham, Andre."
+	params := models.WhisperXParams{
+		Model:                     "large-v3-turbo",
+		Task:                      "transcribe",
+		Temperature:               0,
+		ConditionOnPreviousText:   false,
+		CompressionRatioThreshold: 2.4,
+		LogprobThreshold:          -1.0,
+		NoSpeechThreshold:         0.6,
+		InitialPrompt:             &prompt,
+	}
+
+	result := svc.convertToMLXWhisperParams(params)
+
+	expected := map[string]interface{}{
+		"model":                       "large-v3-turbo",
+		"task":                        "transcribe",
+		"temperature":                 0.0,
+		"condition_on_previous_text":  false,
+		"compression_ratio_threshold": 2.4,
+		"logprob_threshold":           -1.0,
+		"no_speech_threshold":         0.6,
+		"word_timestamps":             true,
+		"initial_prompt":              prompt,
+	}
+
+	for key, want := range expected {
+		if got := result[key]; got != want {
+			t.Errorf("expected %s=%v, got %v", key, want, got)
+		}
+	}
+}

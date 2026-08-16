@@ -168,7 +168,7 @@ func (s *Service) watchFiles() {
 func (s *Service) isAudioFile(filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
 	audioExtensions := []string{
-		".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg",
+		".mp3", ".wav", ".flac", ".m4a", ".qta", ".aac", ".ogg",
 		".wma", ".mp4", ".avi", ".mov", ".mkv", ".webm",
 	}
 

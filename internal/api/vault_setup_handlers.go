@@ -523,7 +523,7 @@ func recoverJobsFromVaultArtifacts(vault models.Vault) (int, error) {
 
 func isSupportedIngestExtension(ext string) bool {
 	switch strings.ToLower(ext) {
-	case ".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm", ".mp4", ".mov", ".mkv":
+	case ".wav", ".mp3", ".m4a", ".qta", ".aac", ".flac", ".ogg", ".opus", ".webm", ".mp4", ".mov", ".mkv":
 		return true
 	default:
 		return false

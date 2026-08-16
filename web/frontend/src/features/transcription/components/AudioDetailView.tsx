@@ -1,7 +1,7 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { useParams, useNavigate } from "react-router-dom";
-import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search } from "lucide-react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { MoreVertical, Edit2, Activity, FileText, Bot, Check, Loader2, List, AlignLeft, ArrowDownCircle, StickyNote, MessageCircle, FileImage, FileJson, FileDown, Clock, AlertCircle, Users, Layers, Trash2, Search, ArrowLeft, PanelLeft } from "lucide-react";
 import { Header } from "@/components/Header";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -15,8 +15,8 @@ import { cn } from "@/lib/utils";
 import { sanitizeInputValue } from "@/lib/filename-validation";
 
 // Custom Hooks
-import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
-import { useSpeakerMappings } from "@/features/transcription/hooks/useTranscriptionSpeakers";
+import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type Transcript, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
+import { useSpeakerMappings, type SpeakerMapping } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import { useTranscriptDownload } from "@/features/transcription/hooks/useTranscriptDownload";
 import { useTranscriptionEvents } from "@/features/transcription/hooks/useTranscriptionEvents";
 
@@ -25,6 +25,7 @@ import { TranscriptSection } from "./audio-detail/TranscriptSection";
 import { ExecutionInfoDialog } from "./audio-detail/ExecutionInfoDialog";
 import { LogsDialog } from "./audio-detail/LogsDialog";
 import { SummaryDialog } from "./audio-detail/SummaryDialog";
+import { RecordingListSidebar } from "./audio-detail/RecordingListSidebar";
 import { ChatSidePanel } from "./ChatSidePanel";
 import { TranscriptionConfigDialog, type WhisperXParams } from "@/components/TranscriptionConfigDialog";
 import { WandAdvancedIcon } from "@/components/icons/WandAdvancedIcon";
@@ -37,10 +38,38 @@ interface AudioDetailViewProps {
     audioId?: string; // Optional prop if used as a controlled component, though mainly route-based
 }
 
+type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
+const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar";
+
+function countDistinctDisplaySpeakers(
+    transcript: Transcript | null | undefined,
+    speakerMappings: Record<string, string>,
+) {
+    const speakers = new Set<string>();
+    const addSpeaker = (speaker?: string) => {
+        const rawSpeaker = speaker?.trim();
+        if (!rawSpeaker) return;
+
+        const displayName = (speakerMappings[rawSpeaker] || rawSpeaker).trim();
+        if (displayName) {
+            speakers.add(displayName.toLowerCase());
+        }
+    };
+
+    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker));
+
+    if (speakers.size === 0) {
+        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker));
+    }
+
+    return speakers.size;
+}
+
 export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }: AudioDetailViewProps) {
     const { audioId: paramAudioId } = useParams<{ audioId: string }>();
     const audioId = propAudioId || paramAudioId;
     const navigate = useNavigate();
+    const location = useLocation();
     const { getAuthHeaders } = useAuth();
     const queryClient = useQueryClient();
 
@@ -54,13 +83,16 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [newTitle, setNewTitle] = useState("");
 
     // Lifted Transcript State
-    const [transcriptMode, setTranscriptMode] = useState<"plain" | "timeline" | "compacted">("plain");
+    const [transcriptMode, setTranscriptModeState] = useState<AudioDetailTranscriptMode>("plain");
     const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
     const [notesOpen, setNotesOpen] = useState(false);
     const [speakerRenameOpen, setSpeakerRenameOpen] = useState(false);
     const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
     const [downloadFormat, setDownloadFormat] = useState<'txt' | 'json' | 'md'>('txt');
     const [searchOpen, setSearchOpen] = useState(false);
+    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(
+        () => localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY) === "true",
+    );
 
     // Dialog States
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -88,10 +120,16 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
     const autoSummaryTriggeredRef = useRef<string | null>(null);
     const autoTitleTriggeredRef = useRef<string | null>(null);
-    const autoSpeakerViewAppliedRef = useRef<string | null>(null);
+    const transcriptModeUserSelectedRef = useRef(false);
+    const isEditingTitleRef = useRef(false);
+    const suppressTitleBlurSaveRef = useRef(false);
 
     // Download Logic
     const { downloadSRT } = useTranscriptDownload();
+    const dashboardReturnPath =
+        (location.state as { from?: string } | null)?.from ||
+        sessionStorage.getItem("dashboard-list-location") ||
+        "/";
 
     // State for Split View
     const [chatOpen, setChatOpen] = useState(false);
@@ -99,6 +137,35 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [isResizing, setIsResizing] = useState(false);
     const splitContainerRef = useRef<HTMLDivElement>(null);
     const isMobile = useIsMobile();
+
+    const detectedSpeakerCount = useMemo(
+        () => countDistinctDisplaySpeakers(transcript, speakerMappings),
+        [transcript, speakerMappings],
+    );
+
+    const setTranscriptModeFromUser = useCallback((mode: AudioDetailTranscriptMode) => {
+        transcriptModeUserSelectedRef.current = true;
+        setTranscriptModeState(mode);
+    }, []);
+
+    const setRecordingsSidebar = useCallback((open: boolean) => {
+        setRecordingsSidebarOpen(open);
+        localStorage.setItem(RECORDINGS_SIDEBAR_STORAGE_KEY, String(open));
+    }, []);
+
+    const handleSpeakerMappingsSaved = useCallback((mappings: SpeakerMapping[]) => {
+        const mappingLookup = Object.fromEntries(
+            mappings
+                .map((mapping) => [mapping.original_speaker, mapping.custom_name.trim()] as const)
+                .filter(([, customName]) => customName !== ""),
+        );
+        const logicalSpeakerCount = countDistinctDisplaySpeakers(transcript, mappingLookup);
+
+        // Saving duplicate names is an explicit correction to diarization. Reset
+        // the automatic view choice so one logical speaker becomes one text.
+        transcriptModeUserSelectedRef.current = false;
+        setTranscriptModeState(logicalSpeakerCount > 1 ? "compacted" : "plain");
+    }, [transcript]);
 
     // Resizing Logic
     useEffect(() => {
@@ -164,10 +231,13 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
     // Effects
     useEffect(() => {
-        if (audioFile) {
-            setNewTitle(audioFile.title || "");
-        }
-    }, [audioFile]);
+        isEditingTitleRef.current = isEditingTitle;
+    }, [isEditingTitle]);
+
+    useEffect(() => {
+        if (!audioFile || isEditingTitle) return;
+        setNewTitle(audioFile.title || "");
+    }, [audioFile?.id, audioFile?.title, isEditingTitle]);
 
     useEffect(() => {
         let cancelled = false;
@@ -242,17 +312,15 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         autoSummaryTriggeredRef.current = null;
         autoTitleTriggeredRef.current = null;
-        autoSpeakerViewAppliedRef.current = null;
-        setTranscriptMode("plain");
+        transcriptModeUserSelectedRef.current = false;
+        setTranscriptModeState("plain");
     }, [audioId]);
 
     useEffect(() => {
-        if (!audioId || !transcript?.segments?.some((segment: TranscriptSegment) => !!segment.speaker)) return;
-        if (autoSpeakerViewAppliedRef.current === audioId) return;
+        if (!audioId || transcriptModeUserSelectedRef.current) return;
 
-        setTranscriptMode("compacted");
-        autoSpeakerViewAppliedRef.current = audioId;
-    }, [audioId, transcript]);
+        setTranscriptModeState(detectedSpeakerCount > 1 ? "compacted" : "plain");
+    }, [audioId, detectedSpeakerCount]);
 
     useEffect(() => {
         if (!audioId) return;
@@ -301,7 +369,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
 
                 const updated = await response.json();
                 const generatedTitle = typeof updated?.title === "string" ? updated.title.trim() : "";
-                if (generatedTitle) {
+                if (generatedTitle && !isEditingTitleRef.current) {
                     setNewTitle(generatedTitle);
                     queryClient.invalidateQueries({ queryKey: ["audio", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
@@ -327,12 +395,40 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         setCurrentTime(time);
     }, []);
 
-    const handleTitleSave = () => {
-        if (newTitle.trim() !== audioFile?.title) {
-            updateTitle(newTitle);
+    const handleStartTitleEdit = useCallback(() => {
+        setNewTitle(audioFile?.title || "");
+        setIsEditingTitle(true);
+    }, [audioFile?.title]);
+
+    const handleTitleCancel = useCallback(() => {
+        suppressTitleBlurSaveRef.current = true;
+        setNewTitle(audioFile?.title || "");
+        setIsEditingTitle(false);
+    }, [audioFile?.title]);
+
+    const handleTitleSave = useCallback(() => {
+        const nextTitle = newTitle.trim();
+        const currentTitle = audioFile?.title || "";
+
+        if (!nextTitle) {
+            handleTitleCancel();
+            return;
+        }
+
+        if (nextTitle !== currentTitle) {
+            updateTitle(nextTitle);
         }
         setIsEditingTitle(false);
-    };
+    }, [audioFile?.title, handleTitleCancel, newTitle, updateTitle]);
+
+    const handleTitleBlur = useCallback(() => {
+        if (suppressTitleBlurSaveRef.current) {
+            suppressTitleBlurSaveRef.current = false;
+            return;
+        }
+
+        handleTitleSave();
+    }, [handleTitleSave]);
 
     const handleSeek = (time: number) => {
         if (audioPlayerRef.current) {
@@ -340,6 +436,10 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
             setCurrentTime(time);
         }
     };
+
+    const handleBackToRecordings = useCallback(() => {
+        navigate(dashboardReturnPath, { preventScrollReset: true });
+    }, [dashboardReturnPath, navigate]);
 
     const handleConfirmDelete = useCallback(async () => {
         if (!audioId) return;
@@ -350,14 +450,14 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
             });
             if (response.ok) {
                 queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
-                navigate("/dashboard");
+                navigate(dashboardReturnPath);
             } else {
                 alert("Failed to delete audio file");
             }
         } catch {
             alert("Error deleting audio file");
         }
-    }, [audioId, getAuthHeaders, queryClient, navigate]);
+    }, [audioId, dashboardReturnPath, getAuthHeaders, queryClient, navigate]);
 
     if (!audioId) return <div>Invalid Audio ID</div>;
 
@@ -383,7 +483,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         return (
             <div className="h-full flex flex-col items-center justify-center gap-4">
                 <p className="text-red-500">Failed to load audio details.</p>
-                <Button onClick={() => navigate('/dashboard')}>Go to Dashboard</Button>
+                <Button onClick={() => navigate(dashboardReturnPath)}>Go to Dashboard</Button>
             </div>
         );
     }
@@ -404,6 +504,21 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         <div className="h-screen flex flex-col bg-[var(--bg-main)] relative selection:bg-[var(--brand-light)] overflow-hidden">
             {/* Split Container */}
             <div ref={splitContainerRef} className="flex-1 flex overflow-hidden relative">
+                {recordingsSidebarOpen && (
+                    <>
+                        <button
+                            type="button"
+                            aria-label="Hide recordings list"
+                            onClick={() => setRecordingsSidebar(false)}
+                            className="absolute inset-0 z-30 bg-black/40 lg:hidden"
+                        />
+                        <RecordingListSidebar
+                            currentAudioId={audioId}
+                            dashboardReturnPath={dashboardReturnPath}
+                            onClose={() => setRecordingsSidebar(false)}
+                        />
+                    </>
+                )}
                 {/* LEFT PANE (Main) */}
                 <main className="flex-1 min-w-0 flex flex-col h-full relative z-0">
 
@@ -412,7 +527,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                     <div className="flex-1 overflow-y-auto scrollbar-thin">
                         <div className="mx-auto w-full max-w-[1320px] px-3 sm:px-5 lg:px-7 py-4 pb-32">
                             <div className="mb-4">
-                                <Header />
+                                <Header homePath={dashboardReturnPath} />
                             </div>
                             <div className="space-y-5 sm:space-y-6">
                                 {/* Sticky header: Title + Audio Player */}
@@ -426,17 +541,25 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                 <Input
                                                     value={newTitle}
                                                     onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
-                                                    onBlur={handleTitleSave}
-                                                    onKeyDown={(e) => e.key === 'Enter' && handleTitleSave()}
-                                                    className="h-10 text-3xl font-bold tracking-tight bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
+                                                    onBlur={handleTitleBlur}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            handleTitleSave();
+                                                        } else if (e.key === 'Escape') {
+                                                            e.preventDefault();
+                                                            handleTitleCancel();
+                                                        }
+                                                    }}
+                                                    className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
                                                     autoFocus
                                                 />
                                             ) : (
                                                 <div
                                                     className="group flex items-center gap-3 cursor-text"
-                                                    onClick={() => setIsEditingTitle(true)}
+                                                    onClick={handleStartTitleEdit}
                                                 >
-                                                    <h1 className="text-3xl font-bold tracking-tight text-[var(--text-primary)] truncate font-display">
+                                                    <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] truncate">
                                                         {audioFile.title || "Untitled Recording"}
                                                     </h1>
                                                     <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -513,6 +636,25 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                         {/* Action Menu */}
                                         {/* ... keeping existing Logic but updating Chat action ... */}
                                         <div className="flex items-center gap-2">
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        aria-label={recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}
+                                                        aria-pressed={recordingsSidebarOpen}
+                                                        onClick={() => setRecordingsSidebar(!recordingsSidebarOpen)}
+                                                        className={cn(
+                                                            "rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-sm hover:bg-[var(--bg-muted-pane)]",
+                                                            recordingsSidebarOpen && "border-[var(--brand-solid)]/50 text-[var(--brand-solid)]",
+                                                        )}
+                                                    >
+                                                        <PanelLeft className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>{recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}</TooltipContent>
+                                            </Tooltip>
                                             {/* AI Summary Button */}
                                             <Button
                                                 variant="outline"
@@ -578,20 +720,20 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                 <DropdownMenuContent align="end" className="w-56 rounded-[var(--radius-card)] shadow-[var(--shadow-float)] border border-[var(--border-subtle)] bg-[var(--bg-card)] p-1.5">
                                                     {/* View Mode Switcher */}
                                                     <DropdownMenuItem
-                                                        onClick={() => setTranscriptMode('plain')}
+                                                        onClick={() => setTranscriptModeFromUser('plain')}
                                                         className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'plain' && "text-[var(--brand-solid)]")}
                                                     >
                                                         <AlignLeft className="mr-2 h-4 w-4 opacity-70" /> Plain Text
                                                     </DropdownMenuItem>
                                                     <DropdownMenuItem
-                                                        onClick={() => setTranscriptMode('compacted')}
+                                                        onClick={() => setTranscriptModeFromUser('compacted')}
                                                         className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'compacted' && "text-[var(--brand-solid)]")}
                                                     >
                                                         <Layers className="mr-2 h-4 w-4 opacity-70" /> Compacted View
                                                     </DropdownMenuItem>
                                                     {transcript?.word_segments && transcript.word_segments.length > 0 ? (
                                                         <DropdownMenuItem
-                                                            onClick={() => setTranscriptMode('timeline')}
+                                                            onClick={() => setTranscriptModeFromUser('timeline')}
                                                             className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'timeline' && "text-[var(--brand-solid)]")}
                                                         >
                                                             <List className="mr-2 h-4 w-4 opacity-70" /> Timeline View
@@ -678,6 +820,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     isPlaying={isPlaying}
                                     searchOpen={searchOpen}
                                     setSearchOpen={setSearchOpen}
+                                    onSpeakerMappingsSaved={handleSpeakerMappingsSaved}
                                 />
                             </div>
                         </div>
@@ -709,6 +852,25 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                     </>
                 )}
             </div>
+
+            {!recordingsSidebarOpen && (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            aria-label="Back to recordings"
+                            onClick={handleBackToRecordings}
+                            className="fixed bottom-4 left-4 sm:bottom-6 sm:left-6 z-40 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)]/95 text-[var(--text-primary)] shadow-[var(--shadow-float)] backdrop-blur-md hover:bg-[var(--bg-muted-pane)] hover:border-[var(--brand-solid)]/50 active:translate-y-px gap-2"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            <span>Recordings</span>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Back to recordings</TooltipContent>
+                </Tooltip>
+            )}
 
             {/* Mobile / Overlay Chat (If we want overlay behavior even on desktop, we can adjust logic) */}
             {/* Note: User asked for sliding over on mobile. NotesSidebar handles this via portal internally often, or we do it here.

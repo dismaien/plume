@@ -674,11 +674,11 @@ func (h *Handler) RetroactiveScanForContact(c *gin.Context) {
 
 // ContactAppearance is a single transcription in which a contact was identified.
 type ContactAppearance struct {
-	JobID          string  `json:"job_id"`
-	Title          string  `json:"title"`
-	SpeakerLabel   string  `json:"speaker_label"`
+	JobID           string  `json:"job_id"`
+	Title           string  `json:"title"`
+	SpeakerLabel    string  `json:"speaker_label"`
 	ConfidenceScore float64 `json:"confidence_score"`
-	MatchSource    string  `json:"match_source"`
+	MatchSource     string  `json:"match_source"`
 }
 
 // ListContactAppearances returns all transcriptions where the given contact
@@ -736,6 +736,9 @@ func (h *Handler) ListContactAppearances(c *gin.Context) {
 	}
 	var appearances []ContactAppearance
 	for _, m := range contactMappings {
+		if !m.IsConfirmedIdentity() {
+			continue
+		}
 		appearances = append(appearances, ContactAppearance{
 			JobID:           m.TranscriptionJobID,
 			Title:           jobTitles[m.TranscriptionJobID],
@@ -911,7 +914,7 @@ func (h *Handler) PullContactSnippet(c *gin.Context) {
 			continue
 		}
 		for _, m := range mappings {
-			if m.ContactID != nil && *m.ContactID == contact.ID {
+			if m.IsConfirmedIdentity() && m.ContactID != nil && *m.ContactID == contact.ID {
 				chosenJob = job
 				originalSpeaker = m.OriginalSpeaker
 				break

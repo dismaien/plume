@@ -217,7 +217,7 @@ func TestBundleSyncService_ImportsNewBundle(t *testing.T) {
 		CreatedAt:   time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC),
 		UpdatedAt:   time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
 		SpeakerMappings: []SpeakerMappingEntry{
-			{OriginalSpeaker: "speaker_00", CustomName: "Alice"},
+			{OriginalSpeaker: "speaker_00", CustomName: "Alice", ConfidenceScore: 0.48, MatchSource: "auto", MatchTier: "suggest", ReviewStatus: "dismissed"},
 			{OriginalSpeaker: "speaker_01", CustomName: "Bob"},
 		},
 		Summaries: []SummaryEntry{
@@ -263,6 +263,11 @@ func TestBundleSyncService_ImportsNewBundle(t *testing.T) {
 	db.Where("transcription_job_id = ?", "import-test-1").Find(&mappings)
 	if len(mappings) != 2 {
 		t.Errorf("expected 2 speaker mappings, got %d", len(mappings))
+	}
+	for _, mapping := range mappings {
+		if mapping.OriginalSpeaker == "speaker_00" && mapping.ReviewStatus != "dismissed" {
+			t.Errorf("dismissed review status was not imported: %+v", mapping)
+		}
 	}
 
 	// Verify summary

@@ -21,7 +21,7 @@ func TestWriteAndReadMetadata_RoundTrip(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now.Add(5 * time.Minute),
 		SpeakerMappings: []SpeakerMappingEntry{
-			{OriginalSpeaker: "speaker_00", CustomName: "Alice"},
+			{OriginalSpeaker: "speaker_00", CustomName: "Alice", ConfidenceScore: 0.48, MatchSource: "auto", MatchTier: "suggest", ReviewStatus: "dismissed"},
 			{OriginalSpeaker: "speaker_01", CustomName: "Bob"},
 		},
 		Summaries: []SummaryEntry{
@@ -87,6 +87,9 @@ func TestWriteAndReadMetadata_RoundTrip(t *testing.T) {
 	}
 	if got.SpeakerMappings[0].OriginalSpeaker != "speaker_00" || got.SpeakerMappings[0].CustomName != "Alice" {
 		t.Errorf("SpeakerMappings[0] = %+v", got.SpeakerMappings[0])
+	}
+	if got.SpeakerMappings[0].ReviewStatus != "dismissed" || got.SpeakerMappings[0].MatchTier != "suggest" {
+		t.Errorf("dismissed speaker review metadata was not preserved: %+v", got.SpeakerMappings[0])
 	}
 
 	// Summaries

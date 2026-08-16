@@ -28,9 +28,10 @@ interface HeaderProps {
 	onFileSelect?: (files: File | File[] | FileWithType | FileWithType[]) => void;
 	onMultiTrackClick?: () => void;
 	onDownloadComplete?: () => void;
+	homePath?: string;
 }
 
-export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: HeaderProps) {
+export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete, homePath = "/" }: HeaderProps) {
 	const navigate = useNavigate();
 	const { logout, isLocalMode } = useAuth();
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,7 +90,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 	};
 
 	const handleHomeClick = () => {
-		navigate("/");
+		navigate(homePath);
 	};
 
 	const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,7 +114,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 				event.target.value = "";
 			} else {
 				// No valid audio files found
-				alert("No valid audio files found. Please select audio files (.mp3, .wav, .flac, .m4a, .aac, .ogg)");
+				alert("No valid audio files found. Please select audio files (.mp3, .wav, .flac, .m4a, .qta, .aac, .ogg)");
 				event.target.value = "";
 			}
 		}
@@ -306,7 +307,7 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete }: 
 					<input
 						ref={fileInputRef}
 						type="file"
-						accept="audio/*"
+						accept="audio/*,.qta"
 						multiple
 						onChange={handleFileChange}
 						className="hidden"

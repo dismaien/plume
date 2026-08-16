@@ -248,6 +248,7 @@ function buildBackendEnv(port: number): NodeJS.ProcessEnv {
     TRANSCRIPTS_DIR: paths.transcripts,
     TEMP_DIR: paths.temp,
     WHISPERX_ENV: paths.whisperxEnv,
+    PLUME_AUDIO_STORAGE_MODE: process.env.PLUME_AUDIO_STORAGE_MODE || "reference",
     QUILL_DEFER_MODEL_INIT: "true",
     QUILL_WHISPERX_ZIP_URL: whisperxZipURL,
     QUILL_WHISPERX_ZIP_SHA256: whisperxZipSHA256,
@@ -291,11 +292,11 @@ function buildBackendEnv(port: number): NodeJS.ProcessEnv {
   }
 
   // Whisper model to pre-download during startup warmup.
-  // Defaults to large-v3-turbo-q4 for MLX Whisper (quantized, fastest large model on Apple Silicon).
+  // Defaults to non-quantized large-v3-turbo for better archive-quality transcripts on Apple Silicon.
   if (process.env.WHISPER_MODEL) {
     env.WHISPER_MODEL = process.env.WHISPER_MODEL;
   } else if (env.TRANSCRIPTION_BACKEND === "mlx_whisper") {
-    env.WHISPER_MODEL = "large-v3-turbo-q4";
+    env.WHISPER_MODEL = "large-v3-turbo";
   }
 
   return env;
@@ -359,7 +360,7 @@ function inferStartupStatus(logTail: string): { title: string; detail: string } 
 
   if (lines.length === 0) {
     return {
-      title: "Starting Quill",
+      title: "Starting Plume",
       detail: "Preparing local services...",
     };
   }
@@ -398,7 +399,7 @@ function inferStartupStatus(logTail: string): { title: string; detail: string } 
     return { title: "Launching App", detail: "Startup complete." };
   }
 
-  return { title: "Starting Quill", detail: latest };
+  return { title: "Starting Plume", detail: latest };
 }
 
 function getLogTail(pathToLog: string, maxLines = 80): string {
@@ -420,7 +421,7 @@ function renderStartupHtml(title: string, detail: string): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Quill</title>
+  <title>Plume</title>
   <style>
     :root {
       color-scheme: dark;
@@ -432,18 +433,19 @@ function renderStartupHtml(title: string, detail: string): string {
       place-items: center;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background:
-        radial-gradient(1200px 700px at 10% 10%, #143447 0%, #0f172a 45%),
-        radial-gradient(900px 600px at 90% 90%, #2f2c4a 0%, rgba(15, 23, 42, 0.95) 55%);
-      color: #f8fafc;
+        linear-gradient(180deg, rgba(216, 183, 93, 0.12), transparent 45%),
+        repeating-linear-gradient(125deg, rgba(230, 236, 216, 0.018) 0 2px, transparent 2px 8px),
+        #07120d;
+      color: #e6ecd8;
     }
     .card {
       width: min(700px, 88vw);
-      border-radius: 20px;
+      border-radius: 10px;
       padding: 34px 32px;
-      background: rgba(15, 23, 42, 0.68);
-      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(13, 30, 21, 0.82);
+      border: 1px solid rgba(200, 163, 75, 0.24);
       backdrop-filter: blur(10px);
-      box-shadow: 0 18px 40px rgba(2, 6, 23, 0.5);
+      box-shadow: 0 18px 40px rgba(3, 8, 5, 0.55);
     }
     .row {
       display: flex;
@@ -454,8 +456,8 @@ function renderStartupHtml(title: string, detail: string): string {
       width: 20px;
       height: 20px;
       border-radius: 9999px;
-      border: 2px solid rgba(148, 163, 184, 0.35);
-      border-top-color: #38bdf8;
+      border: 2px solid rgba(200, 163, 75, 0.26);
+      border-top-color: #d8b75d;
       animation: spin 1s linear infinite;
       flex: 0 0 auto;
     }
@@ -463,12 +465,12 @@ function renderStartupHtml(title: string, detail: string): string {
       margin: 0;
       font-size: 22px;
       line-height: 1.2;
-      letter-spacing: 0.01em;
+      letter-spacing: 0;
       font-weight: 650;
     }
     p {
       margin: 14px 0 0;
-      color: #cbd5e1;
+      color: #c1c9ad;
       line-height: 1.45;
       font-size: 14px;
       word-break: break-word;
@@ -476,7 +478,7 @@ function renderStartupHtml(title: string, detail: string): string {
     .hint {
       margin-top: 22px;
       font-size: 12px;
-      color: #94a3b8;
+      color: #94a080;
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
@@ -490,7 +492,7 @@ function renderStartupHtml(title: string, detail: string): string {
       <h1>${escapeHtml(title)}</h1>
     </div>
     <p>${escapeHtml(detail)}</p>
-    <p class="hint">Quill is preparing local AI models and services. First launch can take several minutes.</p>
+    <p class="hint">Plume is preparing local AI models and services. First launch can take several minutes.</p>
   </section>
 </body>
 </html>`;
@@ -523,7 +525,7 @@ function attachBackendLogs(processHandle: ChildProcessByStdio<null, Readable, Re
   const { backendLogPath } = getDataPaths();
   const logStream = fs.createWriteStream(backendLogPath, { flags: "a" });
   const stamp = new Date().toISOString();
-  logStream.write(`\n[${stamp}] Starting Quill backend\n`);
+  logStream.write(`\n[${stamp}] Starting Plume backend\n`);
 
   processHandle.stdout.on("data", (chunk: Buffer) => {
     logStream.write(chunk);
@@ -560,7 +562,7 @@ function startBackend(port: number): void {
     if (isQuitting) {
       return;
     }
-    dialog.showErrorBox("Quill Backend Error", `Failed to start backend process:\n${error.message}`);
+    dialog.showErrorBox("Plume Backend Error", `Failed to start backend process:\n${error.message}`);
   });
 
   childProcess.on("exit", (code, signal) => {
@@ -569,7 +571,7 @@ function startBackend(port: number): void {
     }
 
     dialog.showErrorBox(
-      "Quill Backend Stopped",
+      "Plume Backend Stopped",
       [
         `The backend process exited unexpectedly.`,
         `Exit code: ${String(code)}, signal: ${String(signal)}.`,
@@ -674,7 +676,7 @@ async function stopBackend(): Promise<void> {
 async function boot(): Promise<void> {
   backendReady = false;
   mainWindow = createMainWindow();
-  await loadStartupScreen(mainWindow, "Starting Quill", "Preparing local services...");
+  await loadStartupScreen(mainWindow, "Starting Plume", "Preparing local services...");
 
   if (app.isPackaged) {
     const missingTools = getMissingBundledTools();
@@ -684,7 +686,7 @@ async function boot(): Promise<void> {
 
     await loadStartupScreen(mainWindow, "Installing Bundled Runtime", "Seeding packaged AI environments and model caches...");
     await installBundledRuntimeSeed();
-    await loadStartupScreen(mainWindow, "Starting Quill", "Preparing local services...");
+    await loadStartupScreen(mainWindow, "Starting Plume", "Preparing local services...");
   }
 
   const port = await getFreePort();
@@ -779,8 +781,8 @@ void app.whenReady()
 
       const buttonIndex = dialog.showMessageBoxSync({
         type: "error",
-        title: "Quill Startup Failed",
-        message: "Quill could not start.",
+        title: "Plume Startup Failed",
+        message: "Plume could not start.",
         detail,
         buttons: ["Quit", "Retry"],
         defaultId: 1,
@@ -798,7 +800,7 @@ void app.whenReady()
   })
   .catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    dialog.showErrorBox("Quill Fatal Error", message);
+    dialog.showErrorBox("Plume Fatal Error", message);
     app.exit(1);
   });
 

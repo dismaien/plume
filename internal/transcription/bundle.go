@@ -11,6 +11,22 @@ import (
 	"quill/pkg/slug"
 )
 
+type AudioStorageMode string
+
+const (
+	AudioStorageCopy      AudioStorageMode = "copy"
+	AudioStorageReference AudioStorageMode = "reference"
+)
+
+func NormalizeAudioStorageMode(mode string) AudioStorageMode {
+	switch AudioStorageMode(strings.ToLower(strings.TrimSpace(mode))) {
+	case AudioStorageReference:
+		return AudioStorageReference
+	default:
+		return AudioStorageCopy
+	}
+}
+
 // BundleTargetDir computes the artifact bundle directory path for a transcript.
 // Layout: {vaultPath}/Transcripts/{human-readable title}/
 // No date-based nesting — flat under Transcripts for Obsidian-like organization.
@@ -167,6 +183,28 @@ func CopyAudioToBundle(audioPath, bundleDir string) (string, error) {
 	}
 
 	return targetPath, nil
+}
+
+func MaterializeAudioToBundle(audioPath, bundleDir string, mode AudioStorageMode) (string, error) {
+	switch NormalizeAudioStorageMode(string(mode)) {
+	case AudioStorageReference:
+		if _, err := os.Stat(audioPath); err != nil {
+			return "", fmt.Errorf("source audio not found: %w", err)
+		}
+		return audioPath, nil
+	default:
+		newAudioPath, err := MoveAudioToBundle(audioPath, bundleDir)
+		if err != nil {
+			newAudioPath, err = CopyAudioToBundle(audioPath, bundleDir)
+		}
+		if err != nil {
+			return "", err
+		}
+		if verifyErr := VerifyAudioInBundle(bundleDir); verifyErr != nil {
+			return "", fmt.Errorf("audio verification failed after copy: %w", verifyErr)
+		}
+		return newAudioPath, nil
+	}
 }
 
 // VerifyAudioInBundle checks that an audio.* file exists in the bundle directory.

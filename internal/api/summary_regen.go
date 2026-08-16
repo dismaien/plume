@@ -99,7 +99,9 @@ func (h *Handler) regenerateSpeakerSummaries(job *models.TranscriptionJob, mappi
 		// 2. Build speaker mapping lookup.
 		mappingMap := make(map[string]string, len(mappings))
 		for _, m := range mappings {
-			mappingMap[m.OriginalSpeaker] = m.CustomName
+			if m.IsConfirmedIdentity() {
+				mappingMap[m.OriginalSpeaker] = m.CustomName
+			}
 		}
 
 		// 3. Check if transcript JSON exists.

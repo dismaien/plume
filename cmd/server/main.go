@@ -135,7 +135,7 @@ func main() {
 
 	// Initialize unified transcription processor
 	logger.Startup("transcription", "Initializing transcription service")
-	unifiedProcessor := transcription.NewUnifiedJobProcessor(jobRepo, cfg.TempDir, cfg.TranscriptsDir, cfg.WhisperXEnv)
+	unifiedProcessor := transcription.NewUnifiedJobProcessor(jobRepo, cfg.TempDir, cfg.TranscriptsDir, cfg.WhisperXEnv, transcription.AudioStorageMode(cfg.AudioStorageMode))
 	unifiedProcessor.GetUnifiedService().SetBroadcaster(broadcaster)
 	// Seed HF_TOKEN env var from cloud provider store so all adapters
 	// (Go checks + Python subprocesses) can find it via os.Getenv.

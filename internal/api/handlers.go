@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,9 +56,9 @@ type Handler struct {
 	chatRepo            repository.ChatRepository
 	noteRepo            repository.NoteRepository
 	speakerMappingRepo  repository.SpeakerMappingRepository
-	contactRepo           repository.ContactRepository
-	refreshTokenRepo      repository.RefreshTokenRepository
-	cloudProviderRepo     repository.CloudProviderConfigRepository
+	contactRepo         repository.ContactRepository
+	refreshTokenRepo    repository.RefreshTokenRepository
+	cloudProviderRepo   repository.CloudProviderConfigRepository
 	taskQueue           *queue.TaskQueue
 	unifiedProcessor    *transcription.UnifiedJobProcessor
 	quickTranscription  *transcription.QuickTranscriptionService
@@ -110,10 +111,10 @@ func NewHandler(
 		chatRepo:            chatRepo,
 		noteRepo:            noteRepo,
 		speakerMappingRepo:  speakerMappingRepo,
-		contactRepo:           contactRepo,
-		refreshTokenRepo:      refreshTokenRepo,
-		cloudProviderRepo:     cloudProviderRepo,
-		taskQueue:             taskQueue,
+		contactRepo:         contactRepo,
+		refreshTokenRepo:    refreshTokenRepo,
+		cloudProviderRepo:   cloudProviderRepo,
+		taskQueue:           taskQueue,
 		unifiedProcessor:    unifiedProcessor,
 		quickTranscription:  quickTranscription,
 		multiTrackProcessor: multiTrackProcessor,
@@ -157,6 +158,12 @@ func (h *Handler) emitNotification(class, level, message, action string) {
 // ftsUpsertJob is a best-effort helper that updates the FTS index for a job.
 func (h *Handler) ftsUpsertJob(job *models.TranscriptionJob) {
 	if h.ftsManager == nil || job == nil {
+		return
+	}
+	if job.IsSourcePart {
+		if err := h.ftsManager.Delete(job.ID); err != nil {
+			logger.Warn("FTS delete for source part failed", "job_id", job.ID, "error", err)
+		}
 		return
 	}
 	title := ""
@@ -406,8 +413,8 @@ func (h *Handler) UploadAudio(c *gin.Context) {
 				existingTitle = *existing.Title
 			}
 			c.JSON(http.StatusConflict, gin.H{
-				"error":       "This file has already been uploaded",
-				"existing_id": existing.ID,
+				"error":          "This file has already been uploaded",
+				"existing_id":    existing.ID,
 				"existing_title": existingTitle,
 			})
 			return
@@ -1129,17 +1136,18 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 
 	searchQuery := c.Query("q")
 	params := repository.ListParams{
-		Offset:       offset,
-		Limit:        limit,
-		SortBy:       c.Query("sort_by"),
-		SortOrder:    c.Query("sort_order"),
-		SearchQuery:  searchQuery,
-		UpdatedAfter: updatedAfter,
-		VaultID:      activeVaultID,
-		Folder:       folderPtr,
-		Status:        c.Query("status"),
-		Speaker:       c.Query("speaker"),
-		SpeakerStatus: c.Query("speaker_status"),
+		Offset:             offset,
+		Limit:              limit,
+		SortBy:             c.Query("sort_by"),
+		SortOrder:          c.Query("sort_order"),
+		SearchQuery:        searchQuery,
+		UpdatedAfter:       updatedAfter,
+		VaultID:            activeVaultID,
+		Folder:             folderPtr,
+		Status:             c.Query("status"),
+		Speaker:            c.Query("speaker"),
+		SpeakerStatus:      c.Query("speaker_status"),
+		IncludeSourceParts: strings.EqualFold(strings.TrimSpace(c.Query("include_source_parts")), "true"),
 	}
 
 	// Use FTS5 for search when available — fall back to LIKE via SearchQuery
@@ -1157,15 +1165,11 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 		return
 	}
 
-	// Compute HasAudio for each job
+	// Compute response-only fields for each job.
 	jobIDs := make([]string, len(jobs))
 	for i := range jobs {
 		jobIDs[i] = jobs[i].ID
-		if jobs[i].AudioPath != "" {
-			if _, statErr := os.Stat(jobs[i].AudioPath); statErr == nil {
-				jobs[i].HasAudio = true
-			}
-		}
+		h.populateJobComputedFields(c.Request.Context(), &jobs[i])
 	}
 
 	// Count pending speaker suggestions per job for badge display.
@@ -1236,14 +1240,88 @@ func (h *Handler) GetTranscriptionJob(c *gin.Context) {
 		return
 	}
 
-	// Compute HasAudio
+	h.populateJobComputedFields(c.Request.Context(), job)
+
+	c.JSON(http.StatusOK, job)
+}
+
+func (h *Handler) populateJobComputedFields(ctx context.Context, job *models.TranscriptionJob) {
+	if job == nil {
+		return
+	}
 	if job.AudioPath != "" {
 		if _, statErr := os.Stat(job.AudioPath); statErr == nil {
 			job.HasAudio = true
 		}
 	}
+	var audioDuration int64
+	if job.HasAudio {
+		audioDuration = durationMillisFromAudio(ctx, job.AudioPath)
+	}
+	job.Duration = preferredRecordingDurationMillis(audioDuration, durationMillisFromTranscript(job.Transcript))
+}
 
-	c.JSON(http.StatusOK, job)
+func preferredRecordingDurationMillis(audioDuration int64, transcriptDuration int64) int64 {
+	if audioDuration > 0 {
+		return audioDuration
+	}
+	if transcriptDuration > 0 {
+		return transcriptDuration
+	}
+	return 0
+}
+
+func durationMillisFromTranscript(raw *string) int64 {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return 0
+	}
+
+	var payload struct {
+		Segments []struct {
+			End float64 `json:"end"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal([]byte(*raw), &payload); err != nil {
+		return 0
+	}
+
+	maxEnd := 0.0
+	for _, segment := range payload.Segments {
+		if segment.End > maxEnd {
+			maxEnd = segment.End
+		}
+	}
+	if maxEnd <= 0 {
+		return 0
+	}
+	return int64(maxEnd * 1000)
+}
+
+func durationMillisFromAudio(ctx context.Context, audioPath string) int64 {
+	if strings.TrimSpace(audioPath) == "" {
+		return 0
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		probeCtx,
+		binaries.FFprobe(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		audioPath,
+	).Output()
+	if err != nil {
+		return 0
+	}
+
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return int64(seconds * 1000)
 }
 
 // @Summary Start transcription for uploaded file
@@ -1353,6 +1431,7 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 		InterpolateMethod:              "nearest",
 		NoAlign:                        false,
 		ReturnCharAlignments:           false,
+		VadPreprocess:                  true,
 		VadMethod:                      "pyannote",
 		VadOnset:                       0.5,
 		VadOffset:                      0.363,
@@ -1498,63 +1577,13 @@ func (h *Handler) UpdateTranscriptionTitle(c *gin.Context) {
 		return
 	}
 
-	job.Title = &body.Title
-
-	// Capture original paths for rollback on DB failure
-	originalArtifactDir := ""
-	if job.ArtifactDir != nil {
-		originalArtifactDir = *job.ArtifactDir
-	}
-	originalAudioPath := job.AudioPath
-	var originalJSONPath, originalMDPath *string
-	if job.TranscriptJSONPath != nil {
-		v := *job.TranscriptJSONPath
-		originalJSONPath = &v
-	}
-	if job.TranscriptMarkdownPath != nil {
-		v := *job.TranscriptMarkdownPath
-		originalMDPath = &v
-	}
-
-	// Rename bundle directory on disk to reflect the new title
-	bundleRenamed := false
-	if job.ArtifactDir != nil && *job.ArtifactDir != "" {
-		if result, renameErr := transcription.RenameBundleDir(*job.ArtifactDir, body.Title, job.ID); renameErr != nil {
-			logger.Warn("Failed to rename bundle dir for title update",
-				"job_id", job.ID, "error", renameErr)
-		} else if result.NewDir != originalArtifactDir {
-			bundleRenamed = true
-			job.ArtifactDir = &result.NewDir
-			if result.AudioPath != "" {
-				job.AudioPath = result.AudioPath
-			}
-			if result.JSONPath != "" {
-				job.TranscriptJSONPath = &result.JSONPath
-			}
-			if result.MarkdownPath != "" {
-				job.TranscriptMarkdownPath = &result.MarkdownPath
-			}
-		}
-	}
-
-	if err := h.jobRepo.Update(c.Request.Context(), job); err != nil {
-		// Rollback filesystem rename on DB failure
-		if bundleRenamed {
-			_ = os.Rename(*job.ArtifactDir, originalArtifactDir)
-			job.ArtifactDir = &originalArtifactDir
-			job.AudioPath = originalAudioPath
-			job.TranscriptJSONPath = originalJSONPath
-			job.TranscriptMarkdownPath = originalMDPath
-		}
+	if err := h.applyTranscriptionTitle(c.Request.Context(), job, body.Title); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update title"})
 		return
 	}
 
 	// Best-effort metadata sidecar sync
 	h.syncMetadataToBundle(c.Request.Context(), jobID)
-
-	// Best-effort FTS index update
-	h.ftsUpsertJob(job)
 
 	c.JSON(http.StatusOK, gin.H{
 		"id":         job.ID,
@@ -1615,8 +1644,10 @@ func (h *Handler) AutoGenerateTranscriptionTitle(c *gin.Context) {
 		return
 	}
 
-	// Do not overwrite likely user-defined titles.
-	if !isLikelyDefaultTranscriptionTitle(job) {
+	// Automatic calls preserve user-defined titles. Explicit UI regeneration can
+	// opt in to replacing the derived subject while retaining source metadata.
+	force := strings.EqualFold(strings.TrimSpace(c.Query("force")), "true")
+	if !force && !isLikelyDefaultTranscriptionTitle(job) {
 		logger.Debug("Auto-title API skipped: title appears user-defined",
 			"job_id", jobID, "title", job.Title, "audio_path", job.AudioPath)
 		c.JSON(http.StatusOK, gin.H{
@@ -1938,14 +1969,35 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		return "", "", fmt.Errorf("transcript content is required")
 	}
 
-	title, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
+	subject, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
 	if err != nil {
 		return "", "", err
 	}
 
+	var currentTitle string
+	if job.Title != nil {
+		currentTitle = strings.TrimSpace(*job.Title)
+	}
+	mappings, _ := h.speakerMappingRepo.ListByJob(ctx, job.ID)
+	speakers := transcription.SpeakerTitleNamesFromTranscript(*job.Transcript, mappings)
+	durationMillis := preferredRecordingDurationMillis(
+		durationMillisFromAudio(ctx, job.AudioPath),
+		durationMillisFromTranscript(job.Transcript),
+	)
+	title := transcription.FormatGeneratedArchiveTitle(transcription.GeneratedArchiveTitleInput{
+		RecordedAt:       job.RecordedAt,
+		CreatedAt:        job.CreatedAt,
+		Subject:          subject,
+		CurrentTitle:     currentTitle,
+		OriginalFilename: job.OriginalFilename,
+		Transcript:       *job.Transcript,
+		Speakers:         speakers,
+		DurationMillis:   durationMillis,
+	})
+
 	originalAudioPath := job.AudioPath
 	renamedAudioPath := originalAudioPath
-	if renamedPath, renameErr := maybeRenameAudioPathForGeneratedTitle(job, title); renameErr != nil {
+	if renamedPath, renameErr := maybeRenameAudioPathForGeneratedTitle(job, title, h.config.AudioStorageMode); renameErr != nil {
 		logger.Warn("Failed to rename audio file after auto title generation",
 			"job_id", job.ID,
 			"audio_path", job.AudioPath,
@@ -2015,12 +2067,20 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 			"to", renamedAudioPath)
 	}
 
+	h.ftsUpsertJob(job)
+	h.syncMetadataToBundle(ctx, job.ID)
+
 	return title, selectedModel, nil
 }
 
-func maybeRenameAudioPathForGeneratedTitle(job *models.TranscriptionJob, generatedTitle string) (string, error) {
+func maybeRenameAudioPathForGeneratedTitle(job *models.TranscriptionJob, generatedTitle, storageMode string) (string, error) {
 	if job == nil {
 		return "", nil
+	}
+	// Reference mode points at the canonical archive. Its source filename must
+	// remain immutable; the human-readable title belongs to the bundle metadata.
+	if transcription.NormalizeAudioStorageMode(storageMode) == transcription.AudioStorageReference {
+		return job.AudioPath, nil
 	}
 	if job.IsMultiTrack {
 		return job.AudioPath, nil
@@ -2138,11 +2198,22 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 
 	base := strings.TrimSpace(filepath.Base(job.AudioPath))
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	originalBase := strings.TrimSpace(filepath.Base(job.OriginalFilename))
+	originalStem := strings.TrimSuffix(originalBase, filepath.Ext(originalBase))
 
 	if base != "" && strings.EqualFold(title, base) {
 		return true
 	}
 	if stem != "" && strings.EqualFold(title, stem) {
+		return true
+	}
+	// Bundling renames imported audio to audio.{ext}; compare against the source
+	// filename as well so a filename-derived title remains eligible for AI title
+	// generation after that move.
+	if originalBase != "" && strings.EqualFold(title, originalBase) {
+		return true
+	}
+	if originalStem != "" && strings.EqualFold(title, originalStem) {
 		return true
 	}
 	if strings.HasPrefix(title, "Multi-track Job ") {
@@ -2156,8 +2227,17 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 	if looksLikeTimestamp(title) {
 		return true
 	}
+	if looksLikeAppleVoiceMemoFallbackTitle(title) {
+		return true
+	}
 
 	return false
+}
+
+var appleVoiceMemoFallbackTitleRE = regexp.MustCompile(`^\d{6} \d{2}:\d{2} 20\d{6} \d{6}-[0-9A-Fa-f]{8,}$`)
+
+func looksLikeAppleVoiceMemoFallbackTitle(title string) bool {
+	return appleVoiceMemoFallbackTitleRE.MatchString(strings.TrimSpace(title))
 }
 
 // looksLikeTimestamp returns true when the title is purely a date/time stamp
@@ -2185,16 +2265,20 @@ func looksLikeTimestamp(s string) bool {
 func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string) (string, error) {
 	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations — phone calls, voice memos, casual chats, interviews, brainstorms, podcasts, and similar recordings. They are NOT corporate meeting minutes.
 
-Generate a short title (4-8 words) that captures the main idea of the conversation.
+Generate a short subject title (4-8 words) that captures the main idea of the recording.
 
 Rules:
 - Use Title Case (Every Important Word Capitalized)
 - Lead with the topic or subject, not a verb
-- If speakers are identifiable, you may reference them (e.g. "Sarah and Tom on Moving Plans")
+- Do not include speaker names unless they are essential to the subject; speaker brackets are added separately
+- Do not include date/time prefixes, file names, locations, @location suffixes, speaker brackets, or duration braces
 - Be specific: prefer "Weekend Camping Trip Plans" over "Planning Discussion"
 - No quotation marks, brackets, or trailing punctuation
 - No emojis or special characters
-- Never use generic labels like "Conversation", "Chat", "Discussion", "Audio Recording"
+- Never use generic labels like "Brief Note", "Personal Issue", "Conversation", "Chat", "Discussion", "Audio Recording"
+- Never return raw file names such as "20260724 183644-60C99703"
+- Never return hallucinated filler such as "Thank You"
+- If this is primarily a personal dream account, begin the subject with "Dream: "; Plume converts that into its visible (dream) type marker
 
 Examples:
 - "Jake's Birthday Party Planning"
@@ -2208,30 +2292,36 @@ Examples:
 
 Return ONLY the title, nothing else.`
 
-	chatMsgs := []llm.ChatMessage{
-		{Role: "system", Content: prompt},
-		{Role: "user", Content: transcript},
+	var lastRejected string
+	for attempt := 0; attempt < 2; attempt++ {
+		userContent := transcript
+		if attempt > 0 {
+			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, or filename-like. Generate a specific subject title from this transcript instead.\n\n%s", lastRejected, transcript)
+		}
+
+		chatMsgs := []llm.ChatMessage{
+			{Role: "system", Content: prompt},
+			{Role: "user", Content: userContent},
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		resp, err := svc.ChatCompletion(timeoutCtx, model, chatMsgs, 0.0)
+		cancel()
+		if err != nil {
+			return "", err
+		}
+		if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+			return "", fmt.Errorf("empty response from LLM")
+		}
+
+		title := normalizeGeneratedTranscriptTitle(resp.Choices[0].Message.Content)
+		if !isWeakGeneratedTranscriptTitle(title) {
+			return title, nil
+		}
+		lastRejected = title
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	resp, err := svc.ChatCompletion(timeoutCtx, model, chatMsgs, 0.0)
-	if err != nil {
-		return "", err
-	}
-	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("empty response from LLM")
-	}
-
-	title := strings.TrimSpace(resp.Choices[0].Message.Content)
-	title = strings.Trim(title, "'\"`")
-	title = strings.ReplaceAll(title, "\n", " ")
-	title = strings.ReplaceAll(title, "\r", " ")
-	if len(title) > 60 {
-		title = title[:57] + "..."
-	}
-	return title, nil
+	return "", fmt.Errorf("generated title was too generic: %q", lastRejected)
 }
 
 func buildTranscriptTitleSource(transcript string) string {
@@ -2249,6 +2339,80 @@ func buildTranscriptTitleSource(transcript string) string {
 	head := strings.TrimSpace(trimmed[:sectionChars])
 	tail := strings.TrimSpace(trimmed[len(trimmed)-sectionChars:])
 	return head + "\n...\n" + tail
+}
+
+func normalizeGeneratedTranscriptTitle(title string) string {
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "'\"`")
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = strings.ReplaceAll(title, "\r", " ")
+	title = strings.Join(strings.Fields(title), " ")
+	title = strings.TrimSpace(strings.Trim(title, ".:;-"))
+	if len(title) > 60 {
+		title = strings.TrimSpace(title[:57]) + "..."
+	}
+	return title
+}
+
+var titleMetadataRE = regexp.MustCompile(`^\d{6}\s+\d{2}:\d{2}\s+`)
+var titleDurationSuffixRE = regexp.MustCompile(`\s+\{\d{1,2}:?\d{2}(?::\d{2})?\}\s*$`)
+
+func isWeakGeneratedTranscriptTitle(title string) bool {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return true
+	}
+	if looksLikeTimestamp(trimmed) || looksLikeAppleVoiceMemoFallbackTitle(trimmed) {
+		return true
+	}
+
+	subject := titleDurationSuffixRE.ReplaceAllString(trimmed, "")
+	subject = titleMetadataRE.ReplaceAllString(subject, "")
+	subject = strings.TrimSpace(subject)
+	lower := strings.ToLower(subject)
+	if lower == "" {
+		return true
+	}
+	if strings.Contains(lower, "thank you") {
+		return true
+	}
+	if strings.Contains(lower, "title not available") {
+		return true
+	}
+	if strings.Contains(lower, "part 01 of") || strings.Contains(lower, "part 1 of") {
+		return true
+	}
+
+	for _, generic := range []string{
+		"brief note",
+		"personal issue",
+		"personal update",
+		"new recording",
+		"recording",
+		"audio recording",
+		"voice memo",
+		"conversation",
+		"chat",
+		"discussion",
+		"untitled recording",
+	} {
+		if lower == generic || strings.HasPrefix(lower, generic+" ") {
+			return true
+		}
+	}
+
+	for _, prefix := range []string{
+		"rua ",
+		"malplaquetstraße",
+		"neue aufnahme",
+		"nueva grabación",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // @Summary Delete transcription job

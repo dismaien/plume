@@ -30,10 +30,9 @@ const STATUS_OPTIONS = [
 ];
 
 const SORT_OPTIONS = [
-    { value: "created_at:desc", label: "Newest First" },
-    { value: "created_at:asc", label: "Oldest First" },
-    { value: "recorded_at:desc", label: "Recording Date (Newest)" },
-    { value: "recorded_at:asc", label: "Recording Date (Oldest)" },
+    { value: "recorded_at:desc", label: "Newest First" },
+    { value: "recorded_at:asc", label: "Oldest First" },
+    { value: "created_at:desc", label: "Recently Added" },
     { value: "title:asc", label: "Title A-Z" },
     { value: "title:desc", label: "Title Z-A" },
     { value: "updated_at:desc", label: "Recently Updated" },

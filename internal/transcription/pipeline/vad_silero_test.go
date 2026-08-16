@@ -18,8 +18,14 @@ func TestBuildSileroVadScript(t *testing.T) {
 	if !strings.Contains(script, "import torch") {
 		t.Error("script missing torch import")
 	}
-	if !strings.Contains(script, "torchaudio") {
-		t.Error("script missing torchaudio import")
+	if !strings.Contains(script, "import wave") {
+		t.Error("script missing wave import")
+	}
+	if !strings.Contains(script, "import numpy as np") {
+		t.Error("script missing numpy import")
+	}
+	if strings.Contains(script, "torchaudio") {
+		t.Error("script should not depend on torchaudio")
 	}
 	if !strings.Contains(script, "json") {
 		t.Error("script missing json import")
@@ -31,6 +37,12 @@ func TestBuildSileroVadScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "silero-vad") {
 		t.Error("script missing silero-vad model reference")
+	}
+	if !strings.Contains(script, "threshold=0.35") {
+		t.Error("script missing quiet-speech VAD threshold")
+	}
+	if !strings.Contains(script, "speech_pad_ms=300") {
+		t.Error("script missing speech padding")
 	}
 
 	// Must reference input/output paths.

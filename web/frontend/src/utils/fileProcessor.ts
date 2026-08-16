@@ -21,7 +21,7 @@ interface MultiTrackFiles {
  */
 export const isAudioFile = (file: File): boolean => {
 	return file.type.startsWith('audio/') || 
-		   ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg'].some(ext => 
+		   ['.mp3', '.wav', '.flac', '.m4a', '.qta', '.aac', '.ogg'].some(ext =>
 			   file.name.toLowerCase().endsWith(ext)
 		   );
 };

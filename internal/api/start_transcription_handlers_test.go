@@ -74,18 +74,18 @@ func TestStartTranscription_PyAnnoteHighAccuracy(t *testing.T) {
 
 	// Build the exact JSON payload the frontend sends for "High accuracy, your token"
 	payload := map[string]interface{}{
-		"model_family":                      "whisper",
-		"model":                             "small",
-		"device":                            "cpu",
-		"batch_size":                        8,
-		"compute_type":                      "float32",
-		"task":                              "transcribe",
-		"diarize":                           true,
-		"diarize_model":                     "pyannote",
-		"vad_method":                        "pyannote",
-		"vad_onset":                         0.5,
-		"vad_offset":                        0.363,
-		"hf_token":                          "hf_test_token_abc123",
+		"model_family":  "whisper",
+		"model":         "small",
+		"device":        "cpu",
+		"batch_size":    8,
+		"compute_type":  "float32",
+		"task":          "transcribe",
+		"diarize":       true,
+		"diarize_model": "pyannote",
+		"vad_method":    "pyannote",
+		"vad_onset":     0.5,
+		"vad_offset":    0.363,
+		"hf_token":      "hf_test_token_abc123",
 	}
 
 	body, _ := json.Marshal(payload)
@@ -122,6 +122,9 @@ func TestStartTranscription_PyAnnoteHighAccuracy(t *testing.T) {
 
 	if !loaded.Parameters.Diarize {
 		t.Error("expected Diarize=true after handler")
+	}
+	if !loaded.Parameters.VadPreprocess {
+		t.Error("expected VadPreprocess=true after handler")
 	}
 	if loaded.Parameters.DiarizeModel != "pyannote" {
 		t.Errorf("expected DiarizeModel='pyannote', got %q", loaded.Parameters.DiarizeModel)
@@ -311,17 +314,17 @@ func TestGetValidatedTranscriptionParams_CloudServerToken(t *testing.T) {
 
 	// Frontend sends pyannote but no hf_token (cloud server mode)
 	payload := map[string]interface{}{
-		"model_family": "whisper",
-		"model":        "small",
-		"device":       "cpu",
-		"batch_size":   8,
-		"compute_type": "float32",
-		"task":         "transcribe",
-		"diarize":      true,
+		"model_family":  "whisper",
+		"model":         "small",
+		"device":        "cpu",
+		"batch_size":    8,
+		"compute_type":  "float32",
+		"task":          "transcribe",
+		"diarize":       true,
 		"diarize_model": "pyannote",
-		"vad_method":   "pyannote",
-		"vad_onset":    0.5,
-		"vad_offset":   0.363,
+		"vad_method":    "pyannote",
+		"vad_onset":     0.5,
+		"vad_offset":    0.363,
 	}
 
 	body, _ := json.Marshal(payload)

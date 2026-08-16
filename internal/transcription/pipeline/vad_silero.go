@@ -23,6 +23,27 @@ type SileroVadPreprocessor struct {
 	EnvPath string // Python environment path (for uv run)
 }
 
+const sileroVadPyprojectTOML = `[project]
+name = "quill-silero-vad"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.1.0",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cpu", marker = "platform_machine != 'x86_64' and sys_platform != 'darwin'" },
+]
+`
+
 // AppliesTo returns true when VAD preprocessing is enabled by the user.
 // It is model-agnostic — works with any transcription adapter.
 func (s *SileroVadPreprocessor) AppliesTo(capabilities interfaces.ModelCapabilities) bool {
@@ -39,6 +60,10 @@ func (s *SileroVadPreprocessor) GetRequiredFormats() []string {
 // stored in Metadata so the caller can remap timestamps after transcription.
 func (s *SileroVadPreprocessor) Process(ctx context.Context, input interfaces.AudioInput) (interfaces.AudioInput, error) {
 	logger.Info("Running Silero VAD preprocessing", "file", input.FilePath)
+
+	if err := s.prepareEnvironment(ctx); err != nil {
+		return input, err
+	}
 
 	// Create output paths next to the input.
 	dir := filepath.Dir(input.FilePath)
@@ -102,6 +127,38 @@ func (s *SileroVadPreprocessor) Process(ctx context.Context, input interfaces.Au
 	return result, nil
 }
 
+func (s *SileroVadPreprocessor) prepareEnvironment(ctx context.Context) error {
+	if strings.TrimSpace(s.EnvPath) == "" {
+		return fmt.Errorf("silero VAD environment path is empty")
+	}
+
+	if err := os.MkdirAll(s.EnvPath, 0755); err != nil {
+		return fmt.Errorf("create silero VAD environment: %w", err)
+	}
+
+	pyprojectPath := filepath.Join(s.EnvPath, "pyproject.toml")
+	if _, err := os.Stat(pyprojectPath); os.IsNotExist(err) {
+		if writeErr := os.WriteFile(pyprojectPath, []byte(sileroVadPyprojectTOML), 0644); writeErr != nil {
+			return fmt.Errorf("write silero VAD pyproject: %w", writeErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat silero VAD pyproject: %w", err)
+	}
+
+	readyCmd := exec.CommandContext(ctx, binaries.UV(), "run", "--native-tls", "--project", s.EnvPath, "python", "-c", "import numpy, torch; print('ok')")
+	if err := readyCmd.Run(); err == nil {
+		return nil
+	}
+
+	cmd := exec.CommandContext(ctx, binaries.UV(), "sync", "--native-tls")
+	cmd.Dir = s.EnvPath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("prepare silero VAD environment: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	return nil
+}
+
 // buildSileroVadScript generates a Python script that:
 //  1. Loads the Silero VAD model via torch.hub
 //  2. Detects speech regions in the input audio
@@ -109,23 +166,47 @@ func (s *SileroVadPreprocessor) Process(ctx context.Context, input interfaces.Au
 //  4. Writes a JSON manifest with speech region timestamps and original duration
 func buildSileroVadScript(inputPath, strippedOutputPath, manifestOutputPath string) string {
 	var sb strings.Builder
-	sb.WriteString("import torch, torchaudio, json\n")
+	sb.WriteString("import json\n")
+	sb.WriteString("import wave\n")
+	sb.WriteString("import numpy as np\n")
+	sb.WriteString("import torch\n")
 	sb.WriteString("\n")
 	sb.WriteString("# Load Silero VAD model\n")
 	sb.WriteString("model, utils = torch.hub.load('snakers4/silero-vad', 'silero_vad', trust_repo=True)\n")
-	sb.WriteString("(get_speech_timestamps, _, read_audio, _, _) = utils\n")
+	sb.WriteString("(get_speech_timestamps, _, _, _, _) = utils\n")
 	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("SAMPLING_RATE = 16000\n"))
 	sb.WriteString(fmt.Sprintf("audio_path = %q\n", inputPath))
 	sb.WriteString(fmt.Sprintf("stripped_path = %q\n", strippedOutputPath))
 	sb.WriteString(fmt.Sprintf("manifest_path = %q\n", manifestOutputPath))
 	sb.WriteString("\n")
-	sb.WriteString("# Read audio at 16kHz (Silero VAD requirement)\n")
-	sb.WriteString("wav = read_audio(audio_path, sampling_rate=SAMPLING_RATE)\n")
+	sb.WriteString("# Read the preprocessed 16kHz PCM WAV without external audio backends.\n")
+	sb.WriteString("with wave.open(audio_path, 'rb') as wf:\n")
+	sb.WriteString("    sample_rate = wf.getframerate()\n")
+	sb.WriteString("    channels = wf.getnchannels()\n")
+	sb.WriteString("    sample_width = wf.getsampwidth()\n")
+	sb.WriteString("    frames = wf.readframes(wf.getnframes())\n")
+	sb.WriteString("if sample_rate != SAMPLING_RATE:\n")
+	sb.WriteString("    raise ValueError(f'Silero VAD expects {SAMPLING_RATE}Hz WAV, got {sample_rate}Hz')\n")
+	sb.WriteString("if sample_width != 2:\n")
+	sb.WriteString("    raise ValueError(f'Silero VAD expects 16-bit PCM WAV, got sample width {sample_width}')\n")
+	sb.WriteString("audio_np = np.frombuffer(frames, dtype='<i2').astype(np.float32) / 32768.0\n")
+	sb.WriteString("if channels > 1:\n")
+	sb.WriteString("    audio_np = audio_np.reshape(-1, channels).mean(axis=1)\n")
+	sb.WriteString("wav = torch.from_numpy(np.ascontiguousarray(audio_np))\n")
 	sb.WriteString("original_duration = len(wav) / SAMPLING_RATE\n")
 	sb.WriteString("\n")
 	sb.WriteString("# Detect speech timestamps\n")
-	sb.WriteString("speech_timestamps = get_speech_timestamps(wav, model, sampling_rate=SAMPLING_RATE, return_seconds=False)\n")
+	sb.WriteString("speech_timestamps = get_speech_timestamps(\n")
+	sb.WriteString("    wav,\n")
+	sb.WriteString("    model,\n")
+	sb.WriteString("    sampling_rate=SAMPLING_RATE,\n")
+	sb.WriteString("    return_seconds=False,\n")
+	sb.WriteString("    threshold=0.35,\n")
+	sb.WriteString("    min_speech_duration_ms=250,\n")
+	sb.WriteString("    min_silence_duration_ms=700,\n")
+	sb.WriteString("    speech_pad_ms=300,\n")
+	sb.WriteString(")\n")
 	sb.WriteString("\n")
 	sb.WriteString("# Build speech regions and concatenate speech audio\n")
 	sb.WriteString("regions = []\n")
@@ -142,8 +223,14 @@ func buildSileroVadScript(inputPath, strippedOutputPath, manifestOutputPath stri
 	sb.WriteString("    stripped = wav  # No speech detected — keep original\n")
 	sb.WriteString("    regions = [{'start': 0.0, 'end': float(original_duration)}]\n")
 	sb.WriteString("\n")
-	sb.WriteString("# Save stripped audio\n")
-	sb.WriteString("torchaudio.save(stripped_path, stripped.unsqueeze(0), SAMPLING_RATE)\n")
+	sb.WriteString("# Save stripped audio as mono 16-bit PCM WAV.\n")
+	sb.WriteString("stripped_np = stripped.detach().cpu().numpy()\n")
+	sb.WriteString("stripped_pcm = np.clip(stripped_np * 32767.0, -32768, 32767).astype('<i2')\n")
+	sb.WriteString("with wave.open(stripped_path, 'wb') as wf:\n")
+	sb.WriteString("    wf.setnchannels(1)\n")
+	sb.WriteString("    wf.setsampwidth(2)\n")
+	sb.WriteString("    wf.setframerate(SAMPLING_RATE)\n")
+	sb.WriteString("    wf.writeframes(stripped_pcm.tobytes())\n")
 	sb.WriteString("\n")
 	sb.WriteString("# Write manifest\n")
 	sb.WriteString("manifest = {\n")

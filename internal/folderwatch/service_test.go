@@ -93,3 +93,9 @@ func TestImportFileAssignsActiveVaultImmediately(t *testing.T) {
 		t.Fatalf("expected uploaded status, got %s", jobs[0].Status)
 	}
 }
+
+func TestIsWatchableAudioFileIncludesAppleQuickTimeAudio(t *testing.T) {
+	if !isWatchableAudioFile("voice-memo.qta") {
+		t.Fatal("expected .qta files to be watchable")
+	}
+}

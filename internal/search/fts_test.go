@@ -332,6 +332,7 @@ func TestRebuild(t *testing.T) {
 		title TEXT,
 		transcript TEXT,
 		summary TEXT,
+		is_source_part BOOLEAN DEFAULT false,
 		deleted_at DATETIME
 	)`)
 	db.Exec(`INSERT INTO transcription_jobs (id, title, transcript, summary) VALUES (?, ?, ?, ?)`,
@@ -355,6 +356,38 @@ func TestRebuild(t *testing.T) {
 	}
 	if len(results) != 2 {
 		t.Errorf("expected 2 results (non-deleted), got %d", len(results))
+	}
+}
+
+func TestRebuildExcludesSourceParts(t *testing.T) {
+	db := setupTestDB(t)
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS transcription_jobs (
+		id TEXT PRIMARY KEY,
+		title TEXT,
+		transcript TEXT,
+		summary TEXT,
+		is_source_part BOOLEAN DEFAULT false,
+		deleted_at DATETIME
+	)`)
+	db.Exec(`INSERT INTO transcription_jobs (id, title, transcript, summary, is_source_part) VALUES (?, ?, ?, ?, ?)`,
+		"parent", "260803 04:20 Siren Dj's 3", "parent transcript", "", false)
+	db.Exec(`INSERT INTO transcription_jobs (id, title, transcript, summary, is_source_part) VALUES (?, ?, ?, ?, ?)`,
+		"part-01", "260803 04:20 part 01 of 07 (260803 04:20 Siren Dj's 3)", "hidden chunk transcript", "", true)
+
+	mgr := NewFTSManager(db)
+	mgr.EnsureTable()
+
+	if err := mgr.Rebuild(); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	ids, err := mgr.MatchingJobIDs("Siren")
+	if err != nil {
+		t.Fatalf("MatchingJobIDs: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "parent" {
+		t.Fatalf("expected only parent in FTS index, got %v", ids)
 	}
 }
 

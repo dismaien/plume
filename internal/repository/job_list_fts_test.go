@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"quill/internal/models"
 
@@ -166,5 +167,107 @@ func TestListWithParams_EmptyFTSJobIDs_FallsBackToLIKE(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].ID != "job-standup" {
 		t.Errorf("expected job-standup, got %v", jobs)
+	}
+}
+
+func TestListWithParams_ExcludesSourcePartsByDefault(t *testing.T) {
+	db := newJobTestDB(t)
+	repo := NewJobRepository(db)
+	ctx := context.Background()
+
+	parentTitle := "260803 04:20 Siren Dj's 3"
+	if err := repo.Create(ctx, &models.TranscriptionJob{
+		ID:     "parent",
+		Status: models.StatusUploaded,
+		Title:  &parentTitle,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	partTitle := "260803 04:20 part 01 of 07 (260803 04:20 Siren Dj's 3)"
+	if err := repo.Create(ctx, &models.TranscriptionJob{
+		ID:              "part-01",
+		Status:          models.StatusUploaded,
+		Title:           &partTitle,
+		IsSourcePart:    true,
+		SourceParentID:  "parent",
+		SourceGroupID:   "parent",
+		SourcePartIndex: 1,
+		SourcePartCount: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, total, err := repo.ListWithParams(ctx, ListParams{Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWithParams: %v", err)
+	}
+	if total != 1 || len(jobs) != 1 || jobs[0].ID != "parent" {
+		t.Fatalf("expected only parent in default listing, got total=%d jobs=%v", total, jobs)
+	}
+}
+
+func TestListWithParams_CanIncludeSourceParts(t *testing.T) {
+	db := newJobTestDB(t)
+	repo := NewJobRepository(db)
+	ctx := context.Background()
+
+	parentTitle := "260803 04:20 Siren Dj's 3"
+	partTitle := "260803 04:20 part 01 of 07 (260803 04:20 Siren Dj's 3)"
+	for _, job := range []models.TranscriptionJob{
+		{ID: "parent", Status: models.StatusUploaded, Title: &parentTitle},
+		{
+			ID:              "part-01",
+			Status:          models.StatusUploaded,
+			Title:           &partTitle,
+			IsSourcePart:    true,
+			SourceParentID:  "parent",
+			SourceGroupID:   "parent",
+			SourcePartIndex: 1,
+			SourcePartCount: 7,
+		},
+	} {
+		if err := repo.Create(ctx, &job); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	jobs, total, err := repo.ListWithParams(ctx, ListParams{Offset: 0, Limit: 10, IncludeSourceParts: true})
+	if err != nil {
+		t.Fatalf("ListWithParams: %v", err)
+	}
+	if total != 2 || len(jobs) != 2 {
+		t.Fatalf("expected parent and source part when requested, got total=%d jobs=%v", total, jobs)
+	}
+}
+
+func TestListWithParams_DefaultsToNewestRecordingDate(t *testing.T) {
+	db := newJobTestDB(t)
+	repo := NewJobRepository(db)
+	ctx := context.Background()
+
+	olderRecordedAt := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	newerRecordedAt := time.Date(2026, 8, 3, 4, 20, 0, 0, time.UTC)
+
+	olderTitle := "260601 09:00 Older Memo"
+	newerTitle := "260803 04:20 Newer Memo"
+	for _, job := range []models.TranscriptionJob{
+		{ID: "older-recording", Status: models.StatusUploaded, Title: &olderTitle, RecordedAt: &olderRecordedAt},
+		{ID: "newer-recording", Status: models.StatusUploaded, Title: &newerTitle, RecordedAt: &newerRecordedAt},
+	} {
+		if err := repo.Create(ctx, &job); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	jobs, total, err := repo.ListWithParams(ctx, ListParams{Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWithParams: %v", err)
+	}
+	if total != 2 || len(jobs) != 2 {
+		t.Fatalf("expected two recordings, got total=%d jobs=%v", total, jobs)
+	}
+	if jobs[0].ID != "newer-recording" || jobs[1].ID != "older-recording" {
+		t.Fatalf("expected newest recorded memo first, got %s then %s", jobs[0].ID, jobs[1].ID)
 	}
 }
