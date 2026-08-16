@@ -82,6 +82,10 @@ commit;`);
   });
 }
 
+// Recent archive syncs are most useful newest-first. This also gives an
+// explicitly requested latest memo priority over older files in the same batch.
+jobs.sort((left, right) => right.filename.localeCompare(left.filename));
+
 writeState({
   created_at: new Date().toISOString(),
   sync_report: syncReportPath,
