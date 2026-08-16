@@ -248,6 +248,7 @@ function buildBackendEnv(port: number): NodeJS.ProcessEnv {
     TRANSCRIPTS_DIR: paths.transcripts,
     TEMP_DIR: paths.temp,
     WHISPERX_ENV: paths.whisperxEnv,
+    PLUME_AUDIO_STORAGE_MODE: process.env.PLUME_AUDIO_STORAGE_MODE || "reference",
     QUILL_DEFER_MODEL_INIT: "true",
     QUILL_WHISPERX_ZIP_URL: whisperxZipURL,
     QUILL_WHISPERX_ZIP_SHA256: whisperxZipSHA256,

@@ -1997,7 +1997,7 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 
 	originalAudioPath := job.AudioPath
 	renamedAudioPath := originalAudioPath
-	if renamedPath, renameErr := maybeRenameAudioPathForGeneratedTitle(job, title); renameErr != nil {
+	if renamedPath, renameErr := maybeRenameAudioPathForGeneratedTitle(job, title, h.config.AudioStorageMode); renameErr != nil {
 		logger.Warn("Failed to rename audio file after auto title generation",
 			"job_id", job.ID,
 			"audio_path", job.AudioPath,
@@ -2073,9 +2073,14 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 	return title, selectedModel, nil
 }
 
-func maybeRenameAudioPathForGeneratedTitle(job *models.TranscriptionJob, generatedTitle string) (string, error) {
+func maybeRenameAudioPathForGeneratedTitle(job *models.TranscriptionJob, generatedTitle, storageMode string) (string, error) {
 	if job == nil {
 		return "", nil
+	}
+	// Reference mode points at the canonical archive. Its source filename must
+	// remain immutable; the human-readable title belongs to the bundle metadata.
+	if transcription.NormalizeAudioStorageMode(storageMode) == transcription.AudioStorageReference {
+		return job.AudioPath, nil
 	}
 	if job.IsMultiTrack {
 		return job.AudioPath, nil
