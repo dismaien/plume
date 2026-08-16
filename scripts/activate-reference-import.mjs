@@ -134,9 +134,19 @@ function resumeQualityController() {
     log("quality_controller_not_resumed", { reason: "plist_missing", plist: qualityPlist });
     return;
   }
+  const currentOrigin = new URL(apiBase).origin;
+  const plistText = fs.readFileSync(qualityPlist, "utf8");
+  const updatedPlist = plistText.replace(
+    /<string>http:\/\/127\.0\.0\.1:\d+<\/string>/,
+    `<string>${currentOrigin}</string>`,
+  );
+  if (updatedPlist === plistText) {
+    throw new Error(`Could not update API address in quality controller plist: ${qualityPlist}`);
+  }
+  fs.writeFileSync(qualityPlist, updatedPlist);
   try {
     execFileSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, qualityPlist], { timeout: 30_000 });
-    log("quality_controller_resumed", { plist: qualityPlist });
+    log("quality_controller_resumed", { plist: qualityPlist, api_base: currentOrigin });
   } catch (error) {
     const message = String(error?.stderr || error?.message || error);
     if (!/already loaded|service already loaded/i.test(message)) throw error;
