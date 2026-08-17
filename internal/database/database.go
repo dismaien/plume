@@ -63,39 +63,47 @@ func Initialize(dbPath string) error {
 	sqlDB.SetConnMaxLifetime(30 * time.Minute) // Reset connections every 30 minutes
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)  // Close idle connections after 5 minutes
 
-	// Auto migrate the schema
-	if err := DB.AutoMigrate(
-		&models.TranscriptionJob{},
-		&models.TranscriptionJobExecution{},
-		&models.SpeakerMapping{},
-		&models.MultiTrackFile{},
-		&models.User{},
-		&models.APIKey{},
-		&models.TranscriptionProfile{},
-		&models.LLMConfig{},
-		&models.ChatSession{},
-		&models.ChatMessage{},
-		&models.SummaryTemplate{},
-		&models.SummarySetting{},
-		&models.Summary{},
-		&models.Note{},
-		&models.RefreshToken{},
-		&models.WatchedFolder{},
-		&models.Vault{},
-		&models.AppSetup{},
-		&models.Contact{},
-		&models.CloudProviderConfig{},
-	); err != nil {
-		return fmt.Errorf("failed to auto migrate: %v", err)
+	// Desktop recovery jobs can skip migration after the same binary has already
+	// migrated a very large database. SQLite otherwise rebuilds the 1.9 GB jobs
+	// table on every restart before the transcription API can come online.
+	if !strings.EqualFold(os.Getenv("QUILL_SKIP_AUTO_MIGRATE"), "true") {
+		if err := DB.AutoMigrate(
+			&models.TranscriptionJob{},
+			&models.TranscriptionJobExecution{},
+			&models.SpeakerMapping{},
+			&models.MultiTrackFile{},
+			&models.User{},
+			&models.APIKey{},
+			&models.TranscriptionProfile{},
+			&models.LLMConfig{},
+			&models.ChatSession{},
+			&models.ChatMessage{},
+			&models.SummaryTemplate{},
+			&models.SummarySetting{},
+			&models.Summary{},
+			&models.Note{},
+			&models.RefreshToken{},
+			&models.WatchedFolder{},
+			&models.Vault{},
+			&models.AppSetup{},
+			&models.Contact{},
+			&models.CloudProviderConfig{},
+		); err != nil {
+			return fmt.Errorf("failed to auto migrate: %v", err)
+		}
+	} else {
+		fmt.Println("Skipping automatic schema migration for this startup")
 	}
 
-	if err := contacts.BackfillContactsFileFirst(context.Background(), DB); err != nil {
-		return fmt.Errorf("failed to backfill contacts file-first schema: %v", err)
-	}
+	skipStartupBackfills := strings.EqualFold(os.Getenv("QUILL_SKIP_STARTUP_BACKFILLS"), "true")
+	if !skipStartupBackfills {
+		if err := contacts.BackfillContactsFileFirst(context.Background(), DB); err != nil {
+			return fmt.Errorf("failed to backfill contacts file-first schema: %v", err)
+		}
 
-	// Cleanup duplicate speaker mappings before creating unique index (for backward compatibility)
-	// Keep the latest mapping for each (job_id, original_speaker) pair
-	cleanupQuery := `
+		// Cleanup duplicate speaker mappings before creating unique index (for backward compatibility)
+		// Keep the latest mapping for each (job_id, original_speaker) pair
+		cleanupQuery := `
 		DELETE FROM speaker_mappings 
 		WHERE id NOT IN (
 			SELECT MAX(id) 
@@ -103,25 +111,28 @@ func Initialize(dbPath string) error {
 			GROUP BY transcription_job_id, original_speaker
 		)
 	`
-	if err := DB.Exec(cleanupQuery).Error; err != nil {
-		// Log warning but continue, as table might not exist yet or query might fail for other reasons
-		// We don't want to block startup if this fails, but index creation might fail next.
-		fmt.Printf("Warning: Failed to cleanup duplicate speaker mappings: %v\n", err)
-	}
+		if err := DB.Exec(cleanupQuery).Error; err != nil {
+			// Log warning but continue, as table might not exist yet or query might fail for other reasons
+			// We don't want to block startup if this fails, but index creation might fail next.
+			fmt.Printf("Warning: Failed to cleanup duplicate speaker mappings: %v\n", err)
+		}
 
-	// Add unique constraint for speaker mappings (transcription_job_id + original_speaker)
-	if err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_speaker_mappings_unique ON speaker_mappings(transcription_job_id, original_speaker)").Error; err != nil {
-		return fmt.Errorf("failed to create unique constraint for speaker mappings: %v", err)
-	}
+		// Add unique constraint for speaker mappings (transcription_job_id + original_speaker)
+		if err := DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_speaker_mappings_unique ON speaker_mappings(transcription_job_id, original_speaker)").Error; err != nil {
+			return fmt.Errorf("failed to create unique constraint for speaker mappings: %v", err)
+		}
 
-	// Backfill raw speaker mappings for existing completed diarized jobs
-	if err := backfillRawSpeakerMappings(DB); err != nil {
-		fmt.Printf("Warning: Failed to backfill raw speaker mappings: %v\n", err)
-	}
+		// Backfill raw speaker mappings for existing completed diarized jobs
+		if err := backfillRawSpeakerMappings(DB); err != nil {
+			fmt.Printf("Warning: Failed to backfill raw speaker mappings: %v\n", err)
+		}
 
-	// Link orphaned speaker_mappings to contacts by name match
-	if err := backfillSpeakerMappingContactIDs(DB); err != nil {
-		fmt.Printf("Warning: Failed to backfill speaker mapping contact IDs: %v\n", err)
+		// Link orphaned speaker_mappings to contacts by name match
+		if err := backfillSpeakerMappingContactIDs(DB); err != nil {
+			fmt.Printf("Warning: Failed to backfill speaker mapping contact IDs: %v\n", err)
+		}
+	} else {
+		fmt.Println("Skipping legacy startup backfills for this startup")
 	}
 
 	// Seed default summary template if none exist
@@ -129,18 +140,20 @@ func Initialize(dbPath string) error {
 		return fmt.Errorf("failed to seed default summary template: %v", err)
 	}
 
-	// Migrate legacy machine-readable folder names to human-readable names.
-	if err := MigrateHumanReadableFolderNames(DB); err != nil {
-		fmt.Printf("Warning: Failed to migrate folder names: %v\n", err)
-	}
+	if !skipStartupBackfills {
+		// Migrate legacy machine-readable folder names to human-readable names.
+		if err := MigrateHumanReadableFolderNames(DB); err != nil {
+			fmt.Printf("Warning: Failed to migrate folder names: %v\n", err)
+		}
 
-	// Backfill empty match_source on speaker mappings so UI labels are consistent.
-	if err := backfillSpeakerMappingMatchSource(DB); err != nil {
-		fmt.Printf("Warning: Failed to backfill speaker mapping match_source: %v\n", err)
-	}
+		// Backfill empty match_source on speaker mappings so UI labels are consistent.
+		if err := backfillSpeakerMappingMatchSource(DB); err != nil {
+			fmt.Printf("Warning: Failed to backfill speaker mapping match_source: %v\n", err)
+		}
 
-	// Backfill recorded_at for existing jobs (runs async to avoid slowing startup).
-	go backfillRecordedAt(DB)
+		// Backfill recorded_at for existing jobs (runs async to avoid slowing startup).
+		go backfillRecordedAt(DB)
+	}
 
 	return nil
 }
@@ -160,7 +173,11 @@ func backfillRawSpeakerMappings(db *gorm.DB) error {
 	var jobs []jobRow
 	err := db.Model(&models.TranscriptionJob{}).
 		Select("id, transcript").
-		Where("status = ? AND diarization = ? AND transcript IS NOT NULL AND transcript != ''", "completed", true).
+		Where(`status = ? AND diarization = ? AND transcript IS NOT NULL AND transcript != ''
+			AND NOT EXISTS (
+				SELECT 1 FROM speaker_mappings
+				WHERE speaker_mappings.transcription_job_id = transcription_jobs.id
+			)`, "completed", true).
 		Scan(&jobs).Error
 	if err != nil {
 		return fmt.Errorf("query diarized jobs: %w", err)

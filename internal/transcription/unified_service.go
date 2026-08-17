@@ -258,8 +258,14 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
+	processingAudioPath, cleanupProcessingAudio, err := u.stageReferenceAudio(job.AudioPath, job.ID)
+	if err != nil {
+		return fmt.Errorf("failed to stage referenced audio: %w", err)
+	}
+	defer cleanupProcessingAudio()
+
 	// Create audio input
-	audioInput, err := u.createAudioInput(job.AudioPath)
+	audioInput, err := u.createAudioInput(processingAudioPath)
 	if err != nil {
 		return fmt.Errorf("failed to create audio input: %w", err)
 	}
@@ -524,6 +530,53 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	}
 
 	return nil
+}
+
+// stageReferenceAudio gives app-launched media tools a path inside Plume's data
+// directory. On macOS, subprocesses can lose access to a Documents path even
+// when the parent process can stat it. A same-volume hard link costs no extra
+// audio storage; cross-volume sources use a temporary copy that is removed when
+// processing finishes.
+func (u *UnifiedTranscriptionService) stageReferenceAudio(audioPath, jobID string) (string, func(), error) {
+	if u.audioStorageMode != AudioStorageReference || strings.TrimSpace(audioPath) == "" {
+		return audioPath, func() {}, nil
+	}
+
+	stageDir := filepath.Join(u.tempDirectory, "reference-inputs")
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		return "", nil, fmt.Errorf("create reference staging directory: %w", err)
+	}
+
+	safeJobID := strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(jobID)
+	if safeJobID == "" {
+		safeJobID = "audio"
+	}
+	ext := filepath.Ext(audioPath)
+	stagePath := filepath.Join(stageDir, safeJobID+ext)
+	if err := os.Remove(stagePath); err != nil && !os.IsNotExist(err) {
+		return "", nil, fmt.Errorf("remove stale reference staging file: %w", err)
+	}
+
+	stagingMethod := "hardlink"
+	if err := os.Link(audioPath, stagePath); err != nil {
+		stagingMethod = "copy"
+		if copyErr := copyFile(audioPath, stagePath); copyErr != nil {
+			return "", nil, fmt.Errorf("stage reference audio (hardlink: %v; copy: %w)", err, copyErr)
+		}
+	}
+
+	logger.Info("Staged referenced audio for processing",
+		"job_id", jobID,
+		"source", audioPath,
+		"staged_path", stagePath,
+		"method", stagingMethod)
+
+	cleanup := func() {
+		if err := os.Remove(stagePath); err != nil && !os.IsNotExist(err) {
+			logger.Warn("Failed to clean up staged reference audio", "file", stagePath, "error", err)
+		}
+	}
+	return stagePath, cleanup, nil
 }
 
 // processMultiTrackJob handles multi-track audio processing

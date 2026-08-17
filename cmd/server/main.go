@@ -201,23 +201,32 @@ func main() {
 
 	// Initialize desktop auto-import folder watcher service
 	folderWatchService := folderwatch.NewService(cfg, watchedFolderRepo, jobRepo, userRepo, profileRepo, taskQueue)
-	if err := folderWatchService.Start(context.Background()); err != nil {
-		logger.Warn("Some auto-import folders failed to initialize", "error", err)
+	skipStartupSyncManagers := strings.EqualFold(os.Getenv("QUILL_SKIP_STARTUP_SYNC_MANAGERS"), "true")
+	if !skipStartupSyncManagers {
+		if err := folderWatchService.Start(context.Background()); err != nil {
+			logger.Warn("Some auto-import folders failed to initialize", "error", err)
+		}
+		defer folderWatchService.Stop()
+	} else {
+		logger.Info("Skipping startup filesystem sync managers for this startup")
 	}
-	defer folderWatchService.Stop()
 
 	contactManager := contacts.NewManager(database.DB, contactRepo, cfg.WhisperXEnv)
 	contactManager.SetRetroactiveScanExtractor(api.BuildRetroactiveSpeakerExtractor(cfg.WhisperXEnv))
-	if err := contactManager.Start(context.Background()); err != nil {
-		logger.Warn("Contact file-sync manager failed to initialize", "error", err)
+	if !skipStartupSyncManagers {
+		if err := contactManager.Start(context.Background()); err != nil {
+			logger.Warn("Contact file-sync manager failed to initialize", "error", err)
+		}
+		defer contactManager.Stop()
 	}
-	defer contactManager.Stop()
 
 	bundleManager := transcription.NewBundleManager(database.DB)
-	if err := bundleManager.Start(context.Background()); err != nil {
-		logger.Warn("Bundle sync manager failed to initialize", "error", err)
+	if !skipStartupSyncManagers {
+		if err := bundleManager.Start(context.Background()); err != nil {
+			logger.Warn("Bundle sync manager failed to initialize", "error", err)
+		}
+		defer bundleManager.Stop()
 	}
-	defer bundleManager.Stop()
 
 	// Wire up self-write marking so materializeTranscriptArtifacts doesn't trigger
 	// destructive BundleWatcher re-imports (which delete summaries/notes).
