@@ -39,7 +39,7 @@ interface AudioDetailViewProps {
 }
 
 type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
-const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar";
+const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar-v2";
 
 function defaultRecordingsSidebarOpen() {
     const savedPreference = localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY);
