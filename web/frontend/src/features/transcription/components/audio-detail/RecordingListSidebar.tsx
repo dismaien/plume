@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { formatRecordingSidebarDateTime } from "@/lib/recording-date";
 import { useAudioListInfinite, type AudioFile } from "@/features/transcription/hooks/useAudioFiles";
 
 interface RecordingListSidebarProps {
@@ -50,25 +51,6 @@ function formatDuration(durationMs?: number) {
     const pad = (value: number) => String(value).padStart(2, "0");
 
     return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
-}
-
-function formatRecordedAt(file: AudioFile) {
-    const value = file.recorded_at || file.created_at;
-    const date = new Date(value);
-    const now = new Date();
-    const sameDay = date.getFullYear() === now.getFullYear()
-        && date.getMonth() === now.getMonth()
-        && date.getDate() === now.getDate();
-
-    if (sameDay) {
-        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
-
-    return date.toLocaleDateString([], {
-        month: "short",
-        day: "numeric",
-        year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
-    });
 }
 
 function RecordingStatusIcon({ status }: { status: AudioFile["status"] }) {
@@ -224,7 +206,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                                         </span>
                                     </div>
                                     <div className="mt-1.5 flex items-center justify-between gap-3 text-xs tabular-nums text-[var(--text-tertiary)]">
-                                        <span>{formatRecordedAt(file)}</span>
+                                        <span>{formatRecordingSidebarDateTime(file.recorded_at, file.created_at)}</span>
                                         {duration && <span>{duration}</span>}
                                     </div>
                                 </button>

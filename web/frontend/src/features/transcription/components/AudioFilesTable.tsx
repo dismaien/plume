@@ -40,6 +40,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { formatRecordingOverviewDateTime } from "@/lib/recording-date";
 import { Button } from "@/components/ui/button";
 import { type WhisperXParams } from "@/components/TranscriptionConfigDialog";
 import { TranscribeDDialog } from "@/components/TranscribeDDialog";
@@ -984,17 +985,6 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 		return seconds > 0 ? seconds * 1000 : undefined;
 	}, []);
 
-	const formatDate = useCallback((dateString: string) => {
-		return new Date(dateString).toLocaleDateString("en-US", {
-			year: "numeric",
-			month: "short",
-			day: "numeric",
-		});
-	}, []);
-
-
-
-
 	const getFileName = useCallback((audioPath: string) => {
 		const parts = audioPath.split("/");
 		return parts[parts.length - 1];
@@ -1154,7 +1144,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 												})()}
 											</div>
 											<div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
-												{formatDate(file.recorded_at || file.created_at)}
+												{formatRecordingOverviewDateTime(file.recorded_at, file.created_at)}
 												{(() => {
 													const formattedDuration = formatRecordingDuration(file.duration || durationFromTitle(file.title));
 													if (!formattedDuration) return null;

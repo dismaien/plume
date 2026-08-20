@@ -1,6 +1,6 @@
 {
   "name": "plume-desktop",
-  "version": "1.6.1",
+	"version": "1.6.2",
   "private": true,
   "description": "Electron shell for Plume, a private voice memo knowledge archive fork of Quill",
   "main": "dist/main.js",

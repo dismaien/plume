@@ -8,6 +8,7 @@ export const AUDIO_FILES = [
     title: 'Team Standup March 10',
     status: 'completed',
     created_at: '2026-03-10T09:00:00Z',
+    recorded_at: '2026-03-10 09:00:00+00:00',
     audio_path: '/data/uploads/standup-2026-03-10.wav',
     diarization: true,
     speakers: 3,
