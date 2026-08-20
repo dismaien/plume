@@ -17,6 +17,23 @@ export interface EmberPlayerProps {
     onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
+function shouldIgnorePlaybackShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return true;
+    }
+
+    if (document.querySelector('[role="dialog"], [aria-modal="true"]')) {
+        return true;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return false;
+
+    return target.isContentEditable || Boolean(target.closest(
+        'input, textarea, select, button, a, [role="button"], [role="textbox"], [contenteditable="true"]',
+    ));
+}
+
 export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
     ({ src, audioId, className, onTimeUpdate, onPlayStateChange }, ref) => {
         const audioRef = useRef<HTMLAudioElement>(null);
@@ -32,6 +49,20 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
         const [isHovering, setIsHovering] = useState(false);
         const [isDragging, setIsDragging] = useState(false);
 
+        const togglePlay = useCallback(() => {
+            const audio = audioRef.current;
+            if (!audio) return;
+
+            if (audio.paused) {
+                audio.play().catch(e => {
+                    console.error("Playback failed:", e);
+                    setError("Playback failed.");
+                });
+            } else {
+                audio.pause();
+            }
+        }, []);
+
         // --- 1. Parent Control (ForwardRef) ---
         useImperativeHandle(ref, () => ({
             seekTo: (time: number) => {
@@ -42,7 +73,7 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
             },
             playPause: () => togglePlay(),
             isPlaying: () => isPlaying
-        }));
+        }), [isPlaying, togglePlay]);
 
         // --- 2. URL Logic ---
         let streamUrl = src;
@@ -51,17 +82,19 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
         }
 
         // --- 3. Audio Handlers ---
-        const togglePlay = () => {
-            if (!audioRef.current) return;
-            if (isPlaying) {
-                audioRef.current.pause();
-            } else {
-                audioRef.current.play().catch(e => {
-                    console.error("Playback failed:", e);
-                    setError("Playback failed.");
-                });
-            }
-        };
+        useEffect(() => {
+            const handlePlaybackShortcut = (event: KeyboardEvent) => {
+                if ((event.code !== "Space" && event.key !== " ") || shouldIgnorePlaybackShortcut(event)) {
+                    return;
+                }
+
+                event.preventDefault();
+                togglePlay();
+            };
+
+            window.addEventListener("keydown", handlePlaybackShortcut);
+            return () => window.removeEventListener("keydown", handlePlaybackShortcut);
+        }, [togglePlay]);
 
         const handleTimeUpdate = () => {
             if (audioRef.current && !isDragging) {
@@ -180,6 +213,8 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
                     {/* Top Row: Button & Time */}
                     <div className="flex items-center justify-between">
                         <button
+                            type="button"
+                            aria-label={isPlaying ? "Pause recording" : "Play recording"}
                             onClick={togglePlay}
                             className="flex h-12 w-12 items-center justify-center rounded-full bg-[image:var(--brand-gradient)] text-white shadow-lg shadow-black/20 hover:scale-105 active:scale-95 transition-all focus:outline-none cursor-pointer"
                         >

@@ -46,4 +46,39 @@ test.describe('View Completed Transcription', () => {
     const count = await audioArea.count();
     expect(count).toBeGreaterThan(0);
   });
+
+  test('space toggles playback without hijacking title editing', async ({ page }) => {
+    await page.addInitScript(() => {
+      let paused = true;
+      Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
+        configurable: true,
+        get: () => paused,
+      });
+      HTMLMediaElement.prototype.play = async function () {
+        paused = false;
+        this.dispatchEvent(new Event('play'));
+      };
+      HTMLMediaElement.prototype.pause = function () {
+        paused = true;
+        this.dispatchEvent(new Event('pause'));
+      };
+    });
+
+    await page.goto('/audio/1');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible();
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('button', { name: 'Pause recording' })).toBeVisible();
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible();
+
+    await page.locator('h1.recording-title').click();
+    const titleInput = page.locator('input.recording-title');
+    await expect(titleInput).toBeVisible();
+    await titleInput.press('Space');
+
+    await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible();
+    await expect(titleInput).toHaveValue(/ $/);
+  });
 });
