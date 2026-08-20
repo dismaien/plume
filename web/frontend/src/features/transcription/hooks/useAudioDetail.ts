@@ -74,6 +74,7 @@ export interface WordSegment {
     word: string;
     score: number;
     speaker?: string;
+    speaker_name?: string;
 }
 
 export interface TranscriptSegment {
@@ -81,6 +82,7 @@ export interface TranscriptSegment {
     end: number;
     text: string;
     speaker?: string;
+    speaker_name?: string;
 }
 
 export interface Transcript {

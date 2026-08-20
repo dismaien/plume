@@ -40,6 +40,7 @@ interface WordSegment {
     word: string;
     score: number;
     speaker?: string;
+    speaker_name?: string;
 }
 
 interface Transcript {
@@ -49,6 +50,7 @@ interface Transcript {
         end: number;
         text: string;
         speaker?: string;
+        speaker_name?: string;
     }>;
     word_segments?: WordSegment[];
 }
@@ -109,8 +111,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         return labels;
     }, [transcript?.segments, transcript?.word_segments]);
 
-    const getDisplaySpeakerName = (originalSpeaker: string): string => {
-        return speakerMappings[originalSpeaker] || defaultSpeakerLabels[originalSpeaker] || originalSpeaker;
+    const getDisplaySpeakerName = (originalSpeaker: string, persistedName?: string): string => {
+        return speakerMappings[originalSpeaker] || persistedName || defaultSpeakerLabels[originalSpeaker] || originalSpeaker;
     };
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -350,9 +352,9 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             {segment.speaker && (
                                 <span
                                     className="font-medium text-carbon-700 dark:text-carbon-300 truncate max-w-full"
-                                    title={getDisplaySpeakerName(segment.speaker)}
+                                    title={getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
                                 >
-                                    {getDisplaySpeakerName(segment.speaker)}
+                                    {getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
                                 </span>
                             )}
                         </div>
@@ -391,6 +393,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
         const groups: Array<{
             speaker: string;
+            displaySpeaker: string;
+            identityKey: string;
             startTime: number;
             texts: string[];
             segmentIndices: number[];
@@ -398,14 +402,18 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
         transcript.segments.forEach((segment, i) => {
             const speaker = segment.speaker || '';
+            const displaySpeaker = getDisplaySpeakerName(speaker, segment.speaker_name).trim();
+            const identityKey = displaySpeaker.toLocaleLowerCase();
             const lastGroup = groups[groups.length - 1];
 
-            if (lastGroup && lastGroup.speaker === speaker) {
+            if (lastGroup && lastGroup.identityKey === identityKey) {
                 lastGroup.texts.push(segment.text.trim());
                 lastGroup.segmentIndices.push(i);
             } else {
                 groups.push({
                     speaker,
+                    displaySpeaker,
+                    identityKey,
                     startTime: segment.start,
                     texts: [segment.text.trim()],
                     segmentIndices: [i],
@@ -414,7 +422,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         });
 
         return groups;
-    }, [transcript?.segments]);
+    }, [defaultSpeakerLabels, speakerMappings, transcript?.segments]);
 
     const renderCompactedView = () => {
         if (!transcript?.segments || compactedGroups.length === 0) {
@@ -427,7 +435,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                     <div key={gi} className="space-y-1">
                         {group.speaker && (
                             <div className="flex items-center gap-2 text-sm font-medium text-carbon-600 dark:text-carbon-400 select-none">
-                                <span>{getDisplaySpeakerName(group.speaker)}</span>
+                                <span>{group.displaySpeaker}</span>
                                 <span className="font-mono text-[10px] text-carbon-400 dark:text-carbon-500">
                                     {formatSegmentTime(group.startTime)}
                                 </span>

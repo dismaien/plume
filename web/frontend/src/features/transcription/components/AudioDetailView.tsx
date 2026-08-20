@@ -46,20 +46,21 @@ function countDistinctDisplaySpeakers(
     speakerMappings: Record<string, string>,
 ) {
     const speakers = new Set<string>();
-    const addSpeaker = (speaker?: string) => {
+    const addSpeaker = (speaker?: string, persistedName?: string) => {
         const rawSpeaker = speaker?.trim();
-        if (!rawSpeaker) return;
+        const storedName = persistedName?.trim();
+        if (!rawSpeaker && !storedName) return;
 
-        const displayName = (speakerMappings[rawSpeaker] || rawSpeaker).trim();
+        const displayName = ((rawSpeaker && speakerMappings[rawSpeaker]) || storedName || rawSpeaker || "").trim();
         if (displayName) {
             speakers.add(displayName.toLowerCase());
         }
     };
 
-    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker));
+    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker, segment.speaker_name));
 
     if (speakers.size === 0) {
-        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker));
+        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker, word.speaker_name));
     }
 
     return speakers.size;

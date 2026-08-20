@@ -7,6 +7,50 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Speaker Rename Dialog', () => {
+  test('consolidates multiple diarization labels renamed to one person', async ({ page }) => {
+    let savedMappings = [
+      { original_speaker: 'SPEAKER_00', custom_name: 'SPEAKER_00', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_01', custom_name: 'SPEAKER_01', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_02', custom_name: 'SPEAKER_02', match_source: 'manual' },
+    ];
+
+    await page.route('**/api/v1/transcription/*/speakers', async (route) => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({ json: savedMappings });
+      }
+
+      const payload = route.request().postDataJSON() as { mappings: typeof savedMappings };
+      savedMappings = payload.mappings;
+      return route.fulfill({
+        json: {
+          mappings: savedMappings,
+          contact_bootstrap: { started_count: 0, created_count: 0, skipped_existing_count: 0 },
+        },
+      });
+    });
+
+    await page.goto('/audio/1');
+    await page.getByRole('button', { name: 'Rename Speakers' }).click();
+
+    for (const speaker of ['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02']) {
+      await page.locator(`#speaker-${speaker}`).fill('Leona');
+    }
+    const renameDialog = page.getByRole('dialog', { name: 'Rename Speakers' });
+    await renameDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(renameDialog).toBeHidden();
+
+    const moreMenu = page.getByRole('button').filter({
+      has: page.locator('svg.lucide-ellipsis-vertical'),
+    }).first();
+    await moreMenu.click();
+    await page.getByRole('menuitem', { name: 'Compacted View' }).click();
+
+    const transcript = page.locator('[data-transcript-text]');
+    await expect(transcript).toHaveCount(1);
+    await expect(transcript).toContainText('Good morning everyone');
+    await expect(page.getByText('Leona', { exact: true })).toHaveCount(1);
+  });
+
   test('opens speaker rename dialog and shows speakers', async ({ page }) => {
     await page.goto('/audio/1');
     await page.waitForLoadState('networkidle');
