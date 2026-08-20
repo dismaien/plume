@@ -20,10 +20,28 @@ function parseRecordedWallClock(value: string) {
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function getRecordingDateTime(recordedAt?: string, createdAt?: string): RecordingDateTime | null {
-    let date: Date | null = null;
+function parseCanonicalTitleWallClock(title?: string) {
+    const match = title?.match(/^(\d{2})(\d{2})(\d{2})\s+(\d{2}):(\d{2})(?:\s|$)/);
+    if (!match) return null;
 
-    if (recordedAt) {
+    const [, year, month, day, hour, minute] = match;
+    const date = new Date(
+        2000 + Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+    );
+
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function getRecordingDateTime(recordedAt?: string, createdAt?: string, title?: string): RecordingDateTime | null {
+    // The canonical title prefix is the archive's preserved recording-local
+    // wall clock. Older imports may have normalized recorded_at to UTC.
+    let date: Date | null = parseCanonicalTitleWallClock(title);
+
+    if (!date && recordedAt) {
         // Apple archive timestamps encode the recording-local wall clock, even
         // when the serialized value carries a UTC offset. Preserve those fields.
         date = parseRecordedWallClock(recordedAt);
@@ -45,8 +63,8 @@ export function getRecordingDateTime(recordedAt?: string, createdAt?: string): R
     };
 }
 
-export function formatRecordingOverviewDateTime(recordedAt?: string, createdAt?: string) {
-    const value = getRecordingDateTime(recordedAt, createdAt);
+export function formatRecordingOverviewDateTime(recordedAt?: string, createdAt?: string, title?: string) {
+    const value = getRecordingDateTime(recordedAt, createdAt, title);
     if (!value) return "Date unavailable";
 
     const date = value.date.toLocaleDateString("en-US", {
@@ -58,8 +76,8 @@ export function formatRecordingOverviewDateTime(recordedAt?: string, createdAt?:
     return `${date} · ${value.time}`;
 }
 
-export function formatRecordingSidebarDateTime(recordedAt?: string, createdAt?: string) {
-    const value = getRecordingDateTime(recordedAt, createdAt);
+export function formatRecordingSidebarDateTime(recordedAt?: string, createdAt?: string, title?: string) {
+    const value = getRecordingDateTime(recordedAt, createdAt, title);
     if (!value) return "Date unavailable";
 
     const now = new Date();

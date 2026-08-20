@@ -32,7 +32,7 @@ test.describe('Dashboard – Audio File List', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Mar 10, 2026 · 09:00').first()).toBeVisible();
+    await expect(page.getByText('Mar 10, 2026 · 10:15').first()).toBeVisible();
   });
 
   test('clicking an audio file navigates to detail view', async ({ page }) => {

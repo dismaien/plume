@@ -14,7 +14,7 @@ test("opens the recordings list by default and switches transcripts without retu
     await expect(sidebar).toBeVisible();
     await expect(page.getByRole("button", { name: "Hide recordings list" }).first()).toBeVisible();
     await expect(sidebar.getByText(AUDIO_FILES[0].title)).toBeVisible();
-    await expect(sidebar).toContainText('Mar 10 · 09:00');
+    await expect(sidebar).toContainText('Mar 10 · 10:15');
     await expect(sidebar.getByRole("button", { name: /Team Standup March 10/ })).toHaveAttribute("aria-current", "page");
 
     await page.setViewportSize({ width: 390, height: 844 });

@@ -206,7 +206,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                                         </span>
                                     </div>
                                     <div className="mt-1.5 flex items-center justify-between gap-3 text-xs tabular-nums text-[var(--text-tertiary)]">
-                                        <span>{formatRecordingSidebarDateTime(file.recorded_at, file.created_at)}</span>
+                                        <span>{formatRecordingSidebarDateTime(file.recorded_at, file.created_at, file.title)}</span>
                                         {duration && <span>{duration}</span>}
                                     </div>
                                 </button>

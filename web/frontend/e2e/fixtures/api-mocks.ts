@@ -5,7 +5,7 @@ import { Page } from '@playwright/test';
 export const AUDIO_FILES = [
   {
     id: '1',
-    title: 'Team Standup March 10',
+    title: '260310 10:15 Team Standup March 10',
     status: 'completed',
     created_at: '2026-03-10T09:00:00Z',
     recorded_at: '2026-03-10 09:00:00+00:00',

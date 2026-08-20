@@ -1144,7 +1144,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 												})()}
 											</div>
 											<div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
-												{formatRecordingOverviewDateTime(file.recorded_at, file.created_at)}
+												{formatRecordingOverviewDateTime(file.recorded_at, file.created_at, file.title)}
 												{(() => {
 													const formattedDuration = formatRecordingDuration(file.duration || durationFromTitle(file.title));
 													if (!formattedDuration) return null;
