@@ -41,6 +41,14 @@ interface AudioDetailViewProps {
 type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
 const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar";
 
+function defaultRecordingsSidebarOpen() {
+    const savedPreference = localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY);
+    if (savedPreference !== null) {
+        return savedPreference === "true";
+    }
+    return window.matchMedia("(min-width: 1024px)").matches;
+}
+
 function countDistinctDisplaySpeakers(
     transcript: Transcript | null | undefined,
     speakerMappings: Record<string, string>,
@@ -91,9 +99,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
     const [downloadFormat, setDownloadFormat] = useState<'txt' | 'json' | 'md'>('txt');
     const [searchOpen, setSearchOpen] = useState(false);
-    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(
-        () => localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY) === "true",
-    );
+    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(defaultRecordingsSidebarOpen);
 
     // Dialog States
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -538,34 +544,53 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="space-y-3 flex-1 min-w-0">
                                             {/* Title Edit Logic */}
-                                            {isEditingTitle ? (
-                                                <Input
-                                                    value={newTitle}
-                                                    onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
-                                                    onBlur={handleTitleBlur}
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') {
-                                                            e.preventDefault();
-                                                            handleTitleSave();
-                                                        } else if (e.key === 'Escape') {
-                                                            e.preventDefault();
-                                                            handleTitleCancel();
-                                                        }
-                                                    }}
-                                                    className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
-                                                    autoFocus
-                                                />
-                                            ) : (
-                                                <div
-                                                    className="group flex items-center gap-3 cursor-text"
-                                                    onClick={handleStartTitleEdit}
-                                                >
-                                                    <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] truncate">
-                                                        {audioFile.title || "Untitled Recording"}
-                                                    </h1>
-                                                    <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            aria-label="Back to recordings"
+                                                            onClick={handleBackToRecordings}
+                                                            className="h-9 w-9 shrink-0 text-[var(--text-secondary)] hover:bg-[var(--bg-muted-pane)] hover:text-[var(--brand-solid)]"
+                                                        >
+                                                            <ArrowLeft className="h-5 w-5" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>Back to recordings</TooltipContent>
+                                                </Tooltip>
+                                                <div className="min-w-0 flex-1">
+                                                    {isEditingTitle ? (
+                                                        <Input
+                                                            value={newTitle}
+                                                            onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
+                                                            onBlur={handleTitleBlur}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    handleTitleSave();
+                                                                } else if (e.key === 'Escape') {
+                                                                    e.preventDefault();
+                                                                    handleTitleCancel();
+                                                                }
+                                                            }}
+                                                            className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
+                                                            autoFocus
+                                                        />
+                                                    ) : (
+                                                        <div
+                                                            className="group flex items-center gap-3 cursor-text"
+                                                            onClick={handleStartTitleEdit}
+                                                        >
+                                                            <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] truncate">
+                                                                {audioFile.title || "Untitled Recording"}
+                                                            </h1>
+                                                            <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )}
+                                            </div>
 
                                             {/* Badges */}
                                             <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
@@ -642,16 +667,17 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     <Button
                                                         type="button"
                                                         variant="outline"
-                                                        size="icon"
+                                                        size="sm"
                                                         aria-label={recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}
                                                         aria-pressed={recordingsSidebarOpen}
                                                         onClick={() => setRecordingsSidebar(!recordingsSidebarOpen)}
                                                         className={cn(
-                                                            "rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-sm hover:bg-[var(--bg-muted-pane)]",
+                                                            "gap-2 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 shadow-sm hover:bg-[var(--bg-muted-pane)]",
                                                             recordingsSidebarOpen && "border-[var(--brand-solid)]/50 text-[var(--brand-solid)]",
                                                         )}
                                                     >
                                                         <PanelLeft className="h-4 w-4" />
+                                                        <span className="hidden md:inline">List</span>
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>{recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}</TooltipContent>

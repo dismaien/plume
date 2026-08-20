@@ -7,15 +7,12 @@ test.beforeEach(async ({ page }) => {
     await installApiMocks(page);
 });
 
-test("opens a recordings list and switches transcripts without returning to the dashboard", async ({ page }) => {
+test("opens the recordings list by default and switches transcripts without returning to the dashboard", async ({ page }) => {
     await page.goto("/audio/1");
-
-    const toggle = page.getByRole("button", { name: "Show recordings list" });
-    await expect(toggle).toBeVisible();
-    await toggle.click();
 
     const sidebar = page.getByRole("complementary", { name: "Recordings list" });
     await expect(sidebar).toBeVisible();
+    await expect(page.getByRole("button", { name: "Hide recordings list" }).first()).toBeVisible();
     await expect(sidebar.getByText(AUDIO_FILES[0].title)).toBeVisible();
     await expect(sidebar.getByRole("button", { name: /Team Standup March 10/ })).toHaveAttribute("aria-current", "page");
 
@@ -27,11 +24,11 @@ test("opens a recordings list and switches transcripts without returning to the 
     await expect(sidebar.getByRole("button", { name: /Product Review/ })).toHaveAttribute("aria-current", "page");
 });
 
-test("remembers the recordings list preference", async ({ page }) => {
+test("remembers when the recordings list is closed", async ({ page }) => {
     await page.goto("/audio/1");
-    await page.getByRole("button", { name: "Show recordings list" }).click();
+    await page.getByRole("button", { name: "Hide recordings list" }).first().click();
     await page.reload();
 
-    await expect(page.getByRole("complementary", { name: "Recordings list" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Hide recordings list" }).first()).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "Recordings list" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Show recordings list" })).toBeVisible();
 });
