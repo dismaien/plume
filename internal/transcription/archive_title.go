@@ -78,7 +78,7 @@ func sourceTitleLabel(currentTitle string, originalFilename string, subject stri
 	if current != "" && !archiveCanonicalTitlePattern.MatchString(current) {
 		label = current
 	}
-	if label == "" {
+	if label == "" && strings.TrimSpace(originalFilename) != "" {
 		label = strings.TrimSpace(strings.TrimSuffix(filepath.Base(originalFilename), filepath.Ext(originalFilename)))
 	}
 	if label == "" || strings.EqualFold(label, subject) || strings.EqualFold(label, "Title Not Available") || archiveNewRecordingPattern.MatchString(label) {
@@ -152,8 +152,8 @@ func cleanGeneratedDreamSubject(subject string, isDream bool) string {
 }
 
 func formatArchiveDuration(durationMillis int64) string {
-	// Match the player/list display, which reports completed whole seconds.
-	totalSeconds := durationMillis / 1000
+	// Match the player/list display, which rounds to the nearest whole second.
+	totalSeconds := (durationMillis + 500) / 1000
 	if totalSeconds >= 3600 {
 		return fmt.Sprintf("%02d:%02d", totalSeconds/3600, (totalSeconds%3600)/60)
 	}

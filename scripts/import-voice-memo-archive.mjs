@@ -117,15 +117,24 @@ if (shouldMonitor) {
       if (finished.has(job.id)) continue;
       const current = getJob(job.id);
       if (current.status === "completed") {
-        let titled = requestJSON("POST", `${apiBase}/transcription/${job.id}/title/auto?force=true`);
-        if (isLocationTitle(job.apple_title) && typeof titled.title === "string") {
-          const corrected = moveLocationToSuffix(titled.title, job.apple_title);
-          if (corrected !== titled.title) {
-            titled = requestJSON("PUT", `${apiBase}/transcription/${job.id}/title`, { title: corrected });
+        if (job.existed && job.initial_status === "completed") {
+          finished.add(job.id);
+          console.log(JSON.stringify({ event: "existing_completed", id: job.id, title: current.title }));
+          continue;
+        }
+        try {
+          let titled = requestJSON("POST", `${apiBase}/transcription/${job.id}/title/auto?force=true`);
+          if (isLocationTitle(job.apple_title) && typeof titled.title === "string") {
+            const corrected = moveLocationToSuffix(titled.title, job.apple_title);
+            if (corrected !== titled.title) {
+              titled = requestJSON("PUT", `${apiBase}/transcription/${job.id}/title`, { title: corrected });
+            }
           }
+          console.log(JSON.stringify({ event: "completed_and_titled", id: job.id, title: titled.title || current.title }));
+        } catch (error) {
+          console.error(JSON.stringify({ event: "completed_title_failed", id: job.id, title: current.title, error: String(error?.message || error) }));
         }
         finished.add(job.id);
-        console.log(JSON.stringify({ event: "completed_and_titled", id: job.id, title: titled.title || current.title }));
       } else if (["cancelled"].includes(current.status)) {
         finished.add(job.id);
         console.log(JSON.stringify({ event: "terminal", id: job.id, status: current.status }));
@@ -258,13 +267,13 @@ function sha256File(file) {
 }
 
 function filenameRecordedAt(filename) {
-  const match = filename.match(/^(\d{4})(\d{2})(\d{2}) (\d{2})(\d{2})(\d{2})-/);
+  const match = filename.match(/^(\d{4})(\d{2})(\d{2}) (\d{2})(\d{2})(\d{2})(?:-|\.|$)/);
   if (!match) return "";
   return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
 }
 
 function isLocationTitle(title) {
-  return /^(?:Rua|R.|Avenida|Av\.|Calle|Carrer|Street|St\.|Road|Rd\.|Beco|Jalan|Fraunhoferstra|Bristlestra|Maspeth|Millennium|Schwarzwald)/i.test(title.trim());
+  return /^(?:Rua|R.|Praça|Praca|Avenida|Av\.|Calle|Carrer|Street|St\.|Road|Rd\.|Beco|Jalan|Fraunhoferstra|Bristlestra|Maspeth|Millennium|Schwarzwald)/i.test(title.trim());
 }
 
 function moveLocationToSuffix(title, location) {

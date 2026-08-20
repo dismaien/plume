@@ -16,7 +16,7 @@ func TestFormatGeneratedArchiveTitlePreservesSourceLabel(t *testing.T) {
 		Speakers:         []string{"Leona", "Leona"},
 		DurationMillis:   237_973,
 	})
-	want := "260812 10:44 (dream) Sapphire Ring and Family [Leona] {03:57}"
+	want := "260812 10:44 (dream) Sapphire Ring and Family [Leona] {03:58}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -63,7 +63,7 @@ func TestFormatGeneratedArchiveTitleDoesNotNestCanonicalTitle(t *testing.T) {
 		Speakers:         []string{"Leona"},
 		DurationMillis:   237_973,
 	})
-	want := "260812 10:44 (dream) Family Travel and Sapphire Ring [Leona] {03:57}"
+	want := "260812 10:44 (dream) Family Travel and Sapphire Ring [Leona] {03:58}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -110,6 +110,18 @@ func TestFormatGeneratedArchiveTitleDoesNotTagSongAboutDreams(t *testing.T) {
 		DurationMillis:   196_000,
 	})
 	want := "261226 21:57 Dreams That Whisper Evening Song (song) {03:16}"
+	if got != want {
+		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGeneratedArchiveTitleRoundsDurationLikePlayer(t *testing.T) {
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		CreatedAt:      time.Date(2026, time.August, 18, 9, 59, 17, 0, time.UTC),
+		Subject:        "A Short Recording",
+		DurationMillis: 198_571,
+	})
+	want := "260818 09:59 A Short Recording {03:19}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
