@@ -36,6 +36,11 @@ class Metrics:
     repeated_runs: int
     word_count: int
     unique_word_ratio: float
+    speaker_count: int
+    dominant_speaker_ratio: float
+    segment_switches: int
+    word_speaker_count: int
+    word_switches: int
 
 
 @dataclass
@@ -59,6 +64,16 @@ class ComparisonRow:
     before_word_count: int
     after_word_count: int
     after_unique_word_ratio: float
+    expected_speakers: int
+    before_speaker_count: int
+    after_speaker_count: int
+    before_dominant_speaker_ratio: float
+    after_dominant_speaker_ratio: float
+    before_segment_switches: int
+    after_segment_switches: int
+    before_word_switches: int
+    after_word_switches: int
+    diarization_verdict: str
     verdict: str
     before_transcript_path: str
     after_transcript_path: str
@@ -90,16 +105,18 @@ def repeated_word_runs(words: list[str], *, min_run: int = 8) -> int:
     return runs
 
 
-def transcript_text(path: Path) -> str:
+def transcript_payload(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(errors="replace"))
     except (OSError, json.JSONDecodeError):
-        return ""
+        return {}
 
-    if isinstance(data, str):
-        return data
     if not isinstance(data, dict):
-        return ""
+        return {}
+    return data
+
+
+def transcript_text(data: dict[str, Any]) -> str:
 
     segments = data.get("segments") or []
     text = " ".join(
@@ -112,11 +129,34 @@ def transcript_text(path: Path) -> str:
     return str(data.get("text") or "")
 
 
+def speaker_metrics(items: list[Any]) -> tuple[int, float, int]:
+    durations: dict[str, float] = {}
+    switches = 0
+    previous = ""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        start = float(item.get("start") or 0.0)
+        end = float(item.get("end") or start)
+        durations[speaker] = durations.get(speaker, 0.0) + max(0.0, end - start)
+        if previous and previous != speaker:
+            switches += 1
+        previous = speaker
+
+    total = sum(durations.values())
+    dominant_ratio = max(durations.values(), default=0.0) / total if total else 0.0
+    return len(durations), round(dominant_ratio, 4), switches
+
+
 def metrics_for(path: str | Path | None) -> Metrics:
     if not path:
-        return Metrics(0, 0, 0, 0, 0, 0.0)
+        return Metrics(0, 0, 0, 0, 0, 0.0, 0, 0.0, 0, 0, 0)
 
-    text = transcript_text(Path(path))
+    payload = transcript_payload(Path(path))
+    text = transcript_text(payload)
     lower = text.lower()
     words = words_from(text)
     thank_you = len(re.findall(r"\bthank you\b", lower))
@@ -124,7 +164,21 @@ def metrics_for(path: str | Path | None) -> Metrics:
     repeated_runs = repeated_word_runs(words)
     score = thank_you * 2 + big_big * 3 + repeated_runs * 10
     unique_word_ratio = round(len(set(words)) / len(words), 4) if words else 0.0
-    return Metrics(score, thank_you, big_big, repeated_runs, len(words), unique_word_ratio)
+    speaker_count, dominant_ratio, segment_switches = speaker_metrics(payload.get("segments") or [])
+    word_speaker_count, _, word_switches = speaker_metrics(payload.get("word_segments") or [])
+    return Metrics(
+        score,
+        thank_you,
+        big_big,
+        repeated_runs,
+        len(words),
+        unique_word_ratio,
+        speaker_count,
+        dominant_ratio,
+        segment_switches,
+        word_speaker_count,
+        word_switches,
+    )
 
 
 def load_manifest(run_dir: Path) -> dict[str, Any]:
@@ -167,6 +221,22 @@ def verdict(status: str, before: Metrics, after: Metrics, threshold: int) -> str
     return "worse_review"
 
 
+def diarization_verdict(status: str, before: Metrics, after: Metrics, expected_speakers: int) -> str:
+    if status not in {"completed", "failed"}:
+        return "waiting"
+    if status == "failed":
+        return "failed"
+    if expected_speakers < 2:
+        return "not_scored"
+    if after.speaker_count < 2:
+        return "collapsed"
+    if after.dominant_speaker_ratio >= 0.95:
+        return "dominated_review"
+    if after.segment_switches <= before.segment_switches:
+        return "switches_not_improved_review"
+    return "recovered"
+
+
 def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[ComparisonRow], dict[str, Any]]:
     manifest = load_manifest(run_dir)
     jobs = manifest.get("jobs") or []
@@ -184,6 +254,7 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
         before = metrics_for(before_path)
         after = metrics_for(after_path)
         status = str(current["status"] if current else "missing")
+        expected_speakers = int(job.get("known_people_count") or job.get("expected_speakers") or 0)
 
         rows.append(
             ComparisonRow(
@@ -206,6 +277,16 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
                 before_word_count=before.word_count,
                 after_word_count=after.word_count,
                 after_unique_word_ratio=after.unique_word_ratio,
+                expected_speakers=expected_speakers,
+                before_speaker_count=before.speaker_count,
+                after_speaker_count=after.speaker_count,
+                before_dominant_speaker_ratio=before.dominant_speaker_ratio,
+                after_dominant_speaker_ratio=after.dominant_speaker_ratio,
+                before_segment_switches=before.segment_switches,
+                after_segment_switches=after.segment_switches,
+                before_word_switches=before.word_switches,
+                after_word_switches=after.word_switches,
+                diarization_verdict=diarization_verdict(status, before, after, expected_speakers),
                 verdict=verdict(status, before, after, threshold),
                 before_transcript_path=str(before_path),
                 after_transcript_path=str(after_path),
@@ -219,12 +300,16 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
         "total": len(rows),
         "by_status": {},
         "by_verdict": {},
+        "by_diarization_verdict": {},
         "completed": 0,
         "completed_score_delta": 0,
     }
     for row in rows:
         summary["by_status"][row.status] = summary["by_status"].get(row.status, 0) + 1
         summary["by_verdict"][row.verdict] = summary["by_verdict"].get(row.verdict, 0) + 1
+        summary["by_diarization_verdict"][row.diarization_verdict] = (
+            summary["by_diarization_verdict"].get(row.diarization_verdict, 0) + 1
+        )
         if row.status == "completed":
             summary["completed"] += 1
             summary["completed_score_delta"] += row.score_delta

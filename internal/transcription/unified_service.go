@@ -1167,9 +1167,113 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 				word.Speaker = &bestSpeaker
 			}
 		}
+
+		// A Whisper segment can span a short exchange between speakers. Keeping
+		// only the segment's dominant speaker hides diarization boundaries that
+		// were correctly detected at word level, so split mixed segments into
+		// speaker-homogeneous runs for display and exported transcripts.
+		mergedTranscript.Segments = splitSegmentsAtWordSpeakerChanges(
+			mergedTranscript.Segments,
+			mergedTranscript.WordSegments,
+		)
 	}
 
 	return &mergedTranscript
+}
+
+func splitSegmentsAtWordSpeakerChanges(
+	segments []interfaces.TranscriptSegment,
+	words []interfaces.TranscriptWord,
+) []interfaces.TranscriptSegment {
+	if len(segments) == 0 || len(words) == 0 {
+		return segments
+	}
+
+	result := make([]interfaces.TranscriptSegment, 0, len(segments))
+	wordIndex := 0
+	for _, segment := range segments {
+		for wordIndex < len(words) && wordMidpoint(words[wordIndex]) < segment.Start {
+			wordIndex++
+		}
+
+		endIndex := wordIndex
+		for endIndex < len(words) && wordMidpoint(words[endIndex]) <= segment.End {
+			endIndex++
+		}
+		segmentWords := words[wordIndex:endIndex]
+		wordIndex = endIndex
+		if len(segmentWords) == 0 {
+			result = append(result, segment)
+			continue
+		}
+
+		type speakerRun struct {
+			speaker string
+			words   []interfaces.TranscriptWord
+		}
+		runs := make([]speakerRun, 0, 2)
+		fallbackSpeaker := ""
+		if segment.Speaker != nil {
+			fallbackSpeaker = strings.TrimSpace(*segment.Speaker)
+		}
+		for _, word := range segmentWords {
+			speaker := fallbackSpeaker
+			if word.Speaker != nil && strings.TrimSpace(*word.Speaker) != "" {
+				speaker = strings.TrimSpace(*word.Speaker)
+			}
+			if len(runs) == 0 || runs[len(runs)-1].speaker != speaker {
+				runs = append(runs, speakerRun{speaker: speaker})
+			}
+			runs[len(runs)-1].words = append(runs[len(runs)-1].words, word)
+		}
+
+		if len(runs) <= 1 {
+			if len(runs) == 1 && runs[0].speaker != "" {
+				speaker := runs[0].speaker
+				segment.Speaker = &speaker
+			}
+			result = append(result, segment)
+			continue
+		}
+
+		for _, run := range runs {
+			if len(run.words) == 0 {
+				continue
+			}
+			split := interfaces.TranscriptSegment{
+				Start:    run.words[0].Start,
+				End:      run.words[len(run.words)-1].End,
+				Text:     joinTranscriptWords(run.words),
+				Language: segment.Language,
+			}
+			if run.speaker != "" {
+				speaker := run.speaker
+				split.Speaker = &speaker
+			}
+			result = append(result, split)
+		}
+	}
+
+	return result
+}
+
+func wordMidpoint(word interfaces.TranscriptWord) float64 {
+	return word.Start + (word.End-word.Start)/2
+}
+
+func joinTranscriptWords(words []interfaces.TranscriptWord) string {
+	var builder strings.Builder
+	for _, word := range words {
+		text := strings.TrimSpace(word.Word)
+		if text == "" {
+			continue
+		}
+		if builder.Len() > 0 && !strings.ContainsRune(".,!?;:%)]}", []rune(text)[0]) {
+			builder.WriteByte(' ')
+		}
+		builder.WriteString(text)
+	}
+	return builder.String()
 }
 
 // findBestSpeakerForSegment finds the speaker with maximum overlap for a given time segment

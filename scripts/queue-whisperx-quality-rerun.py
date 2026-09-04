@@ -48,7 +48,8 @@ WHISPERX_PARAMS: dict[str, Any] = {
     "logprob_threshold": -1.0,
     "no_speech_threshold": 0.6,
     "diarize": True,
-    "diarize_model": "sherpa-onnx",
+    "diarize_model": "nvidia_sortformer",
+    "max_speakers": 4,
 }
 
 
