@@ -208,7 +208,7 @@ def select_batch(candidates: list[Candidate], limit: int, max_hours: float) -> l
         if len(selected) >= limit:
             break
         next_hours = total_hours(selected) + candidate.duration_seconds / 3600
-        if selected and max_hours > 0 and next_hours > max_hours:
+        if max_hours > 0 and next_hours > max_hours:
             continue
         selected.append(candidate)
     return selected

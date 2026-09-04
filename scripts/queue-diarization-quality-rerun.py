@@ -18,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,30 @@ def trusted_mapping_count(conn: sqlite3.Connection, job_id: str) -> int:
     )
 
 
+def current_speaker_metrics(transcript_path: str) -> tuple[int, float]:
+    path = Path(transcript_path)
+    if not path.is_file():
+        return 0, 1.0
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return 0, 1.0
+
+    durations: Counter[str] = Counter()
+    for segment in payload.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        speaker = str(segment.get("speaker") or "").strip()
+        if not speaker:
+            continue
+        start = float(segment.get("start") or 0.0)
+        end = float(segment.get("end") or start)
+        durations[speaker] += max(0.0, end - start)
+    total = sum(durations.values())
+    dominant_ratio = max(durations.values(), default=0.0) / total if total else 1.0
+    return len(durations), dominant_ratio
+
+
 def select_candidates(
     audit_path: Path,
     conn: sqlite3.Connection,
@@ -85,11 +110,7 @@ def select_candidates(
     eligible: list[dict[str, Any]] = []
     for row in rows:
         known_people_count = int(row.get("known_people_count") or 0)
-        speaker_count = int(row.get("speaker_count") or 0)
-        dominant_ratio = float(row.get("dominant_ratio") or 0.0)
         if known_people_count < 2 or known_people_count > 4:
-            continue
-        if speaker_count >= known_people_count and dominant_ratio < 0.90:
             continue
         if trusted_mapping_count(conn, row["job_id"]) > 0:
             continue
@@ -103,6 +124,9 @@ def select_candidates(
             (row["job_id"],),
         ).fetchone()
         if job is None:
+            continue
+        speaker_count, dominant_ratio = current_speaker_metrics(job["transcript_json_path"] or "")
+        if speaker_count >= known_people_count and dominant_ratio < 0.90:
             continue
         candidate = {**row, **dict(job)}
         candidate["known_people_count"] = known_people_count
@@ -127,7 +151,7 @@ def select_candidates(
         hours = candidate["duration_minutes"] / 60
         if len(selected) >= limit:
             break
-        if selected and max_hours > 0 and total_hours + hours > max_hours:
+        if max_hours > 0 and total_hours + hours > max_hours:
             continue
         selected.append(candidate)
         total_hours += hours
@@ -223,9 +247,17 @@ def main(argv: list[str]) -> int:
 
     for index, candidate in enumerate(selected, start=1):
         free_gb = shutil.disk_usage(db_path.parent).free / (1024**3)
-        params = {**BASE_PARAMS, "max_speakers": candidate["known_people_count"]}
+        max_speakers = min(4, max(candidate["known_people_count"], candidate["speaker_count"]))
+        params = {**BASE_PARAMS, "max_speakers": max_speakers}
         entry = dict(candidate)
-        entry.update({"index": index, "expected_speakers": candidate["known_people_count"], "params": params})
+        entry.update(
+            {
+                "index": index,
+                "expected_speakers": candidate["known_people_count"],
+                "max_speakers": max_speakers,
+                "params": params,
+            }
+        )
         entry["backup"] = backup_job(conn, run_dir, candidate) if args.apply else {}
         if args.apply and free_gb >= args.min_free_gb:
             ok, response = post_start(args.api_base, candidate["job_id"], params)
@@ -255,7 +287,8 @@ def main(argv: list[str]) -> int:
     print(f"queued\t{queued}")
     for job in manifest["jobs"]:
         print(
-            f"{job['index']}\t{job['queued']}\t{job['speaker_count']}->{job['expected_speakers']}"
+            f"{job['index']}\t{job['queued']}\t{job['speaker_count']} detected"
+            f"\t{job['expected_speakers']} expected\tmax {job['max_speakers']}"
             f"\t{job['duration_minutes']}m\t{job['job_id']}\t{job['title']}"
         )
     return 0 if (not args.apply or queued == len(selected)) else 2
