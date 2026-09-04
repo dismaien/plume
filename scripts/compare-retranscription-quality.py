@@ -234,6 +234,13 @@ def diarization_verdict(status: str, before: Metrics, after: Metrics, expected_s
         return "dominated_review"
     if after.segment_switches <= before.segment_switches:
         return "switches_not_improved_review"
+    dominance_drop = before.dominant_speaker_ratio - after.dominant_speaker_ratio
+    if (
+        before.dominant_speaker_ratio >= 0.9
+        and after.dominant_speaker_ratio > 0.85
+        and dominance_drop < 0.1
+    ):
+        return "improved_but_review"
     return "recovered"
 
 
