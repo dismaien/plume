@@ -195,7 +195,10 @@ func main() {
 
 	// Initialize task queue
 	logger.Startup("queue", "Starting background processing")
-	taskQueue := queue.NewTaskQueue(2, unifiedProcessor, jobRepo) // 2 workers
+	// Local large-v3 transcription and diarization are both memory-heavy. A
+	// second concurrent job causes severe memory pressure and swap growth on
+	// desktop Macs, so process recordings sequentially.
+	taskQueue := queue.NewTaskQueue(1, unifiedProcessor, jobRepo)
 	taskQueue.Start()
 	defer taskQueue.Stop()
 
