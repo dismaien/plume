@@ -129,3 +129,26 @@ The API package currently has an unrelated compile failure in the obsolete
 `hf_token_handlers_test.go` (removed handler symbols). The summary-preservation
 regression was reproduced on both start paths and verified using a temporary Go
 overlay excluding only that obsolete test file; the repository file was not changed.
+
+## Local audio cross-check findings
+
+The continuation uses offline, diagnostic outputs outside Plume to compare
+standard faster-whisper timestamp decoding with WhisperX batched decoding and
+overlapping crops. Such agreement is supporting evidence, not a human listening
+check, and disagreement must block automatic acceptance. A smaller chunk size
+is not automatically better; retain the baseline until a canary demonstrates an
+improvement without new filler or speech loss.
+
+The service-to-adapter conversion and WhisperX CLI builder now forward chunk size,
+previous-text conditioning, and all three configured fallback thresholds. Tests
+cover both boundaries. This fixes silently dropped settings; it does not claim
+that every upstream batched decoder applies all fallback options effectively.
+
+The canonical filler timing gate now covers German `Vielen Dank`/`Danke` alongside
+English `thank you`, retaining the original English-only metric for historical
+comparisons. A nine-second German closing phrase no longer escapes triage merely
+because it is not English. Plausibly timed thanks remain unflagged.
+
+Speaker diagnostics use a four-slot Sortformer pass to avoid forcing a title's
+assumed count into the evidence. Model-derived labels do not establish identities;
+a contradictory count or discarded short speaker streams requires review.

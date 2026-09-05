@@ -246,6 +246,28 @@ func NewWhisperXAdapter(envPath string) *WhisperXAdapter {
 			Group:       "quality",
 		},
 
+		{
+			Name: "condition_on_previous_text", Type: "bool", Default: false,
+			Description: "Condition decoding on the previous window", Group: "quality",
+		},
+		{
+			Name: "compression_ratio_threshold", Type: "float", Default: 2.4,
+			Description: "Compression ratio threshold for decoding fallback", Group: "quality",
+		},
+		{
+			Name: "logprob_threshold", Type: "float", Default: -1.0,
+			Description: "Log probability threshold for decoding fallback", Group: "quality",
+		},
+		{
+			Name: "no_speech_threshold", Type: "float", Default: 0.6,
+			Description: "No-speech probability threshold", Group: "quality",
+		},
+		{
+			Name: "chunk_size", Type: "int", Default: 30,
+			Min: &[]float64{1}[0], Max: &[]float64{30}[0],
+			Description: "Maximum merged VAD chunk duration in seconds", Group: "advanced",
+		},
+
 		// VAD settings
 		{
 			Name:        "vad_method",
@@ -790,6 +812,8 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 	args = append(args, "--vad_onset", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "vad_onset")))
 	args = append(args, "--vad_offset", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "vad_offset")))
 
+	args = append(args, "--chunk_size", strconv.Itoa(w.GetIntParameter(params, "chunk_size")))
+
 	// Custom alignment model
 	if alignModel := w.GetStringParameter(params, "align_model"); alignModel != "" {
 		args = append(args, "--align_model", alignModel)
@@ -818,6 +842,15 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 	args = append(args, "--best_of", strconv.Itoa(w.GetIntParameter(params, "best_of")))
 	args = append(args, "--beam_size", strconv.Itoa(w.GetIntParameter(params, "beam_size")))
 	args = append(args, "--patience", fmt.Sprintf("%.2f", w.GetFloatParameter(params, "patience")))
+
+	previousText := "False"
+	if w.GetBoolParameter(params, "condition_on_previous_text") {
+		previousText = "True"
+	}
+	args = append(args, "--condition_on_previous_text", previousText)
+	for _, name := range []string{"compression_ratio_threshold", "logprob_threshold", "no_speech_threshold"} {
+		args = append(args, "--"+name, fmt.Sprintf("%.3f", w.GetFloatParameter(params, name)))
+	}
 
 	// HuggingFace token - use param first, then fall back to environment variable
 	hfToken := w.GetStringParameter(params, "hf_token")

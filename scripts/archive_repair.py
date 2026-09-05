@@ -191,7 +191,7 @@ def snapshot(conn, job_id):
 
 def repetition_burden(metrics):
     # Uncapped: saturated audit text_score=100 cannot quantify improvement.
-    return metrics['legacy_score'] + metrics['phrase_runs'] * 5 + max(0, metrics['max_repeated_tokens'] - 6) * 2 + metrics['suspicious_thanks'] * 4
+    return metrics['legacy_score'] + metrics['phrase_runs'] * 5 + max(0, metrics['max_repeated_tokens'] - 6) * 2 + metrics.get('suspicious_fillers', metrics['suspicious_thanks']) * 4
 
 
 def evaluate(before, after, expected_speakers=0, kind='text', max_speakers=4):
@@ -225,7 +225,7 @@ def evaluate(before, after, expected_speakers=0, kind='text', max_speakers=4):
         reasons.append('Catastrophic repetition remains')
     if ns > bs + max(10, bs * 0.1):
         reasons.append('Repetition/hallucination burden increased')
-    if a['max_repeated_tokens'] >= 24 or a['legacy_score'] >= 50 or a['suspicious_thanks']:
+    if a['max_repeated_tokens'] >= 24 or a['legacy_score'] >= 50 or a.get('suspicious_fillers', a['suspicious_thanks']):
         review.append('Residual repetition or implausibly timed filler needs audio review')
     if kind == 'text' and ns > bs * 0.8:
         review.append('Text improvement is less than 20%')

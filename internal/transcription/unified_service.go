@@ -960,15 +960,20 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 		"diarize": useWhisperXDiarization,
 
 		// Quality settings
-		"temperature": params.Temperature,
-		"best_of":     params.BestOf,
-		"beam_size":   params.BeamSize,
-		"patience":    params.Patience,
+		"temperature":                 params.Temperature,
+		"best_of":                     params.BestOf,
+		"beam_size":                   params.BeamSize,
+		"patience":                    params.Patience,
+		"condition_on_previous_text":  params.ConditionOnPreviousText,
+		"compression_ratio_threshold": params.CompressionRatioThreshold,
+		"logprob_threshold":           params.LogprobThreshold,
+		"no_speech_threshold":         params.NoSpeechThreshold,
 
 		// VAD settings
 		"vad_method": params.VadMethod,
 		"vad_onset":  params.VadOnset,
 		"vad_offset": params.VadOffset,
+		"chunk_size": params.ChunkSize,
 	}
 
 	// WhisperX only supports pyannote diarization models. When Sortformer is selected,

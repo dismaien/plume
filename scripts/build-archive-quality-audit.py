@@ -87,6 +87,7 @@ class AuditRow:
     evidence: str
     recommended_action: str
     record_type: str = "audio"
+    suspicious_filler_segments: int = 0
     repair_state: str = "not_attempted"
     repair_attempts: int = 0
     repair_reason: str = ""
@@ -239,6 +240,7 @@ def parse_transcript(path: Path) -> dict[str, Any]:
     previous_word_speaker = ""
     unlabeled_duration = 0.0
     suspicious_thanks = 0
+    suspicious_fillers = 0
     evidence: list[str] = []
 
     for segment in segments:
@@ -266,9 +268,12 @@ def parse_transcript(path: Path) -> dict[str, Any]:
         else:
             unlabeled_duration += segment_duration
 
-        if re.fullmatch(r"(?:\.\.\.\s*)?thank you[.!?]*", text, re.I):
+        isolated_thanks = re.fullmatch(r"(?:\.\.\.\s*)?thank you[.!?]*", text, re.I)
+        isolated_filler = isolated_thanks or re.fullmatch(r"(?:\.\.\.\s*)?(?:vielen dank|danke(?: schön)?)[.!?]*", text, re.I)
+        if isolated_filler:
             if segment_duration < 0.45 or segment_duration > 4.0:
-                suspicious_thanks += 1
+                suspicious_fillers += 1
+                suspicious_thanks += int(bool(isolated_thanks))
                 if len(evidence) < 6:
                     evidence.append(f"{start / 60:.2f}m ({segment_duration:.2f}s): {text}")
 
@@ -302,7 +307,7 @@ def parse_transcript(path: Path) -> dict[str, Any]:
         legacy_score
         + phrase_runs * 5
         + max(0, max_repeated_tokens - 6) * 2
-        + suspicious_thanks * 4,
+        + suspicious_fillers * 4,
     )
     total_speech = sum(speaker_durations.values())
     dominant_ratio = max(speaker_durations.values(), default=0.0) / total_speech if total_speech else 0.0
@@ -324,6 +329,7 @@ def parse_transcript(path: Path) -> dict[str, Any]:
         "top_repeated_phrase": repeated_phrase,
         "top_repeated_count": repeated_count,
         "suspicious_thanks": suspicious_thanks,
+        "suspicious_fillers": suspicious_fillers,
         "speaker_count": len(speaker_durations),
         "dominant_ratio": dominant_ratio,
         "segment_switches": segment_switches,
@@ -389,8 +395,8 @@ def classify(
         flags.append(f"Repetition needs review (score {legacy}, max span {max_span} words)")
         categories.add("text")
         risk = max(risk, 48)
-    if metrics["suspicious_thanks"]:
-        flags.append(f"{metrics['suspicious_thanks']} implausibly timed isolated 'thank you' segment(s)")
+    if metrics.get("suspicious_fillers", metrics["suspicious_thanks"]):
+        flags.append(f"{metrics.get('suspicious_fillers', metrics['suspicious_thanks'])} implausibly timed isolated filler segment(s)")
         categories.add("text")
         risk = max(risk, 55)
 
@@ -581,6 +587,7 @@ def scan(db_path: Path) -> tuple[list[AuditRow], dict[str, Any]]:
                 evidence=" | ".join(evidence),
                 recommended_action=action,
                 record_type="reference_document" if reference_document else "audio",
+                suspicious_filler_segments=int(metrics["suspicious_fillers"] if metrics else 0),
             )
         )
 

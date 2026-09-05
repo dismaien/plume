@@ -82,6 +82,22 @@ class Parsing(unittest.TestCase):
         self.assertEqual(m['invalid_timing_count'],1)
         self.assertEqual(m['speech_seconds'],0)
 
+    def test_german_filler_with_implausible_timing_needs_review(self):
+        m=self.parse({'segments':[{'start':52.45,'end':61.55,'text':'Vielen Dank.'}]})
+        self.assertEqual(m['suspicious_thanks'],0)
+        self.assertEqual(m['suspicious_fillers'],1)
+        a=snap();a['metrics'].update(m)
+        self.assertNotEqual(evaluate(snap(max_repeated_tokens=200),a)['state'],'completed_unreviewed')
+
+    def test_plausibly_timed_german_thanks_is_not_flagged(self):
+        m=self.parse({'segments':[{'start':0,'end':1.5,'text':'Vielen Dank.'}]})
+        self.assertEqual(m['suspicious_fillers'],0)
+
+    def test_english_filler_keeps_legacy_metric(self):
+        m=self.parse({'segments':[{'start':0,'end':9,'text':'Thank you.'}]})
+        self.assertEqual(m['suspicious_thanks'],1)
+        self.assertEqual(m['suspicious_fillers'],1)
+
     def test_malformed_and_invalid_timing(self):
         for payload in ([],{}, {'segments':[None]}, {'segments':[{'start':0,'end':float('nan')}]}):
             with self.subTest(payload=payload),self.assertRaises((ValueError,TypeError)):
