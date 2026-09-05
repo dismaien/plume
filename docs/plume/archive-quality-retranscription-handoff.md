@@ -2,6 +2,12 @@
 
 Date: 2026-09-05
 
+Continuation: see [the audit-driven repair workflow](archive-repair-workflow.md).
+The legacy queue/controller apply paths are retired. Current private progress
+and canary evidence are in the processing directory as
+`archive-repair-progress-20260905.md`; consult that report before resuming.
+The original handoff below is retained as historical context.
+
 ## Mission
 
 Rehabilitate the complete Plume voice-memo archive, not just a small canary batch.

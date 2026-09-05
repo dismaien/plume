@@ -289,6 +289,8 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
+    if args.apply:
+        parser.error("Legacy apply is retired. Use queue-archive-quality-rerun.py --apply-plan with a canonical audit plan.")
 
     db_path = Path(args.db).expanduser()
     run_dir = Path(args.runs_dir).expanduser() / args.run_name

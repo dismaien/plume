@@ -1357,7 +1357,7 @@ func (h *Handler) StartTranscription(c *gin.Context) {
 
 	// Clear previous results for re-transcription
 	job.Transcript = nil
-	job.Summary = nil
+	// Summaries may contain human edits; preserve them across retranscription.
 	job.ErrorMessage = nil
 
 	// Clear stale speaker mappings so re-transcription starts fresh

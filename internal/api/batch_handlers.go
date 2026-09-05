@@ -262,7 +262,7 @@ func (h *Handler) startJob(ctx context.Context, jobID string, params models.Whis
 	job.Diarization = params.Diarize
 	job.Status = models.StatusPending
 	job.Transcript = nil
-	job.Summary = nil
+	// Summaries may contain human edits; preserve them across retranscription.
 	job.ErrorMessage = nil
 
 	if err := h.jobRepo.Update(ctx, job); err != nil {

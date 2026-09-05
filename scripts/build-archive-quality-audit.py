@@ -12,6 +12,7 @@ import argparse
 import csv
 import html
 import json
+import math
 import re
 import sqlite3
 from collections import Counter
@@ -85,6 +86,10 @@ class AuditRow:
     flags: str
     evidence: str
     recommended_action: str
+    record_type: str = "audio"
+    repair_state: str = "not_attempted"
+    repair_attempts: int = 0
+    repair_reason: str = ""
 
 
 def words_from(text: str) -> list[str]:
@@ -220,7 +225,11 @@ def safe_size(path_text: str) -> tuple[bool, int]:
 
 def parse_transcript(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    segments = payload.get("segments") or []
+    if not isinstance(payload, dict) or not isinstance(payload.get("segments"), list):
+        raise ValueError("Transcript must contain a segments list")
+    segments = payload["segments"]
+    intervals = []
+    invalid_timing_count = 0
     text_parts: list[str] = []
     duration = 0.0
     speaker_durations: Counter[str] = Counter()
@@ -234,12 +243,18 @@ def parse_transcript(path: Path) -> dict[str, Any]:
 
     for segment in segments:
         if not isinstance(segment, dict):
-            continue
+            raise ValueError("Invalid transcript segment")
         text = str(segment.get("text") or "").strip()
         if text:
             text_parts.append(text)
         start = float(segment.get("start") or 0.0)
         end = float(segment.get("end") or start)
+        if not math.isfinite(start) or not math.isfinite(end):
+            raise ValueError("Nonfinite segment timing")
+        if start < 0 or end < start:
+            invalid_timing_count += 1
+        if text and start >= 0 and end >= start:
+            intervals.append((start, end))
         segment_duration = max(0.0, end - start)
         duration = max(duration, end)
         speaker = str(segment.get("speaker") or "").strip()
@@ -267,6 +282,13 @@ def parse_transcript(path: Path) -> dict[str, Any]:
                 word_switches += 1
             previous_word_speaker = word_speaker
 
+    merged = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    speech_seconds = sum(end - start for start, end in merged)
     text = " ".join(text_parts)
     words = words_from(text)
     lower = text.lower()
@@ -287,6 +309,9 @@ def parse_transcript(path: Path) -> dict[str, Any]:
     unlabeled_ratio = unlabeled_duration / max(duration, 1.0)
     return {
         "duration": duration,
+        "speech_seconds": speech_seconds,
+        "invalid_timing_count": invalid_timing_count,
+        "speech_intervals": merged,
         "word_count": len(words),
         "words_per_minute": len(words) / (duration / 60) if duration else 0.0,
         "text_score": text_score,
@@ -340,6 +365,15 @@ def classify(
         risk = max(risk, 90)
     if metrics is None:
         return "Critical", risk, sorted(categories), flags, "Restore the missing artifact before retranscribing."
+
+    if not metrics["word_count"]:
+        flags.append("Completed transcript contains no words")
+        categories.add("text")
+        risk = max(risk, 48)
+    if metrics.get("invalid_timing_count"):
+        flags.append(f"{metrics['invalid_timing_count']} segment(s) with invalid timing")
+        categories.add("files")
+        risk = max(risk, 48)
 
     legacy = int(metrics["legacy_score"])
     max_span = int(metrics["max_repeated_tokens"])
@@ -459,9 +493,13 @@ def scan(db_path: Path) -> tuple[list[AuditRow], dict[str, Any]]:
         transcript_exists, transcript_size = safe_size(transcript_path)
         audio_exists, audio_size = safe_size(audio_path)
         metrics: dict[str, Any] | None = None
+        reference_document = False
         if transcript_exists:
             try:
-                metrics = parse_transcript(Path(transcript_path))
+                payload = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+                reference_document = isinstance(payload, dict) and payload.get("source") == "granola" and "chunks" in payload
+                if not reference_document:
+                    metrics = parse_transcript(Path(transcript_path))
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 parse_errors += 1
 
@@ -482,6 +520,10 @@ def scan(db_path: Path) -> tuple[list[AuditRow], dict[str, Any]]:
             transcript_exists,
             title_delta,
         )
+        if reference_document:
+            severity, risk, categories = "Unavailable", 0, ["availability"]
+            flags = ["Reference-only Granola document; no source audio attached"]
+            action = "Retain imported document. Audio repair is not applicable without a source recording."
         current = executions.get(job_id)
         evidence = list(metrics["evidence"] if metrics else [])
         if metrics and metrics["top_repeated_phrase"]:
@@ -538,6 +580,7 @@ def scan(db_path: Path) -> tuple[list[AuditRow], dict[str, Any]]:
                 flags=" | ".join(flags),
                 evidence=" | ".join(evidence),
                 recommended_action=action,
+                record_type="reference_document" if reference_document else "audio",
             )
         )
 
@@ -558,6 +601,7 @@ def scan(db_path: Path) -> tuple[list[AuditRow], dict[str, Any]]:
         "failed": sum(row.status == "failed" for row in rows),
         "unavailable": sum(row.severity == "Unavailable" for row in rows),
         "parse_errors": parse_errors,
+        "reference_documents": sum(row.record_type == "reference_document" for row in rows),
         "severity_counts": dict(Counter(row.severity for row in rows)),
         "category_counts": dict(
             Counter(category for row in rows for category in row.categories.split(", ") if category)
@@ -649,6 +693,7 @@ tbody tr.data-row {{ cursor:pointer; }} tbody tr.data-row:hover {{ background:va
 <select id="severity"><option value="">All classifications</option></select>
 <select id="category"><option value="">All signal types</option><option value="text">Text repetition</option><option value="speakers">Speaker recognition</option><option value="metadata">Metadata</option><option value="files">Missing files</option><option value="availability">Availability</option></select>
 <select id="model"><option value="">All models</option></select>
+<select id="repair"><option value="">All repair states</option></select>
 <button class="control" id="export">Export filtered CSV</button>
 </section>
 <div class="result-line"><span id="resultCount"></span><span>Click a row for evidence and paths</span></div>
@@ -674,9 +719,10 @@ document.getElementById('severityLegend').innerHTML=severityOrder.map(k=>`<butto
 const models=Object.entries(s.model_counts).sort((a,b)=>b[1]-a[1]).slice(0,7), modelMax=Math.max(...models.map(x=>x[1]),1);
 document.getElementById('modelBars').innerHTML=models.map(([k,v])=>`<div class="model-row"><span>${{esc(k)}}</span><span class="bar"><i style="width:${{v/modelMax*100}}%"></i></span><span>${{v}}</span></div>`).join('');
 const sev=document.getElementById('severity'), model=document.getElementById('model'); severityOrder.forEach(v=>sev.add(new Option(v,v))); [...new Set(all.map(r=>r.model||'unknown'))].sort().forEach(v=>model.add(new Option(v,v)));
+const repair=document.getElementById('repair'); [...new Set(all.map(r=>r.repair_state))].sort().forEach(v=>repair.add(new Option(v,v)));
 let page=1,pageSize=75,sortKey='risk_score',sortDir=-1,filtered=[];
-function apply(){{const q=document.getElementById('search').value.trim().toLowerCase(), sv=sev.value, cat=document.getElementById('category').value, mv=model.value; filtered=all.filter(r=>(!sv||r.severity===sv)&&(!cat||r.categories.split(', ').includes(cat))&&(!mv||(r.model||'unknown')===mv)&&(!q||[r.title,r.known_people,r.flags,r.original_filename,r.job_id].join(' ').toLowerCase().includes(q))); filtered.sort((a,b)=>{{let x=a[sortKey],y=b[sortKey];if(sortKey==='severity'){{x=rank[x];y=rank[y];}} if(typeof x==='string')return x.localeCompare(y)*sortDir; return ((x??0)-(y??0))*sortDir;}}); const pages=Math.max(1,Math.ceil(filtered.length/pageSize));page=Math.min(page,pages);render(pages);}}
-function render(pages){{const start=(page-1)*pageSize, slice=filtered.slice(start,start+pageSize), tbody=document.getElementById('rows');tbody.innerHTML=slice.map((r,i)=>{{const id=`d${{start+i}}`;return `<tr class="data-row" data-detail="${{id}}"><td><span class="sev"><i class="dot ${{cls(r.severity)}}"></i>${{esc(r.severity)}}</span></td><td>${{r.risk_score}}</td><td class="title-cell"><div class="title-main">${{esc(r.title)}}</div><div class="title-meta">${{esc((r.recorded_at||'').slice(0,16).replace('T',' '))}} · ${{esc(r.known_people||'No trusted names')}}</div></td><td>${{fmtDuration(r.duration_seconds)}}</td><td>${{esc(r.model||'unknown')}}<div class="muted">${{esc(r.diarize_model||'no diarizer')}}</div></td><td>${{r.legacy_repetition_score}}<div class="muted">${{r.thank_you_count}} thanks · ${{r.max_repeated_tokens}} max run</div></td><td>${{r.speaker_count}} detected / ${{r.known_people_count}} known<div class="muted">${{r.dominant_speaker_ratio?Math.round(r.dominant_speaker_ratio*100)+'% dominant':'n/a'}}</div></td><td>${{r.switches_per_hour.toFixed(1)}}</td><td>${{r.word_count.toLocaleString()}}</td><td>${{fmtBytes(r.audio_size_bytes)}}</td><td class="flags-cell">${{esc(r.flags||'No known failure signal')}}</td></tr><tr class="detail" id="${{id}}" hidden><td colspan="11"><div class="detail-inner"><div><h3>Recommended action</h3><p>${{esc(r.recommended_action)}}</p><p class="muted">Categories: ${{esc(r.categories||'none')}}</p><p class="muted">Human speaker mappings: ${{r.human_speaker_mappings}}</p></div><div><h3>Measured evidence</h3><p>${{esc(r.evidence||r.flags||'No additional evidence')}}</p><p class="muted">Word-level switches: ${{r.word_switches}} · Unlabeled speech: ${{(r.unlabeled_speech_ratio*100).toFixed(1)}}%</p><p class="muted">Title duration difference: ${{r.title_duration_delta_seconds==null?'n/a':fmtDuration(r.title_duration_delta_seconds)}}</p></div><div><h3>Files</h3><p class="path">Transcript: ${{esc(r.transcript_path||'missing')}}</p><p class="path">Audio: ${{esc(r.audio_path||'missing')}}</p><p class="path">Job: ${{esc(r.job_id)}}</p></div></div></td></tr>`;}}).join('');document.getElementById('resultCount').textContent=`${{filtered.length.toLocaleString()}} recordings`;document.getElementById('pageLabel').textContent=`Page ${{page}} of ${{pages}}`;document.getElementById('prev').disabled=page<=1;document.getElementById('next').disabled=page>=pages;}}
+function apply(){{const q=document.getElementById('search').value.trim().toLowerCase(), sv=sev.value, cat=document.getElementById('category').value, mv=model.value; filtered=all.filter(r=>(!sv||r.severity===sv)&&(!repair.value||r.repair_state===repair.value)&&(!cat||r.categories.split(', ').includes(cat))&&(!mv||(r.model||'unknown')===mv)&&(!q||[r.title,r.known_people,r.flags,r.original_filename,r.job_id,r.repair_state,r.repair_reason].join(' ').toLowerCase().includes(q))); filtered.sort((a,b)=>{{let x=a[sortKey],y=b[sortKey];if(sortKey==='severity'){{x=rank[x];y=rank[y];}} if(typeof x==='string')return x.localeCompare(y)*sortDir; return ((x??0)-(y??0))*sortDir;}}); const pages=Math.max(1,Math.ceil(filtered.length/pageSize));page=Math.min(page,pages);render(pages);}}
+function render(pages){{const start=(page-1)*pageSize, slice=filtered.slice(start,start+pageSize), tbody=document.getElementById('rows');tbody.innerHTML=slice.map((r,i)=>{{const id=`d${{start+i}}`;return `<tr class="data-row" data-detail="${{id}}"><td><span class="sev"><i class="dot ${{cls(r.severity)}}"></i>${{esc(r.severity)}}</span></td><td>${{r.risk_score}}</td><td class="title-cell"><div class="title-main">${{esc(r.title)}}</div><div class="title-meta">Repair: ${{esc(r.repair_state)}} · ${{r.repair_attempts}} attempts</div><div class="title-meta">${{esc((r.recorded_at||'').slice(0,16).replace('T',' '))}} · ${{esc(r.known_people||'No trusted names')}}</div></td><td>${{fmtDuration(r.duration_seconds)}}</td><td>${{esc(r.model||'unknown')}}<div class="muted">${{esc(r.diarize_model||'no diarizer')}}</div></td><td>${{r.legacy_repetition_score}}<div class="muted">${{r.thank_you_count}} thanks · ${{r.max_repeated_tokens}} max run</div></td><td>${{r.speaker_count}} detected / ${{r.known_people_count}} known<div class="muted">${{r.dominant_speaker_ratio?Math.round(r.dominant_speaker_ratio*100)+'% dominant':'n/a'}}</div></td><td>${{r.switches_per_hour.toFixed(1)}}</td><td>${{r.word_count.toLocaleString()}}</td><td>${{fmtBytes(r.audio_size_bytes)}}</td><td class="flags-cell">${{esc(r.flags||'No known failure signal')}}</td></tr><tr class="detail" id="${{id}}" hidden><td colspan="11"><div class="detail-inner"><div><h3>Recommended action</h3><p>${{esc(r.recommended_action)}}</p><p class="muted">Categories: ${{esc(r.categories||'none')}}</p><p class="muted">Human speaker mappings: ${{r.human_speaker_mappings}}</p><p class="muted">Repair: ${{esc(r.repair_state)}} — ${{esc(r.repair_reason)}}</p></div><div><h3>Measured evidence</h3><p>${{esc(r.evidence||r.flags||'No additional evidence')}}</p><p class="muted">Word-level switches: ${{r.word_switches}} · Unlabeled speech: ${{(r.unlabeled_speech_ratio*100).toFixed(1)}}%</p><p class="muted">Title duration difference: ${{r.title_duration_delta_seconds==null?'n/a':fmtDuration(r.title_duration_delta_seconds)}}</p></div><div><h3>Files</h3><p class="path">Transcript: ${{esc(r.transcript_path||'missing')}}</p><p class="path">Audio: ${{esc(r.audio_path||'missing')}}</p><p class="path">Job: ${{esc(r.job_id)}}</p></div></div></td></tr>`;}}).join('');document.getElementById('resultCount').textContent=`${{filtered.length.toLocaleString()}} recordings`;document.getElementById('pageLabel').textContent=`Page ${{page}} of ${{pages}}`;document.getElementById('prev').disabled=page<=1;document.getElementById('next').disabled=page>=pages;}}
 document.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',()=>{{page=1;apply();}})); document.querySelectorAll('[data-sev]').forEach(el=>el.addEventListener('click',()=>{{sev.value=el.dataset.sev;page=1;apply();}}));
 document.querySelectorAll('th[data-sort]').forEach(el=>el.addEventListener('click',()=>{{const k=el.dataset.sort;if(sortKey===k)sortDir*=-1;else{{sortKey=k;sortDir=(k==='title'||k==='model')?1:-1;}}apply();}}));
 document.getElementById('rows').addEventListener('click',e=>{{const tr=e.target.closest('tr.data-row');if(!tr)return;const d=document.getElementById(tr.dataset.detail);d.hidden=!d.hidden;}}); document.getElementById('prev').onclick=()=>{{if(page>1){{page--;apply();}}}}; document.getElementById('next').onclick=()=>{{if(page*pageSize<filtered.length){{page++;apply();}}}};
@@ -693,6 +739,7 @@ def main() -> int:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--csv", type=Path)
+    parser.add_argument("--ledger", type=Path, default=Path.home() / "Documents/Voice Notes Archive/20-quill-processing/archive-repair-ledger.sqlite3")
     args = parser.parse_args()
 
     db_path = args.db.expanduser().resolve()
@@ -700,6 +747,16 @@ def main() -> int:
     csv_path = (args.csv or output.with_suffix(".csv")).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     rows, summary = scan(db_path)
+    if args.ledger.exists():
+        from archive_repair import read_db
+        with read_db(args.ledger) as ledger:
+            states = {r["job_id"]: dict(r) for r in ledger.execute("SELECT j.*, (SELECT COUNT(*) FROM attempts a WHERE a.job_id=j.job_id) AS attempts FROM jobs j")}
+        for row in rows:
+            state = states.get(row.job_id, {})
+            row.repair_state = state.get("state", "not_attempted")
+            row.repair_attempts = state.get("attempts", 0)
+            row.repair_reason = state.get("reason", "")
+        summary["repair_states"] = dict(Counter(row.repair_state for row in rows))
     output.write_text(render_html(rows, summary), encoding="utf-8")
     write_csv(csv_path, rows)
     print(json.dumps({**summary, "html": str(output), "csv": str(csv_path)}, indent=2))

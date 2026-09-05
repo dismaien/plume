@@ -3,9 +3,9 @@
 
 The queue helper stores each selected job plus a backup of the previous
 transcript. This report reads that manifest, compares the backed-up transcript
-with the current DB transcript, and writes a TSV plus JSON summary. The score is
-intentionally narrow: it detects catastrophic repetition hallucinations, not
-semantic transcript accuracy.
+with the current DB transcript, and writes a TSV plus JSON summary. Legacy scores remain in the TSV for historical comparison. Full audit metrics
+and fail-closed artifact/metadata gates determine the full verdict; historical
+runs without complete snapshots cannot be retroactively accepted.
 """
 
 from __future__ import annotations
@@ -75,6 +75,12 @@ class ComparisonRow:
     after_word_switches: int
     diarization_verdict: str
     verdict: str
+    full_verdict: str
+    full_reasons: str
+    before_full_metrics: str
+    after_full_metrics: str
+    before_classification: str
+    after_classification: str
     before_transcript_path: str
     after_transcript_path: str
 
@@ -212,6 +218,10 @@ def verdict(status: str, before: Metrics, after: Metrics, threshold: int) -> str
         return "waiting"
     if status == "failed":
         return "failed"
+    if not before.word_count or not after.word_count:
+        return "invalid_transcript_rejected"
+    if after.word_count < before.word_count * 0.7:
+        return "shorter_review"
     if after.score < threshold:
         return "passed_repetition_gate"
     if after.score < before.score:
@@ -244,7 +254,7 @@ def diarization_verdict(status: str, before: Metrics, after: Metrics, expected_s
     return "recovered"
 
 
-def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[ComparisonRow], dict[str, Any]]:
+def compare(run_dir: Path, db_path: Path, threshold: int, api_base: str | None = None) -> tuple[list[ComparisonRow], dict[str, Any]]:
     manifest = load_manifest(run_dir)
     jobs = manifest.get("jobs") or []
     job_ids = [str(job.get("job_id") or "") for job in jobs if job.get("job_id")]
@@ -255,13 +265,36 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
         job_id = str(job.get("job_id") or "")
         current = current_by_id.get(job_id)
         backup = job.get("backup") or {}
-        before_path = backup.get("transcript_json_backup") or job.get("transcript_json_path") or ""
+        before_path = backup.get("transcript_json_backup") or ""
         after_path = current["transcript_json_path"] if current else ""
 
         before = metrics_for(before_path)
         after = metrics_for(after_path)
         status = str(current["status"] if current else "missing")
         expected_speakers = int(job.get("known_people_count") or job.get("expected_speakers") or 0)
+
+        from archive_repair import load_script, snapshot, read_db, evaluate
+        if backup.get("snapshot_before"):
+            full = load_script("queue-archive-quality-rerun").compare_one(job, run_dir, db_path, api_base)
+        else:
+            try:
+                if not before_path:
+                    raise ValueError("No immutable baseline backup")
+                audit = load_script("build-archive-quality-audit")
+                old_metrics = audit.parse_transcript(Path(before_path))
+                with read_db(db_path) as conn:
+                    current_snapshot = snapshot(conn, job_id)
+                old_job = {**current_snapshot['job'], 'title': job.get('title'), 'model': job.get('model'),
+                           'model_family': job.get('model_family'), 'status': 'completed'}
+                old_mappings = json.loads(Path(backup['speaker_mappings_backup']).read_text()) if backup.get('speaker_mappings_backup') else []
+                baseline = {'job': old_job, 'metrics': old_metrics, 'mappings': old_mappings,
+                            'classification': ['unknown', 0, [], [], 'Legacy metadata snapshot unavailable']}
+                full = evaluate(baseline, current_snapshot, expected_speakers,
+                                'speakers' if expected_speakers >= 2 else 'text', int(job.get('max_speakers') or 4))
+                if full['state'] == 'completed_unreviewed':
+                    full['reasons'].append('Legacy run lacks complete before metadata/audio checksum and Plume API verification')
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                full = {'state': 'rejected', 'reasons': [str(error)]}
 
         rows.append(
             ComparisonRow(
@@ -295,6 +328,12 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
                 after_word_switches=after.word_switches,
                 diarization_verdict=diarization_verdict(status, before, after, expected_speakers),
                 verdict=verdict(status, before, after, threshold),
+                full_verdict=full["state"],
+                full_reasons="; ".join(full["reasons"]),
+                before_full_metrics=json.dumps(full.get("before_metrics")),
+                after_full_metrics=json.dumps(full.get("after_metrics")),
+                before_classification=json.dumps(full.get("before_classification")),
+                after_classification=json.dumps(full.get("after_classification")),
                 before_transcript_path=str(before_path),
                 after_transcript_path=str(after_path),
             )
@@ -308,10 +347,12 @@ def compare(run_dir: Path, db_path: Path, threshold: int) -> tuple[list[Comparis
         "by_status": {},
         "by_verdict": {},
         "by_diarization_verdict": {},
+        "by_full_verdict": {},
         "completed": 0,
         "completed_score_delta": 0,
     }
     for row in rows:
+        summary["by_full_verdict"][row.full_verdict] = summary["by_full_verdict"].get(row.full_verdict, 0) + 1
         summary["by_status"][row.status] = summary["by_status"].get(row.status, 0) + 1
         summary["by_verdict"][row.verdict] = summary["by_verdict"].get(row.verdict, 0) + 1
         summary["by_diarization_verdict"][row.diarization_verdict] = (
@@ -348,13 +389,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--threshold", type=int, default=12)
+    parser.add_argument("--api-base", help="Local Plume URL for open/search gates")
     args = parser.parse_args(argv)
 
-    rows, summary = compare(args.run_dir.expanduser(), args.db.expanduser(), args.threshold)
+    rows, summary = compare(args.run_dir.expanduser(), args.db.expanduser(), args.threshold, args.api_base)
     tsv_path, json_path = write_reports(args.run_dir.expanduser(), rows, summary)
 
     print(json.dumps({**summary, "tsv_path": str(tsv_path), "json_path": str(json_path)}, indent=2))
-    return 0
+    return 0 if rows and all(row.full_verdict == "accepted" for row in rows) else 2
 
 
 if __name__ == "__main__":

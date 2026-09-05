@@ -299,6 +299,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--retry-job", default=DEFAULT_RETRY_JOB)
     args = parser.parse_args(argv)
+    parser.error("Legacy controller is retired: it ignored failed quality gates. Use queue-archive-quality-rerun.py --apply-plan.")
 
     db_path = args.db.expanduser().resolve()
     runs_dir = args.runs_dir.expanduser().resolve()

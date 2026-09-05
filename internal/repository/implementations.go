@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
-	"quill/internal/models"
+	"strings"
 	"time"
+
+	"quill/internal/models"
 
 	"gorm.io/gorm"
 )
@@ -266,7 +268,28 @@ func (r *jobRepository) UpdateTranscript(ctx context.Context, jobID string, tran
 }
 
 func (r *jobRepository) CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error {
-	return r.db.WithContext(ctx).Create(execution).Error
+	// WhisperXParams also describes user defaults. GORM applies those defaults
+	// on Create, including replacing explicit false/zero observations. Preserve
+	// every actual parameter atomically, in memory and in the stored execution.
+	actual := execution.ActualParameters
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := tx.Create(execution).Error
+		execution.ActualParameters = actual
+		if err != nil {
+			return err
+		}
+		statement := &gorm.Statement{DB: tx}
+		if err := statement.Parse(execution); err != nil {
+			return err
+		}
+		var columns []string
+		for _, field := range statement.Schema.Fields {
+			if strings.HasPrefix(field.DBName, "actual_") {
+				columns = append(columns, field.DBName)
+			}
+		}
+		return tx.Model(execution).Select(columns).Updates(execution).Error
+	})
 }
 
 func (r *jobRepository) UpdateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error {

@@ -216,6 +216,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
+    if args.apply:
+        parser.error("Legacy apply is retired. Use queue-archive-quality-rerun.py --apply-plan with a canonical audit plan.")
 
     db_path = args.db.expanduser().resolve()
     audit_path = args.audit.expanduser().resolve()
