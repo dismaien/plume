@@ -135,6 +135,12 @@ The API package currently has an unrelated compile failure in the obsolete
 regression was reproduced on both start paths and verified using a temporary Go
 overlay excluding only that obsolete test file; the repository file was not changed.
 
+Full-audio verification includes the Python decoder contract tests, the WhisperX
+argument tests, the transcription service/repository/model tests, and a production
+frontend build. The broader adapter suite also exposes pre-existing Sherpa tests
+that expect a 0.5 default while the implementation uses 0.8; this change does not
+alter Sherpa's threshold or claim that suite passes.
+
 ## Local audio cross-check findings
 
 The continuation uses offline, diagnostic outputs outside Plume to compare
@@ -157,3 +163,25 @@ because it is not English. Plausibly timed thanks remain unflagged.
 Speaker diagnostics use a four-slot Sortformer pass to avoid forcing a title's
 assumed count into the evidence. Model-derived labels do not establish identities;
 a contradictory count or discarded short speaker streams requires review.
+
+## Preserve quiet speech
+
+`whisper_full_audio=true` selects a bundled subprocess entry point that retains
+the complete input timeline, uses faster-whisper's timestamp decoder, and keeps
+WhisperX alignment plus the existing independent diarization step. It does not
+modify the installed WhisperX source. It is incompatible with `vad_preprocess=true`.
+The Silero setting remains available for the legacy mode; full-audio decoding
+explicitly bypasses VAD cuts and records that fact in `metadata.asr_diagnostics`.
+
+The local canary isolated two causes of speech loss: text-only decoding omitted
+a short exchange on identical audio, and Silero excluded later sentences from
+another recording. Full-timeline decoding recovered those sentences. The tested
+quality profile uses large-v3, CPU/int8, temperature zero without sampling fallback,
+no previous-text conditioning, logprob threshold -0.5 and no-speech threshold 0.5.
+These are measured canary settings, not a promise of error-free recognition.
+
+Use `--full-audio` during queue preview to freeze this choice into a plan. Legacy
+plans retain their original mode. Execution gates verify the new mode and its
+thresholds. Word-count/coverage gates remain unchanged: removing a long repeated
+passage still requires a documented review. Candidate trials, full decoding
+evidence, source hashes and before snapshots stay in the private processing folder.

@@ -143,6 +143,9 @@ func (u *UnifiedTranscriptionService) ProcessJob(ctx context.Context, jobID stri
 	if err != nil {
 		return fmt.Errorf("failed to get job: %w", err)
 	}
+	if job.Parameters.ModelFamily == "whisper" && job.Parameters.WhisperFullAudio && job.Parameters.VadPreprocess {
+		return fmt.Errorf("full-audio Whisper decoding requires silence removal (vad_preprocess) to be disabled")
+	}
 
 	// Create execution record
 	execution := &models.TranscriptionJobExecution{
@@ -945,6 +948,10 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 
 	// For WhisperX, we use the standard WhisperX parameters (no NVIDIA-specific ones)
 	paramMap := map[string]interface{}{
+		"model_cache_only":  params.ModelCacheOnly,
+		"no_align":          params.NoAlign,
+		"suppress_numerals": params.SuppressNumerals,
+		"length_penalty":    params.LengthPenalty,
 		// Core parameters
 		"model":        params.Model,
 		"device":       params.Device,
@@ -970,10 +977,12 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 		"no_speech_threshold":         params.NoSpeechThreshold,
 
 		// VAD settings
-		"vad_method": params.VadMethod,
-		"vad_onset":  params.VadOnset,
-		"vad_offset": params.VadOffset,
-		"chunk_size": params.ChunkSize,
+		"vad_method":                        params.VadMethod,
+		"vad_onset":                         params.VadOnset,
+		"vad_offset":                        params.VadOffset,
+		"chunk_size":                        params.ChunkSize,
+		"whisper_full_audio":                params.WhisperFullAudio,
+		"temperature_increment_on_fallback": params.TemperatureIncrementOnFallback,
 	}
 
 	// WhisperX only supports pyannote diarization models. When Sortformer is selected,

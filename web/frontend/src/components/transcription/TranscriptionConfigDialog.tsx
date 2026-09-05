@@ -53,6 +53,7 @@ export interface WhisperXParams {
     no_align: boolean;
     return_char_alignments: boolean;
     vad_preprocess: boolean;
+    whisper_full_audio?: boolean;
     vad_method: string;
     vad_onset: number;
     vad_offset: number;
@@ -159,13 +160,13 @@ const applyDiarizationMode = (
 };
 
 const DEFAULT_PARAMS: WhisperXParams = {
-    model_family: "mlx_whisper",
-    model: "large-v3-turbo",
+    model_family: "whisper",
+    model: "large-v3",
     model_cache_only: false,
     device: "cpu",
     device_index: 0,
     batch_size: 8,
-    compute_type: "float32",
+    compute_type: "int8",
     threads: 0,
     output_format: "all",
     verbose: true,
@@ -173,8 +174,9 @@ const DEFAULT_PARAMS: WhisperXParams = {
     interpolate_method: "nearest",
     no_align: false,
     return_char_alignments: false,
-    vad_preprocess: true,
-    vad_method: "pyannote",
+    vad_preprocess: false,
+    whisper_full_audio: true,
+    vad_method: "silero",
     vad_onset: 0.5,
     vad_offset: 0.363,
     chunk_size: 30,
@@ -189,10 +191,10 @@ const DEFAULT_PARAMS: WhisperXParams = {
     suppress_numerals: false,
     condition_on_previous_text: false,
     fp16: true,
-    temperature_increment_on_fallback: 0.2,
+    temperature_increment_on_fallback: 0,
     compression_ratio_threshold: 2.4,
-    logprob_threshold: -1.0,
-    no_speech_threshold: 0.6,
+    logprob_threshold: -0.5,
+    no_speech_threshold: 0.5,
     highlight_words: false,
     segment_resolution: "sentence",
     print_progress: false,
@@ -209,7 +211,7 @@ const WHISPER_MODELS: { value: string; label: string; description: string }[] = 
     { value: "medium.en", label: "medium.en", description: "~1.5 GB — English-only, good accuracy" },
     { value: "large-v3", label: "large-v3", description: "~3.1 GB — Best accuracy, slowest" },
     { value: "large-v3-turbo", label: "large-v3-turbo", description: "~1.6 GB — Near large-v3 accuracy, 4x faster" },
-    { value: "large-v3-turbo-q4", label: "large-v3-turbo-q4", description: "~442 MB — Fast draft model; use turbo for archive quality" },
+    { value: "large-v3-turbo-q4", label: "large-v3-turbo-q4", description: "~442 MB — Fast draft model; review carefully" },
 ];
 
 const LANGUAGES = [
@@ -291,7 +293,7 @@ const PARAM_DESCRIPTIONS = {
     diarize_model: "NVIDIA Sortformer (local, up to 4 speakers), sherpa-onnx (local, no token, up to 20 speakers), or Pyannote (requires HF token, up to 20 speakers).",
     temperature: "0 = deterministic, higher = more creative.",
     beam_size: "Search beams. Higher = better quality but slower.",
-    vad_preprocess: "Strip silence before transcription using Silero VAD. Speeds up transcription on audio with pauses, with no accuracy loss.",
+    vad_preprocess: "Remove intervals detected as silence. This can omit quiet or distant speech; leave off when completeness matters.",
     vad_method: "Voice detection: Pyannote (accurate) or Silero (fast).",
     initial_prompt: "Context text to guide transcription style.",
     hf_token: "Configured in Settings \u2192 Transcription. Used automatically when Pyannote is selected.",
@@ -839,6 +841,30 @@ function WhisperConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                             </label>
                         </div>
 
+                        {params.model_family === "whisper" && (
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex-1">
+                                    <label htmlFor="whisper_full_audio" className="text-sm text-[var(--text-primary)] cursor-pointer">
+                                        Preserve quiet speech
+                                    </label>
+                                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                                        Decode the full recording without cutting detected pauses. Slower on long recordings; uncertain speech still needs review.
+                                    </p>
+                                </div>
+                                <Switch
+                                    id="whisper_full_audio"
+                                    checked={!!params.whisper_full_audio}
+                                    onCheckedChange={(v) => {
+                                        updateParam('whisper_full_audio', v);
+                                        if (v) {
+                                            updateParam('vad_preprocess', false);
+                                            updateParam('temperature_increment_on_fallback', 0);
+                                        }
+                                    }}
+                                />
+                            </div>
+                        )}
+
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex-1">
                                 <label htmlFor="vad_preprocess" className="text-sm text-[var(--text-primary)] cursor-pointer">
@@ -851,6 +877,7 @@ function WhisperConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                             <Switch
                                 id="vad_preprocess"
                                 checked={params.vad_preprocess}
+                                disabled={params.model_family === "whisper" && !!params.whisper_full_audio}
                                 onCheckedChange={(v) => updateParam('vad_preprocess', v)}
                             />
                         </div>

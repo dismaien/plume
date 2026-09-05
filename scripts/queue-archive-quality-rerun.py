@@ -115,7 +115,7 @@ def _build_plan(args, stack):
         raise ValueError('Actual audio exceeds batch cap; reduce selection limit')
     plan = {'schema_version': 2, 'created_at': now(), 'dry_run': True, 'db': str(args.db.resolve()),
             'ledger': str(args.ledger.resolve()), 'audit': str(args.audit.resolve()), 'audit_sha256': sha256(args.audit),
-            'selected_audio_hours': hours, 'jobs': jobs}
+            'selected_audio_hours': hours, 'full_audio': getattr(args, 'full_audio', False), 'jobs': jobs}
     write_json(args.output, plan)
     print(json.dumps({'plan': str(args.output), 'selected': len(jobs), 'audio_hours': round(hours, 3)}, indent=2))
     for i, r in enumerate(jobs, 1):
@@ -230,7 +230,10 @@ def compare_one(entry, run_dir, db, api_base=None):
     if not execution or execution.get('id') == (before.get('execution') or {}).get('id') or execution.get('status') != 'completed':
         result['state'] = 'rejected'
         result['reasons'].append('No new completed execution proves this rerun finished')
-    for key in ('model_family','model','device','compute_type','vad_method','vad_preprocess','condition_on_previous_text','diarize_model','max_speakers'):
+    setting_keys = ['model_family','model','device','compute_type','vad_method','vad_preprocess','condition_on_previous_text','diarize_model','max_speakers']
+    if entry['params'].get('whisper_full_audio'):
+        setting_keys += ['whisper_full_audio','logprob_threshold','no_speech_threshold','temperature_increment_on_fallback']
+    for key in setting_keys:
         if execution.get('actual_' + key) != entry['params'].get(key):
             result['state'] = 'rejected'
             result['reasons'].append('Execution setting mismatch: ' + key)
@@ -298,7 +301,11 @@ def _apply_plan(args, stack):
     write_json(run_dir / 'plan.json', plan)
     write_json(run_dir / 'manifest.json', manifest)
     print('run_dir\t' + str(run_dir), flush=True)
-    base_params = load_script('queue-whisperx-quality-rerun').WHISPERX_PARAMS
+    base_params = dict(load_script('queue-whisperx-quality-rerun').WHISPERX_PARAMS)
+    if plan.get('full_audio'):
+        base_params.update(whisper_full_audio=True, vad_preprocess=False,
+                           temperature_increment_on_fallback=0,
+                           logprob_threshold=-0.5, no_speech_threshold=0.5)
     with read_db(args.db) as conn:
         for entry in jobs:
             if ledger.conn.execute('SELECT 1 FROM jobs WHERE job_id=?', (entry['job_id'],)).fetchone() is None:
@@ -380,6 +387,7 @@ def main():
     p.add_argument('--max-duration-hours', type=float, default=6)
     p.add_argument('--speaker-evidence', type=Path)
     p.add_argument('--verified-speakers-only', action='store_true')
+    p.add_argument('--full-audio', action='store_true', help='Preview the full-timeline Whisper decoder; frozen into the plan')
     p.add_argument('--output', type=Path, default=DATA / 'archive-repair-preview.json')
     p.add_argument('--apply-plan', type=Path)
     p.add_argument('--api-base', default='http://127.0.0.1:59152')
