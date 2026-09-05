@@ -115,6 +115,11 @@ batch start paths also preserve existing summaries, which may contain human edit
 the desktop backend to use it; do not rewrite historical execution rows merely to
 make a gate pass. Runtime logs can support an explicit review note instead.
 
+Desktop updates must use Plume's [local ad-hoc signing workflow](../../desktop/electron/README.md#local-signing).
+Never choose an Apple/keychain identity from an old Plume signature or reuse a
+certificate belonging to another project. Stage, sign, verify, then replace the
+app while retaining a rollback copy and database backup.
+
 ## Validation
 
 ```sh

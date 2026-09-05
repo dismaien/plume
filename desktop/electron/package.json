@@ -15,6 +15,7 @@
   "build": {
     "appId": "app.plume.desktop",
     "productName": "Plume",
+    "afterPack": "../../scripts/sign-desktop-app-local.cjs",
     "directories": {
       "output": "release"
     },
@@ -32,6 +33,8 @@
       }
     ],
     "mac": {
+      "identity": null,
+      "notarize": false,
       "icon": "build/icon.icns",
       "target": [
         "dmg"
