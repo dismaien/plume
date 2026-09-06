@@ -185,3 +185,24 @@ plans retain their original mode. Execution gates verify the new mode and its
 thresholds. Word-count/coverage gates remain unchanged: removing a long repeated
 passage still requires a documented review. Candidate trials, full decoding
 evidence, source hashes and before snapshots stay in the private processing folder.
+
+## Continue offline work while listening review is pending
+
+`run-archive-candidates.py --plan /private/plan.json --output /private/candidates`
+runs a frozen eligible plan with the local WhisperX environment's Python. It
+generates full-audio and Silero comparison JSON files separately from Plume.
+It does not apply the plan through the live API, change originals, or promote
+repair-ledger states. Use a separate candidate manifest to track this work.
+
+There is no small-batch completion limit. Restarting with the same plan/output
+resumes an interrupted recording and skips terminal candidate entries. Completed
+decoder outputs are reused only for the same source hash. Per-recording failures
+remain visible and do not prevent unrelated candidate generation; they are not
+automatically retried. A `STOP` file in the output directory, low disk space, or
+an active Plume transcription pauses the worker. Both offline-worker and repair
+locks prevent competing controllers. Removing a STOP file requires user intent.
+
+This worker currently uses the existing unprotected, completed-parent backup
+path. Protected metadata, unreadable/empty baselines and longer source recordings
+remain separate work; do not infer that exhausting one eligible queue completes
+the archive. Existing live acceptance gates remain unchanged.
