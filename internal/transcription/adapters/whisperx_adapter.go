@@ -796,11 +796,9 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 		if err != nil {
 			return nil, fmt.Errorf("missing full-audio decoding evidence: %w", err)
 		}
-		var diagnostics map[string]interface{}
-		if err := json.Unmarshal(data, &diagnostics); err != nil {
-			return nil, fmt.Errorf("invalid full-audio decoding evidence: %w", err)
+		if err := applyFullAudioDiagnostics(result, data, w.GetStringParameter(params, "task")); err != nil {
+			return nil, err
 		}
-		result.Metadata["asr_diagnostics"] = string(data)
 	}
 
 	logger.Info("WhisperX transcription completed",
@@ -809,6 +807,31 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 		"processing_time", result.ProcessingTime)
 
 	return result, nil
+}
+
+// WhisperX's CLI writes its initial alignment language into the final result,
+// even when ASR auto-detected another language. The bundled decoder records the
+// actual language before alignment; use that evidence for transcription output.
+func applyFullAudioDiagnostics(result *interfaces.TranscriptResult, data []byte, task string) error {
+	var diagnostics struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(data, &diagnostics); err != nil {
+		return fmt.Errorf("invalid full-audio decoding evidence: %w", err)
+	}
+	if strings.TrimSpace(diagnostics.Language) == "" {
+		return fmt.Errorf("full-audio decoding evidence has no detected language")
+	}
+	if task == "translate" {
+		result.Language = "en"
+	} else {
+		result.Language = diagnostics.Language
+	}
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]string)
+	}
+	result.Metadata["asr_diagnostics"] = string(data)
+	return nil
 }
 
 // buildWhisperXArgs builds the command arguments for WhisperX

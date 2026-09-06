@@ -39,3 +39,32 @@ func TestBuildWhisperXArgsFullAudioUsesEmbeddedRunner(t *testing.T) {
 		t.Fatal("decoder script is not embedded")
 	}
 }
+
+func TestFullAudioPreservesDetectedLanguageAfterWhisperXAlignment(t *testing.T) {
+	result := &interfaces.TranscriptResult{Language: "en"}
+	evidence := []byte(`{"language":"de","decoder":"faster_whisper_full_audio"}`)
+	if err := applyFullAudioDiagnostics(result, evidence, "transcribe"); err != nil {
+		t.Fatal(err)
+	}
+	if result.Language != "de" || result.Metadata["asr_diagnostics"] != string(evidence) {
+		t.Fatalf("auto-detected language was overwritten by the alignment default: %+v", result)
+	}
+	if err := applyFullAudioDiagnostics(result, evidence, "translate"); err != nil {
+		t.Fatal(err)
+	}
+	if result.Language != "en" {
+		t.Fatalf("English translation was labeled as its source language: %s", result.Language)
+	}
+}
+
+func TestFullAudioRejectsMissingLanguageEvidence(t *testing.T) {
+	for _, data := range []string{`{}`, `{"language":""}`, `{"language":42}`, `invalid`} {
+		result := &interfaces.TranscriptResult{Language: "en"}
+		if err := applyFullAudioDiagnostics(result, []byte(data), "transcribe"); err == nil {
+			t.Fatalf("accepted unusable detected-language evidence: %s", data)
+		}
+		if result.Language != "en" {
+			t.Fatal("failed validation mutated the existing language")
+		}
+	}
+}

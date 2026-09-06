@@ -206,3 +206,18 @@ This worker currently uses the existing unprotected, completed-parent backup
 path. Protected metadata, unreadable/empty baselines and longer source recordings
 remain separate work; do not infer that exhausting one eligible queue completes
 the archive. Existing live acceptance gates remain unchanged.
+
+## Detected-language metadata
+
+WhisperX 3.8.0's CLI assigns its initial alignment language to the final output.
+With automatic language detection, this can label German ASR text as English even
+after German alignment succeeds. The full-audio adapter now takes the detected
+language from its decoder evidence rather than that overwritten CLI field;
+translation output remains labeled English. Missing/malformed language evidence
+fails validation. This does not correct historical artifacts or certify that
+Whisper's language guess was right, and the legacy CLI path is unchanged.
+
+An unavailable alignment model is a separate failure: an ASR language guess may
+select a language without a default aligner. Investigate those recordings without
+forcing a language from a title or silently discarding the ASR result. The
+separate candidate worker does not require alignment to preserve its output.
