@@ -18,7 +18,10 @@ const shouldStart = Boolean(args.start || args.monitor);
 const shouldMonitor = Boolean(args.monitor);
 
 const syncReport = JSON.parse(fs.readFileSync(syncReportPath, "utf8"));
-const copiedNames = [...new Set(syncReport.copied_audio || [])].filter(isAudioFilename);
+const copiedNames = [...new Set([
+  ...(syncReport.copied_audio || []),
+  ...(syncReport.reconciled_audio || []),
+])].filter(isAudioFilename);
 const index = readTSVIndex(indexPath);
 const manifestHashes = readChecksumManifest(checksumsPath);
 const activeVaultID = Number(sqliteRows("select id from vaults where is_active = 1 order by id limit 1;")[0]?.id || 0);
@@ -61,7 +64,7 @@ insert into transcription_jobs (
   ${quote(now)}, ${quote(now)}, 'whisper', 'large-v3', 'cpu', 8,
   'int8', 'all', 1, 'transcribe', 'nearest',
   0, 'silero', 0.5, 0.363, 30,
-  1, 'sherpa-onnx', 0, 5, 5, 1,
+  1, 'nvidia_sortformer', 0, 5, 5, 1,
   1, 0, 1,
   0.2, 2.4,
   -1, 0.6, 'sentence',
@@ -177,7 +180,7 @@ function qualityParameters() {
     vad_offset: 0.363,
     chunk_size: 30,
     diarize: true,
-    diarize_model: "sherpa-onnx",
+    diarize_model: "nvidia_sortformer",
     speaker_embeddings: false,
     temperature: 0,
     best_of: 5,

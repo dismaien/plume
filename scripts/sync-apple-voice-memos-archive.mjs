@@ -16,6 +16,7 @@ const archiveRecordings = path.join(archiveRoot, "Recordings");
 const metadataDir = path.join(archiveRoot, "metadata");
 const indexPath = path.join(metadataDir, "recordings-index.tsv");
 const checksumsPath = path.join(archiveRoot, "checksums.sha256");
+const recloneReconciled = Boolean(args.recloneReconciled);
 const liveDB = path.join(liveRoot, "CloudRecordings.db");
 const runStamp = new Date().toISOString().replace(/:/g, "-");
 const reportPath = args.report || path.join(reportsRoot, `archive-sync-${runStamp}.json`);
@@ -25,12 +26,14 @@ for (const required of [liveRoot, archiveRoot, archiveRecordings, metadataDir, r
   if (!fs.existsSync(required)) throw new Error(`Required path is missing: ${required}`);
 }
 
-assertDiskSpace();
+if (!recloneReconciled) assertDiskSpace();
 const runStartedAt = new Date().toISOString();
 const liveAudio = listAudio(liveRoot);
 const archiveAudioBefore = listAudio(archiveRecordings);
 const archiveNamesBefore = new Set(archiveAudioBefore);
 const manifest = readChecksumManifest(checksumsPath);
+const reconciledAudio = reconcileInterruptedCopies();
+assertDiskSpace();
 const manifestPathsByHash = invertManifest(manifest);
 const copiedAudio = [];
 const copiedSidecars = [];
@@ -60,6 +63,11 @@ for (const filename of liveAudio) {
 
   const archivedHash = manifest.get(`Recordings/${filename}`) || sha256File(destination);
   if (sourceHash === archivedHash) continue;
+  const duplicatePaths = manifestPathsByHash.get(sourceHash) || [];
+  if (duplicatePaths.length) {
+    duplicateContentSkipped.push({ filename, sha256: sourceHash, existing_paths: duplicatePaths });
+    continue;
+  }
   const extension = path.extname(filename);
   const base = path.basename(filename, extension);
   const conflictName = `${base}--conflict-${runStamp}${extension}`;
@@ -94,6 +102,8 @@ const report = {
   archive_audio_after: archiveAudioAfter.length,
   copied_audio_count: copiedAudio.length,
   copied_audio_bytes: copiedAudio.reduce((total, name) => total + fs.statSync(path.join(archiveRecordings, name)).size, 0),
+  reconciled_audio_count: reconciledAudio.length,
+  reconciled_audio: reconciledAudio,
   copied_sidecar_count: copiedSidecars.length,
   changed_conflicts_count: changedConflicts.length,
   duplicate_content_skipped_count: duplicateContentSkipped.length,
@@ -110,6 +120,23 @@ const report = {
 
 atomicWrite(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify({ event: "archive_sync_completed", report: reportPath, copied_audio: copiedAudio.length, copied_sidecars: copiedSidecars.length, conflicts: changedConflicts.length }));
+
+function reconcileInterruptedCopies() {
+  const reconciled = [];
+  for (const filename of archiveAudioBefore) {
+    const relativePath = `Recordings/${filename}`;
+    if (manifest.has(relativePath) || filename.includes("--conflict-")) continue;
+    const source = path.join(liveRoot, filename);
+    const archived = path.join(archiveRecordings, filename);
+    if (!fs.existsSync(source)) continue;
+    const archivedHash = sha256File(archived);
+    if (sha256File(source) !== archivedHash) continue;
+    if (recloneReconciled) copyVerified(source, archived, archivedHash);
+    manifest.set(relativePath, archivedHash);
+    reconciled.push(filename);
+  }
+  return reconciled;
+}
 
 function copyMatchingSidecars(audioFilename) {
   const stem = path.basename(audioFilename, path.extname(audioFilename));
@@ -153,10 +180,15 @@ order by ZDATE, Z_PK;`;
 }
 
 function copyVerified(source, destination, expectedHash) {
-  assertDiskSpace(fs.statSync(source).size);
   const temp = `${destination}.partial-${process.pid}`;
   fs.rmSync(temp, { force: true });
-  fs.copyFileSync(source, temp);
+  try {
+    execFileSync("cp", ["-c", source, temp]);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    assertDiskSpace(fs.statSync(source).size);
+    fs.copyFileSync(source, temp);
+  }
   const actualHash = sha256File(temp);
   if (actualHash !== expectedHash) {
     fs.rmSync(temp, { force: true });
