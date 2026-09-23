@@ -16,6 +16,10 @@ export function getDisplaySpeakerName(originalSpeaker: string, mappings: Record<
     return mappings[originalSpeaker] || formatSpeakerLabel(originalSpeaker);
 }
 
+function escapeMarkdownInline(value: string): string {
+    return value.replace(/[\\`*_[\]<>~]/g, "\\$&");
+}
+
 export function buildMarkdownTranscript(
     transcript: Transcript,
     filenameBase: string,
@@ -32,32 +36,35 @@ export function buildMarkdownTranscript(
         return `${heading}\n\n${transcript.text}`.trim();
     }
 
-    const blocks: Array<{ speaker: string; start: number; text: string[] }> = [];
+    const blocks: Array<{ rawSpeaker: string; speaker: string; start: number; text: string[] }> = [];
 
     transcript.segments.forEach((segment) => {
-        const text = segment.text.trim();
+        const text = (segment.text ?? "").trim();
         if (!text) return;
 
-        const speaker = options.includeSpeakerLabels && segment.speaker
-            ? getDisplaySpeakerName(segment.speaker, speakerMappings)
+        const rawSpeaker = options.includeSpeakerLabels ? segment.speaker ?? "" : "";
+        const speaker = rawSpeaker
+            ? getDisplaySpeakerName(rawSpeaker, speakerMappings).replace(/\s+/g, " ").trim() || formatSpeakerLabel(rawSpeaker)
             : "";
         const previous = blocks.at(-1);
-        const canJoinPrevious = options.includeSpeakerLabels
+        // Join on the raw speaker key: distinct speakers sharing a display name stay separate,
+        // and unlabelled segments keep their own timestamps.
+        const canJoinPrevious = rawSpeaker !== ""
             && previous
-            && previous.speaker === speaker;
+            && previous.rawSpeaker === rawSpeaker;
 
         if (canJoinPrevious) {
             previous.text.push(text);
             return;
         }
 
-        blocks.push({ speaker, start: segment.start, text: [text] });
+        blocks.push({ rawSpeaker, speaker, start: segment.start, text: [text] });
     });
 
     const body = blocks.map((block) => {
         const labelParts: string[] = [];
-        if (options.includeSpeakerLabels && block.speaker) {
-            labelParts.push(`**${block.speaker}**`);
+        if (block.speaker) {
+            labelParts.push(`**${escapeMarkdownInline(block.speaker)}**`);
         }
         if (options.includeTimestamps) {
             labelParts.push(`_[${formatTranscriptTimestamp(block.start)}]_`);
