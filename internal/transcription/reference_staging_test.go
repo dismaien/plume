@@ -1,12 +1,13 @@
 package transcription
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestStageReferenceAudioUsesTemporaryHardLink(t *testing.T) {
+func TestStageReferenceAudioUsesIndependentTemporaryFile(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "recording.m4a")
 	if err := os.WriteFile(sourcePath, []byte("audio"), 0644); err != nil {
@@ -17,7 +18,7 @@ func TestStageReferenceAudioUsesTemporaryHardLink(t *testing.T) {
 		tempDirectory:    filepath.Join(root, "plume-data"),
 		audioStorageMode: AudioStorageReference,
 	}
-	stagedPath, cleanup, err := service.stageReferenceAudio(sourcePath, "job/one")
+	stagedPath, cleanup, err := service.stageReferenceAudio(context.Background(), sourcePath, "job/one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +34,12 @@ func TestStageReferenceAudioUsesTemporaryHardLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !os.SameFile(sourceInfo, stagedInfo) {
-		t.Fatal("same-volume staging should use a hard link")
+	if os.SameFile(sourceInfo, stagedInfo) {
+		t.Fatal("staging must not share an inode with preservation audio")
+	}
+	stagedData, err := os.ReadFile(stagedPath)
+	if err != nil || string(stagedData) != "audio" {
+		t.Fatalf("staged audio differs from source: %q, %v", stagedData, err)
 	}
 
 	cleanup()
@@ -57,7 +62,7 @@ func TestStageReferenceAudioLeavesCopiedModeUntouched(t *testing.T) {
 		tempDirectory:    filepath.Join(root, "plume-data"),
 		audioStorageMode: AudioStorageCopy,
 	}
-	stagedPath, cleanup, err := service.stageReferenceAudio(sourcePath, "job-one")
+	stagedPath, cleanup, err := service.stageReferenceAudio(context.Background(), sourcePath, "job-one")
 	if err != nil {
 		t.Fatal(err)
 	}

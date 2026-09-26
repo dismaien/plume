@@ -52,6 +52,9 @@ func (p *ProcessingPipeline) ProcessAudio(ctx context.Context, input interfaces.
 			logger.Info("Applying preprocessor", "type", fmt.Sprintf("%T", preprocessor))
 			processedInput, err := preprocessor.Process(ctx, currentInput)
 			if err != nil {
+				if strict, ok := preprocessor.(interface{ FailClosed() bool }); ok && strict.FailClosed() {
+					return currentInput, fmt.Errorf("required preprocessor %T failed: %w", preprocessor, err)
+				}
 				logger.Warn("Preprocessor failed, continuing with original input", "error", err)
 				continue
 			}
@@ -142,7 +145,6 @@ func (a *AudioFormatPreprocessor) Process(ctx context.Context, input interfaces.
 
 	return convertedInput, nil
 }
-
 
 // NoiseReductionPreprocessor applies noise reduction
 type NoiseReductionPreprocessor struct{}

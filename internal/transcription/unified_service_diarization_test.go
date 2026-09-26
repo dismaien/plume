@@ -1,10 +1,52 @@
 package transcription
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"quill/internal/transcription/interfaces"
 )
+
+func TestFullAudioInputForDiarizationPreservesConvertedWAVMetadata(t *testing.T) {
+	fullPath := filepath.Join(t.TempDir(), "full.wav")
+	if err := os.WriteFile(fullPath, []byte("full audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	input := interfaces.AudioInput{
+		FilePath:     filepath.Join(t.TempDir(), "stripped.wav"),
+		Format:       "wav",
+		SampleRate:   16000,
+		Channels:     1,
+		Duration:     2 * time.Hour,
+		Size:         3,
+		TempFilePath: "stripped.wav",
+		Metadata: map[string]string{
+			"vad_original_audio": fullPath,
+		},
+	}
+
+	got, ok := fullAudioInputForDiarization(input)
+	if !ok {
+		t.Fatal("expected a full-audio diarization input")
+	}
+	if got.FilePath != fullPath || got.TempFilePath != fullPath {
+		t.Fatalf("full audio path was not restored: %+v", got)
+	}
+	if got.Format != "wav" || got.SampleRate != 16000 || got.Channels != 1 {
+		t.Fatalf("converted WAV metadata was not preserved: %+v", got)
+	}
+	if got.Duration != input.Duration || got.Size != int64(len("full audio")) {
+		t.Fatalf("full audio measurements are incorrect: %+v", got)
+	}
+}
+
+func TestFullAudioInputForDiarizationRequiresVADOriginal(t *testing.T) {
+	if _, ok := fullAudioInputForDiarization(interfaces.AudioInput{Metadata: map[string]string{}}); ok {
+		t.Fatal("expected no override without VAD original audio metadata")
+	}
+}
 
 func speaker(value string) *string {
 	return &value

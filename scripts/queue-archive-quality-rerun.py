@@ -115,7 +115,8 @@ def _build_plan(args, stack):
         raise ValueError('Actual audio exceeds batch cap; reduce selection limit')
     plan = {'schema_version': 2, 'created_at': now(), 'dry_run': True, 'db': str(args.db.resolve()),
             'ledger': str(args.ledger.resolve()), 'audit': str(args.audit.resolve()), 'audit_sha256': sha256(args.audit),
-            'selected_audio_hours': hours, 'full_audio': getattr(args, 'full_audio', False), 'jobs': jobs}
+            'selected_audio_hours': hours, 'full_audio': getattr(args, 'full_audio', False),
+            'vad_preprocess': getattr(args, 'vad_preprocess', False), 'jobs': jobs}
     write_json(args.output, plan)
     print(json.dumps({'plan': str(args.output), 'selected': len(jobs), 'audio_hours': round(hours, 3)}, indent=2))
     for i, r in enumerate(jobs, 1):
@@ -245,10 +246,17 @@ def compare_one(entry, run_dir, db, api_base=None):
                 raise ValueError('Missing or wrong transcript API response')
             returned = payload['transcript']
             words = load_script('build-archive-quality-audit').words_from(' '.join(s.get('text', '') for s in returned['segments']))
-            query = next((w for w in words if len(w) >= 7 and w not in ('segments','speaker','speaker_name')), None)
+            searchable_words = {
+                w for w in words
+                if len(w) >= 7 and w not in ('segments', 'speaker', 'speaker_name')
+            }
+            query = max(searchable_words, key=lambda word: (len(word), word), default=None)
             if not query:
                 raise ValueError('No searchable transcript word')
-            found = local_request(api_base, '/api/v1/transcription/list?' + urlencode({'q': query, 'limit': 2000, 'all_vaults': 'true'}))
+            # Search only needs to prove that this transcript is indexed. Asking
+            # the desktop API to hydrate the entire archive can trigger thousands
+            # of media probes and make an otherwise healthy verification time out.
+            found = local_request(api_base, '/api/v1/transcription/list?' + urlencode({'q': query, 'limit': 50, 'all_vaults': 'true'}))
             if entry['job_id'] not in {j['id'] for j in found.get('jobs', [])}:
                 raise ValueError('Transcript not returned by Plume search')
             result['api_verification'] = 'passed'
@@ -306,6 +314,8 @@ def _apply_plan(args, stack):
         base_params.update(whisper_full_audio=True, vad_preprocess=False,
                            temperature_increment_on_fallback=0,
                            logprob_threshold=-0.5, no_speech_threshold=0.5)
+    elif plan.get('vad_preprocess'):
+        base_params.update(whisper_full_audio=False, vad_preprocess=True)
     with read_db(args.db) as conn:
         for entry in jobs:
             if ledger.conn.execute('SELECT 1 FROM jobs WHERE job_id=?', (entry['job_id'],)).fetchone() is None:
@@ -388,12 +398,15 @@ def main():
     p.add_argument('--speaker-evidence', type=Path)
     p.add_argument('--verified-speakers-only', action='store_true')
     p.add_argument('--full-audio', action='store_true', help='Preview the full-timeline Whisper decoder; frozen into the plan')
+    p.add_argument('--vad-preprocess', action='store_true', help='Preview a Silero VAD preprocessing run; frozen into the plan')
     p.add_argument('--output', type=Path, default=DATA / 'archive-repair-preview.json')
     p.add_argument('--apply-plan', type=Path)
     p.add_argument('--api-base', default='http://127.0.0.1:59152')
     p.add_argument('--poll-seconds', type=int, default=15)
     p.add_argument('--timeout-hours', type=float, default=24)
     args = p.parse_args()
+    if args.full_audio and args.vad_preprocess:
+        p.error('--full-audio and --vad-preprocess are mutually exclusive')
     if min(args.limit,args.max_hours,args.max_duration_hours,args.poll_seconds,args.timeout_hours) <= 0:
         p.error('Limits and intervals must be positive')
     if args.apply_plan:

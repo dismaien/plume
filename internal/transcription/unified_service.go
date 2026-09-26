@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -49,6 +50,21 @@ const (
 	ModelSherpaOnnx            = "sherpa-onnx"
 	OutputFormatJSON           = "json"
 )
+
+func fullAudioInputForDiarization(preprocessed interfaces.AudioInput) (interfaces.AudioInput, bool) {
+	originalPath := strings.TrimSpace(preprocessed.Metadata["vad_original_audio"])
+	if originalPath == "" {
+		return interfaces.AudioInput{}, false
+	}
+
+	fullInput := preprocessed
+	fullInput.FilePath = originalPath
+	fullInput.TempFilePath = originalPath
+	if stat, err := os.Stat(originalPath); err == nil {
+		fullInput.Size = stat.Size()
+	}
+	return fullInput, true
+}
 
 // UnifiedTranscriptionService provides a unified interface for all transcription and diarization models
 type UnifiedTranscriptionService struct {
@@ -261,7 +277,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	processingAudioPath, cleanupProcessingAudio, err := u.stageReferenceAudio(job.AudioPath, job.ID)
+	processingAudioPath, cleanupProcessingAudio, err := u.stageReferenceAudio(ctx, job.AudioPath, job.ID)
 	if err != nil {
 		return fmt.Errorf("failed to stage referenced audio: %w", err)
 	}
@@ -307,6 +323,9 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	// Apply preprocessing
 	preprocessedInput, err = jobPipeline.ProcessAudio(ctx, audioInput, capabilities)
 	if err != nil {
+		if job.Parameters.VadPreprocess {
+			return fmt.Errorf("required VAD preprocessing failed: %w", err)
+		}
 		logger.Warn("Audio preprocessing failed, using original", "error", err)
 		preprocessedInput = audioInput
 	} else {
@@ -320,6 +339,12 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 				"converted_sr", preprocessedInput.SampleRate,
 				"original_channels", audioInput.Channels,
 				"converted_channels", preprocessedInput.Channels)
+		}
+		if originalPath := preprocessedInput.Metadata["vad_original_audio"]; originalPath != "" && originalPath != audioInput.FilePath {
+			tempFilesToCleanup = append(tempFilesToCleanup, originalPath)
+		}
+		if manifestPath := preprocessedInput.Metadata["vad_manifest_path"]; manifestPath != "" {
+			tempFilesToCleanup = append(tempFilesToCleanup, manifestPath)
 		}
 	}
 
@@ -347,12 +372,9 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	// Resolve the audio input for diarization (original audio when VAD is active).
 	diarizationInput := preprocessedInput
 	if needsSeparateDiarization {
-		if origPath, ok := preprocessedInput.Metadata["vad_original_audio"]; ok {
-			logger.Info("Using original audio for diarization (VAD was active)", "path", origPath)
-			diarizationInput = audioInput
-			if preprocessedInput.TempFilePath != "" && preprocessedInput.Metadata["vad_original_audio"] != "" {
-				diarizationInput.FilePath = origPath
-			}
+		if fullInput, ok := fullAudioInputForDiarization(preprocessedInput); ok {
+			logger.Info("Using original audio for diarization (VAD was active)", "path", fullInput.FilePath)
+			diarizationInput = fullInput
 		}
 	}
 
@@ -537,10 +559,10 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 
 // stageReferenceAudio gives app-launched media tools a path inside Plume's data
 // directory. On macOS, subprocesses can lose access to a Documents path even
-// when the parent process can stat it. A same-volume hard link costs no extra
-// audio storage; cross-volume sources use a temporary copy that is removed when
-// processing finishes.
-func (u *UnifiedTranscriptionService) stageReferenceAudio(audioPath, jobID string) (string, func(), error) {
+// when the parent process can stat it. APFS clone copies are space-efficient,
+// do not share an inode with the preservation source, and remain cancellable
+// if macOS blocks while materializing a cloud-backed file.
+func (u *UnifiedTranscriptionService) stageReferenceAudio(ctx context.Context, audioPath, jobID string) (string, func(), error) {
 	if u.audioStorageMode != AudioStorageReference || strings.TrimSpace(audioPath) == "" {
 		return audioPath, func() {}, nil
 	}
@@ -560,12 +582,20 @@ func (u *UnifiedTranscriptionService) stageReferenceAudio(audioPath, jobID strin
 		return "", nil, fmt.Errorf("remove stale reference staging file: %w", err)
 	}
 
-	stagingMethod := "hardlink"
-	if err := os.Link(audioPath, stagePath); err != nil {
-		stagingMethod = "copy"
-		if copyErr := copyFile(audioPath, stagePath); copyErr != nil {
-			return "", nil, fmt.Errorf("stage reference audio (hardlink: %v; copy: %w)", err, copyErr)
+	stagingMethod := "copy"
+	if runtime.GOOS == "darwin" {
+		if output, err := exec.CommandContext(ctx, "/bin/cp", "-c", "-p", audioPath, stagePath).CombinedOutput(); err == nil {
+			stagingMethod = "clone"
+		} else if ctx.Err() != nil {
+			return "", nil, fmt.Errorf("stage reference audio clone canceled: %w", ctx.Err())
+		} else {
+			logger.Warn("APFS clone staging failed; falling back to a temporary copy", "error", err, "output", string(output))
+			if copyErr := copyFile(audioPath, stagePath); copyErr != nil {
+				return "", nil, fmt.Errorf("stage reference audio (clone: %v; copy: %w)", err, copyErr)
+			}
 		}
+	} else if copyErr := copyFile(audioPath, stagePath); copyErr != nil {
+		return "", nil, fmt.Errorf("stage reference audio copy: %w", copyErr)
 	}
 
 	logger.Info("Staged referenced audio for processing",

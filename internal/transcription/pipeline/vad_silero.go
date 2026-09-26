@@ -29,7 +29,9 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
+    "packaging>=23.0",
     "torch>=2.1.0",
+    "torchaudio>=2.1.0",
 ]
 
 [[tool.uv.index]]
@@ -42,7 +44,17 @@ torch = [
     { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
     { index = "pytorch-cpu", marker = "platform_machine != 'x86_64' and sys_platform != 'darwin'" },
 ]
+torchaudio = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cpu", marker = "platform_machine != 'x86_64' and sys_platform != 'darwin'" },
+]
 `
+
+// FailClosed prevents a requested VAD pass from silently becoming an
+// unfiltered transcription when its runtime cannot be prepared or executed.
+func (s *SileroVadPreprocessor) FailClosed() bool {
+	return s.Enabled
+}
 
 // AppliesTo returns true when VAD preprocessing is enabled by the user.
 // It is model-agnostic — works with any transcription adapter.
@@ -136,18 +148,16 @@ func (s *SileroVadPreprocessor) prepareEnvironment(ctx context.Context) error {
 		return fmt.Errorf("create silero VAD environment: %w", err)
 	}
 
-	pyprojectPath := filepath.Join(s.EnvPath, "pyproject.toml")
-	if _, err := os.Stat(pyprojectPath); os.IsNotExist(err) {
-		if writeErr := os.WriteFile(pyprojectPath, []byte(sileroVadPyprojectTOML), 0644); writeErr != nil {
-			return fmt.Errorf("write silero VAD pyproject: %w", writeErr)
-		}
-	} else if err != nil {
-		return fmt.Errorf("stat silero VAD pyproject: %w", err)
+	projectChanged, err := ensureSileroVadProject(s.EnvPath)
+	if err != nil {
+		return err
 	}
 
-	readyCmd := exec.CommandContext(ctx, binaries.UV(), "run", "--native-tls", "--project", s.EnvPath, "python", "-c", "import numpy, torch; print('ok')")
-	if err := readyCmd.Run(); err == nil {
-		return nil
+	if !projectChanged {
+		readyCmd := exec.CommandContext(ctx, binaries.UV(), "run", "--native-tls", "--project", s.EnvPath, "python", "-c", "import numpy, packaging, torch, torchaudio; print('ok')")
+		if err := readyCmd.Run(); err == nil {
+			return nil
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, binaries.UV(), "sync", "--native-tls")
@@ -157,6 +167,22 @@ func (s *SileroVadPreprocessor) prepareEnvironment(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func ensureSileroVadProject(envPath string) (bool, error) {
+	pyprojectPath := filepath.Join(envPath, "pyproject.toml")
+	want := []byte(sileroVadPyprojectTOML)
+	current, err := os.ReadFile(pyprojectPath)
+	if err == nil && string(current) == string(want) {
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("read silero VAD pyproject: %w", err)
+	}
+	if err := os.WriteFile(pyprojectPath, want, 0644); err != nil {
+		return false, fmt.Errorf("write silero VAD pyproject: %w", err)
+	}
+	return true, nil
 }
 
 // buildSileroVadScript generates a Python script that:
