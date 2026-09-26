@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { AlertCircle, CheckCircle2, Clock3, Loader2, PanelLeftClose, Search } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,12 +68,15 @@ function RecordingStatusIcon({ status }: { status: AudioFile["status"] }) {
 
 export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onClose }: RecordingListSidebarProps) {
     const navigate = useNavigate();
+    const location = useLocation();
     const inheritedParams = useMemo(
         () => parseDashboardListParams(dashboardReturnPath),
         [dashboardReturnPath],
     );
     const [search, setSearch] = useState(inheritedParams.search);
     const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+    const positionedInitialSelectionRef = useRef(false);
     const { ref: loadMoreRef, inView } = useInView({ rootMargin: "240px" });
 
     useEffect(() => {
@@ -109,13 +112,29 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
         }
     }, [fetchNextPage, hasNextPage, inView, isFetchingNextPage]);
 
-    useEffect(() => {
-        selectedRowRef.current?.scrollIntoView({ block: "nearest" });
-    }, [currentAudioId, recordings.length]);
+    useLayoutEffect(() => {
+        if (
+            positionedInitialSelectionRef.current
+            || !selectedRowRef.current
+            || !scrollContainerRef.current
+        ) return;
+
+        const savedScrollTop = (location.state as { recordingsSidebarScrollTop?: number } | null)
+            ?.recordingsSidebarScrollTop;
+        if (typeof savedScrollTop === "number" && Number.isFinite(savedScrollTop)) {
+            scrollContainerRef.current.scrollTop = savedScrollTop;
+        } else {
+            selectedRowRef.current.scrollIntoView({ block: "nearest" });
+        }
+        positionedInitialSelectionRef.current = true;
+    }, [location.state, recordings.length]);
 
     const openRecording = useCallback((id: string) => {
         navigate(`/audio/${id}`, {
-            state: { from: dashboardReturnPath },
+            state: {
+                from: dashboardReturnPath,
+                recordingsSidebarScrollTop: scrollContainerRef.current?.scrollTop ?? 0,
+            },
             preventScrollReset: true,
         });
     }, [dashboardReturnPath, navigate]);
@@ -166,7 +185,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                 </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 scrollbar-thin">
+            <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 scrollbar-thin">
                 {isLoading ? (
                     <div className="space-y-1.5">
                         {Array.from({ length: 8 }).map((_, index) => (

@@ -25,6 +25,33 @@ test("opens the recordings list by default and switches transcripts without retu
     await expect(sidebar.getByRole("button", { name: /Product Review/ })).toHaveAttribute("aria-current", "page");
 });
 
+test("keeps the sidebar scroll position when selecting a visible recording", async ({ page }) => {
+    await page.addInitScript(() => {
+        const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+        (window as typeof window & { __scrollIntoViewCalls?: number }).__scrollIntoViewCalls = 0;
+        HTMLElement.prototype.scrollIntoView = function (...args) {
+            const state = window as typeof window & { __scrollIntoViewCalls?: number };
+            state.__scrollIntoViewCalls = (state.__scrollIntoViewCalls ?? 0) + 1;
+            return originalScrollIntoView.apply(this, args);
+        };
+    });
+
+    await page.goto("/audio/1");
+    const sidebar = page.getByRole("complementary", { name: "Recordings list" });
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText("Team Standup March 10");
+
+    const callsBeforeSelection = await page.evaluate(
+        () => (window as typeof window & { __scrollIntoViewCalls?: number }).__scrollIntoViewCalls ?? 0,
+    );
+    await sidebar.getByRole("button", { name: /Product Review/ }).first().click();
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText("Product Review");
+
+    const callsAfterSelection = await page.evaluate(
+        () => (window as typeof window & { __scrollIntoViewCalls?: number }).__scrollIntoViewCalls ?? 0,
+    );
+    expect(callsAfterSelection).toBe(callsBeforeSelection);
+});
+
 test("remembers when the recordings list is closed", async ({ page }) => {
     await page.goto("/audio/1");
     await page.getByRole("button", { name: "Hide recordings list" }).first().click();

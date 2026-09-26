@@ -7,6 +7,80 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Speaker Rename Dialog', () => {
+  test('refreshes the detail and sidebar titles after speaker names change', async ({ page }) => {
+    let currentTitle = '260310 10:15 Team Standup March 10';
+    let savedMappings = [
+      { original_speaker: 'SPEAKER_00', custom_name: 'SPEAKER_00', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_01', custom_name: 'SPEAKER_01', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_02', custom_name: 'SPEAKER_02', match_source: 'manual' },
+    ];
+
+    await page.unroute('**/api/v1/transcription/list*');
+    await page.unroute(/\/api\/v1\/transcription\/\d+$/);
+    await page.unroute('**/api/v1/transcription/*/speakers');
+
+    await page.route('**/api/v1/transcription/list*', route => route.fulfill({
+      json: {
+        jobs: [{
+          id: '1',
+          title: currentTitle,
+          status: 'completed',
+          created_at: '2026-03-10T09:00:00Z',
+          recorded_at: '2026-03-10 09:00:00+00:00',
+          audio_path: '/data/uploads/standup-2026-03-10.wav',
+          diarization: true,
+          speakers: 3,
+          duration: 1823.5,
+        }],
+        pagination: { page: 1, limit: 30, total: 1, pages: 1 },
+      },
+    }));
+    await page.route(/\/api\/v1\/transcription\/1$/, route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({
+        json: {
+          id: '1',
+          title: currentTitle,
+          status: 'completed',
+          created_at: '2026-03-10T09:00:00Z',
+          recorded_at: '2026-03-10 09:00:00+00:00',
+          audio_path: '/data/uploads/standup-2026-03-10.wav',
+          diarization: true,
+          speakers: 3,
+          duration: 1823.5,
+        },
+      });
+    });
+    await page.route('**/api/v1/transcription/1/speakers', async route => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({ json: savedMappings });
+      }
+
+      const payload = route.request().postDataJSON() as { mappings: typeof savedMappings };
+      savedMappings = payload.mappings;
+      currentTitle = '260310 10:15 Team Standup March 10 [Leona, Andre]';
+      return route.fulfill({
+        json: {
+          mappings: savedMappings,
+          contact_bootstrap: { started_count: 0, created_count: 0, skipped_existing_count: 0 },
+        },
+      });
+    });
+
+    await page.goto('/audio/1');
+    const sidebar = page.getByRole('complementary', { name: 'Recordings list' });
+    await expect(sidebar).toContainText('Team Standup March 10');
+
+    await page.getByRole('button', { name: 'Rename Speakers' }).click();
+    await page.locator('#speaker-SPEAKER_00').fill('Leona');
+    await page.locator('#speaker-SPEAKER_01').fill('Andre');
+    await page.locator('#speaker-SPEAKER_02').fill('Andre');
+    await page.getByRole('dialog', { name: 'Rename Speakers' }).getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.locator('h1.recording-title')).toContainText('[Leona, Andre]');
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText('[Leona, Andre]');
+  });
+
   test('consolidates multiple diarization labels renamed to one person', async ({ page }) => {
     let savedMappings = [
       { original_speaker: 'SPEAKER_00', custom_name: 'SPEAKER_00', match_source: 'manual' },

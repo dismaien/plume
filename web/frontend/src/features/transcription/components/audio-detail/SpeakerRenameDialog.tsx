@@ -369,9 +369,17 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       const payload: SpeakerMappingsUpdateResponse = await response.json();
       onSpeakerMappingsUpdate(payload.mappings);
 
-      // Invalidate contact appearances so the Contacts page reflects updated mappings
-      queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] });
-      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      // Speaker saves can also rewrite the transcript and its derived title.
+      // Refresh every view that displays those values before closing the dialog
+      // so the detail header and recording lists cannot disagree.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["speakerMappings", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["transcript", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["audio", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["audioFiles"] }),
+        queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] }),
+        queryClient.invalidateQueries({ queryKey: ["contacts"] }),
+      ]);
 
       if (payload.contact_bootstrap.started_count > 0) {
         const started = payload.contact_bootstrap.started_count;
