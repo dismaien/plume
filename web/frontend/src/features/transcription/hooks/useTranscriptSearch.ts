@@ -26,6 +26,24 @@ export function useTranscriptSearch(
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const matchesRef = useRef<MatchRange[]>([]);
 
+  const activateMatch = useCallback((index: number) => {
+    const matches = matchesRef.current;
+    if (matches.length === 0) return;
+
+    const normalizedIndex = ((index % matches.length) + matches.length) % matches.length;
+    const active = matches[normalizedIndex];
+    setActiveMatchIndex(normalizedIndex);
+
+    if (typeof CSS !== 'undefined' && CSS.highlights) {
+      CSS.highlights.set('search-match-active', new Highlight(active.range));
+    }
+
+    active.range.startContainer.parentElement?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  }, []);
+
   // Build matches and set CSS highlights
   const runSearch = useCallback(() => {
     // Clear previous highlights
@@ -79,16 +97,16 @@ export function useTranscriptSearch(
       return;
     }
 
-    // Reset to first match
-    setActiveMatchIndex(0);
-
     // Apply highlights
     if (typeof CSS !== 'undefined' && CSS.highlights) {
       const allRanges = matches.map(m => m.range);
       CSS.highlights.set('search-match', new Highlight(...allRanges));
-      CSS.highlights.set('search-match-active', new Highlight(matches[0].range));
     }
-  }, [searchQuery, containerRef]);
+
+    // Activating explicitly is important when the first result is still index 0.
+    // A state-only effect would not run for an unchanged index or a single match.
+    activateMatch(0);
+  }, [activateMatch, searchQuery, containerRef]);
 
   // Re-run search when query or mode changes (mode change rebuilds DOM)
   useEffect(() => {
@@ -96,28 +114,6 @@ export function useTranscriptSearch(
     const id = requestAnimationFrame(() => runSearch());
     return () => cancelAnimationFrame(id);
   }, [runSearch, transcriptMode]);
-
-  // Update active highlight when activeMatchIndex changes
-  useEffect(() => {
-    if (typeof CSS === 'undefined' || !CSS.highlights) return;
-    const matches = matchesRef.current;
-    if (matches.length === 0) return;
-
-    const active = matches[activeMatchIndex];
-    if (!active) return;
-
-    CSS.highlights.set('search-match-active', new Highlight(active.range));
-
-    // Scroll active match into view
-    try {
-      const parent = active.range.startContainer.parentElement;
-      if (parent) {
-        parent.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    } catch {
-      // Ignore scroll errors
-    }
-  }, [activeMatchIndex]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -131,15 +127,13 @@ export function useTranscriptSearch(
 
   const goToNext = useCallback(() => {
     if (matchesRef.current.length === 0) return;
-    setActiveMatchIndex(prev => (prev + 1) % matchesRef.current.length);
-  }, []);
+    activateMatch(activeMatchIndex + 1);
+  }, [activateMatch, activeMatchIndex]);
 
   const goToPrevious = useCallback(() => {
     if (matchesRef.current.length === 0) return;
-    setActiveMatchIndex(prev =>
-      prev === 0 ? matchesRef.current.length - 1 : prev - 1
-    );
-  }, []);
+    activateMatch(activeMatchIndex - 1);
+  }, [activateMatch, activeMatchIndex]);
 
   const clearHighlights = useCallback(() => {
     if (typeof CSS !== 'undefined' && CSS.highlights) {
