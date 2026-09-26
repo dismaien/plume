@@ -262,22 +262,24 @@ export const EmberPlayer = forwardRef<EmberPlayerRef, EmberPlayerProps>(
                             {formatTime(hoverTime)}
                         </div>
 
-                        {/* Track Background - Darker for visibility on white */}
-                        <div className="absolute w-full h-[4px] bg-[var(--border-focus)] rounded-full overflow-hidden group-hover:h-[6px] transition-all">
+                        {/* Track Background */}
+                        <div className="absolute h-1.5 w-full overflow-hidden rounded-full bg-[var(--border-focus)] transition-[height] group-hover:h-2">
                             {/* Progress Fill */}
                             <div
-                                className="h-full bg-[image:var(--brand-gradient)] shadow-sm transition-all duration-100 ease-linear"
+                                className="h-full bg-[var(--brand-solid)] transition-[width] duration-100 ease-linear"
                                 style={{ width: `${progressPercent}%` }}
                             />
                         </div>
 
-                        {/* Thumb Indicator - White with Shadow, visible on track */}
+                        {/* Persistent playhead: the current position must remain visible while playing. */}
+                        <div
+                            className="pointer-events-none absolute h-5 w-0.5 -translate-x-1/2 rounded-full bg-[var(--text-primary)] shadow-[0_0_0_1px_var(--bg-card)] transition-[left] duration-100 ease-linear"
+                            style={{ left: `${progressPercent}%` }}
+                        />
                         <div
                             className={cn(
-                                "absolute h-3.5 w-3.5 bg-white border border-[var(--border-subtle)] rounded-full shadow-md ml-[-7px] pointer-events-none transition-all duration-100 ease-linear",
-                                isHovering || isDragging
-                                    ? "scale-100 opacity-100"
-                                    : "scale-0 opacity-0"
+                                "pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 rounded-full border-2 border-[var(--bg-card)] bg-[var(--brand-solid)] shadow-[0_0_0_2px_var(--border-focus)] transition-[left,transform] duration-100 ease-linear",
+                                (isHovering || isDragging) && "scale-125"
                             )}
                             style={{ left: `${progressPercent}%` }}
                         />
