@@ -53,7 +53,7 @@ insert into transcription_jobs (
   id, title, status, audio_path, vault_id, diarization, merge_status,
   created_at, updated_at, model_family, model, device, batch_size,
   compute_type, output_format, verbose, task, interpolate_method,
-  vad_preprocess, vad_method, vad_onset, vad_offset, chunk_size,
+  vad_preprocess, whisper_full_audio, vad_method, vad_onset, vad_offset, chunk_size,
   diarize, diarize_model, temperature, best_of, beam_size, patience,
   length_penalty, condition_on_previous_text, fp16,
   temperature_increment_on_fallback, compression_ratio_threshold,
@@ -63,11 +63,11 @@ insert into transcription_jobs (
   ${quote(id)}, ${quote(appleTitle)}, 'uploaded', ${quote(audioPath)}, ${activeVaultID}, 1, 'none',
   ${quote(now)}, ${quote(now)}, 'whisper', 'large-v3', 'cpu', 8,
   'int8', 'all', 1, 'transcribe', 'nearest',
-  0, 'silero', 0.5, 0.363, 30,
+  0, 1, 'silero', 0.5, 0.363, 30,
   1, 'nvidia_sortformer', 0, 5, 5, 1,
   1, 0, 1,
-  0.2, 2.4,
-  -1, 0.6, 'sentence',
+  0, 2.4,
+  -0.5, 0.5, 'sentence',
   ${quote(filename)}, ${quote(actualHash)}, ${quote(recordedAt)}
 );
 commit;`);
@@ -94,7 +94,7 @@ writeState({
   sync_report: syncReportPath,
   archive_root: archiveRoot,
   storage: "reference",
-  model: "WhisperX large-v3 CPU int8 with Silero VAD",
+  model: "WhisperX large-v3 CPU int8 full timeline",
   jobs,
 });
 
@@ -150,7 +150,7 @@ if (shouldMonitor) {
       sync_report: syncReportPath,
       archive_root: archiveRoot,
       storage: "reference",
-      model: "WhisperX large-v3 CPU int8 with Silero VAD",
+      model: "WhisperX large-v3 CPU int8 full timeline",
       completed: finished.size,
       jobs: jobs.map((job) => ({ ...job, status: safeJobStatus(job.id) })),
     });
@@ -175,6 +175,7 @@ function qualityParameters() {
     no_align: false,
     return_char_alignments: false,
     vad_preprocess: false,
+    whisper_full_audio: true,
     vad_method: "silero",
     vad_onset: 0.5,
     vad_offset: 0.363,
@@ -190,10 +191,10 @@ function qualityParameters() {
     suppress_numerals: false,
     condition_on_previous_text: false,
     fp16: true,
-    temperature_increment_on_fallback: 0.2,
+    temperature_increment_on_fallback: 0,
     compression_ratio_threshold: 2.4,
-    logprob_threshold: -1,
-    no_speech_threshold: 0.6,
+    logprob_threshold: -0.5,
+    no_speech_threshold: 0.5,
     highlight_words: false,
     segment_resolution: "sentence",
     print_progress: false,
