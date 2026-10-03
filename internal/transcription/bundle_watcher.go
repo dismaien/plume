@@ -149,11 +149,12 @@ func (w *BundleWatcher) scheduleSync() {
 		defer cancel()
 		if result, err := w.syncer.SyncFromFilesystem(ctx); err != nil {
 			logger.Warn("bundle watcher sync failed", "error", err)
-		} else if result.Imported+result.Updated+result.Deleted > 0 {
+		} else if result.Imported+result.Updated+result.Missing > 0 {
 			logger.Info("bundle watcher sync",
 				"imported", result.Imported,
 				"updated", result.Updated,
 				"deleted", result.Deleted,
+				"missing", result.Missing,
 				"skipped", result.Skipped,
 			)
 		}

@@ -28,6 +28,7 @@ type BundleSyncResult struct {
 	Imported int `json:"imported"`
 	Updated  int `json:"updated"`
 	Deleted  int `json:"deleted"`
+	Missing  int `json:"missing"`
 	Skipped  int `json:"skipped"`
 }
 
@@ -107,7 +108,10 @@ func NewBundleSyncService(
 }
 
 // SyncFromFilesystem scans the transcripts directory for bundles, reads their
-// metadata.json, and creates/updates/deletes DB records to match.
+// metadata.json, and creates/updates DB records to match. Filesystem scans are
+// deliberately non-destructive: a missing bundle may be a transient rename,
+// incomplete sync, unavailable volume, or manual filesystem change. Only the
+// explicit delete API is allowed to delete a job or its related data.
 func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncResult, error) {
 	result := BundleSyncResult{}
 
@@ -182,7 +186,10 @@ func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncR
 		result.Updated++
 	}
 
-	// Delete orphaned DB records (bundle dir no longer on disk)
+	// Report orphaned DB records without deleting them. A filesystem scan cannot
+	// distinguish an intentional deletion from a transient rename or unavailable
+	// path, and stale scan results previously caused completed jobs and their
+	// speaker mappings to be deleted during title changes.
 	if s.vaultID != nil {
 		jobs, _, listErr := s.jobRepo.ListWithParams(ctx, repository.ListParams{
 			Offset:  0,
@@ -200,11 +207,12 @@ func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncR
 				if _, statErr := os.Stat(*job.ArtifactDir); statErr == nil {
 					continue // dir still exists
 				}
-				if delErr := s.deleteJobAndRelated(ctx, job.ID); delErr != nil {
-					logger.Warn("bundle sync: failed to delete orphan", "id", job.ID, "error", delErr)
-					continue
-				}
-				result.Deleted++
+				result.Missing++
+				logger.Warn("bundle sync: bundle missing; preserving database job",
+					"id", job.ID,
+					"artifact_dir", *job.ArtifactDir,
+					"status", job.Status,
+					"audio_path", job.AudioPath)
 			}
 		}
 	}
@@ -448,13 +456,6 @@ func (s *BundleSyncService) updateFromMetadata(ctx context.Context, job *models.
 	return nil
 }
 
-func (s *BundleSyncService) deleteJobAndRelated(ctx context.Context, jobID string) error {
-	_ = s.speakerMappingRepo.DeleteByJobID(ctx, jobID)
-	_ = s.summaryRepo.DeleteByTranscriptionID(ctx, jobID)
-	_ = s.noteRepo.DeleteByTranscriptionID(ctx, jobID)
-	return s.jobRepo.Delete(ctx, jobID)
-}
-
 // findAudioFile looks for an audio.* file in a bundle directory.
 func findAudioFile(dir string) string {
 	entries, err := os.ReadDir(dir)
@@ -474,6 +475,23 @@ func (s *BundleSyncService) MarkSelfWrite(metadataPath string, mtimeNS int64) {
 	normalized := filepath.Clean(strings.TrimSpace(metadataPath))
 	s.mu.Lock()
 	s.selfWrite[normalized] = mtimeNS
+	s.mu.Unlock()
+}
+
+// BeginSelfWrite closes the small race between atomically replacing metadata.json
+// and recording its final mtime. A watcher event that lands in that window treats
+// the pending marker as authoritative and skips the disk-to-database import.
+func (s *BundleSyncService) BeginSelfWrite(metadataPath string) {
+	normalized := filepath.Clean(strings.TrimSpace(metadataPath))
+	s.mu.Lock()
+	s.selfWrite[normalized] = -1
+	s.mu.Unlock()
+}
+
+func (s *BundleSyncService) ClearSelfWrite(metadataPath string) {
+	normalized := filepath.Clean(strings.TrimSpace(metadataPath))
+	s.mu.Lock()
+	delete(s.selfWrite, normalized)
 	s.mu.Unlock()
 }
 
@@ -500,6 +518,10 @@ func (s *BundleSyncService) isSelfWrite(metadataPath string, mtimeNS int64) bool
 	stored, exists := s.selfWrite[normalized]
 	if !exists {
 		return false
+	}
+	if stored == -1 {
+		delete(s.selfWrite, normalized)
+		return true
 	}
 	if stored == mtimeNS {
 		delete(s.selfWrite, normalized)

@@ -31,20 +31,28 @@ func (h *Handler) syncMetadataToBundle(ctx context.Context, jobID string) {
 	notes, _ := h.noteRepo.ListByJob(ctx, jobID)
 
 	meta := transcription.BuildMetadataFromJob(job, mappings, summaries, notes)
+	metaPath := transcription.MetadataPath(*job.ArtifactDir)
+	var syncService *transcription.BundleSyncService
+	if h.bundleManager != nil {
+		syncService = h.bundleManager.SyncService()
+		if syncService != nil {
+			syncService.BeginSelfWrite(metaPath)
+		}
+	}
 
 	if err := transcription.WriteMetadata(*job.ArtifactDir, meta); err != nil {
+		if syncService != nil {
+			syncService.ClearSelfWrite(metaPath)
+		}
 		logger.Warn("metadata sync: failed to write metadata.json",
 			"job_id", jobID, "dir", *job.ArtifactDir, "error", err)
 		return
 	}
 
 	// Mark the file as self-written so the bundle watcher doesn't re-import it.
-	if h.bundleManager != nil {
-		if svc := h.bundleManager.SyncService(); svc != nil {
-			metaPath := transcription.MetadataPath(*job.ArtifactDir)
-			if info, err := os.Stat(metaPath); err == nil {
-				svc.MarkSelfWrite(metaPath, info.ModTime().UnixNano())
-			}
+	if syncService != nil {
+		if info, err := os.Stat(metaPath); err == nil {
+			syncService.MarkSelfWrite(metaPath, info.ModTime().UnixNano())
 		}
 	}
 }
