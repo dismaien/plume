@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"quill/internal/database"
 	"quill/internal/models"
@@ -1212,6 +1213,13 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 			}
 		}
 
+		// Diarization boundaries and ASR word timestamps are produced by
+		// different models, so a speaker change can land a few words late or
+		// briefly flicker for a fraction of a second. Reconcile only the
+		// high-confidence boundary cases before exposing every word-level change
+		// as its own transcript turn.
+		smoothWordSpeakerBoundaries(mergedTranscript.Segments, mergedTranscript.WordSegments)
+
 		// A Whisper segment can span a short exchange between speakers. Keeping
 		// only the segment's dominant speaker hides diarization boundaries that
 		// were correctly detected at word level, so split mixed segments into
@@ -1223,6 +1231,197 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 	}
 
 	return &mergedTranscript
+}
+
+const (
+	microSpeakerIslandMaxDuration = 0.12
+	microSpeakerIslandMaxGap      = 0.25
+	delayedBoundaryMaxWords       = 3
+	delayedBoundaryMaxDuration    = 1.2
+	delayedBoundaryMaxGap         = 0.35
+)
+
+type wordSpeakerRun struct {
+	speaker string
+	start   int
+	end     int
+}
+
+func smoothWordSpeakerBoundaries(segments []interfaces.TranscriptSegment, words []interfaces.TranscriptWord) {
+	if len(words) < 3 {
+		return
+	}
+
+	removeMicroSpeakerIslands(words)
+	snapDelayedSpeakerBoundaries(segments, words)
+}
+
+func removeMicroSpeakerIslands(words []interfaces.TranscriptWord) {
+	for {
+		runs := collectWordSpeakerRuns(words)
+		changed := false
+		for i := 1; i+1 < len(runs); i++ {
+			previous, island, next := runs[i-1], runs[i], runs[i+1]
+			if previous.speaker == "" || previous.speaker != next.speaker || island.end-island.start != 1 {
+				continue
+			}
+
+			word := words[island.start]
+			if endsSentence(word.Word) || isLikelyBackchannel(word.Word) || word.End-word.Start > microSpeakerIslandMaxDuration {
+				continue
+			}
+			previousGap := word.Start - words[previous.end-1].End
+			nextGap := words[next.start].Start - word.End
+			if previousGap > microSpeakerIslandMaxGap || nextGap > microSpeakerIslandMaxGap {
+				continue
+			}
+
+			setWordSpeaker(&words[island.start], previous.speaker)
+			changed = true
+			break
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func snapDelayedSpeakerBoundaries(segments []interfaces.TranscriptSegment, words []interfaces.TranscriptWord) {
+	if len(segments) < 3 {
+		return
+	}
+
+	type wordRange struct{ start, end int }
+	ranges := make([]wordRange, len(segments))
+	wordIndex := 0
+	for i, segment := range segments {
+		for wordIndex < len(words) && wordMidpoint(words[wordIndex]) < segment.Start {
+			wordIndex++
+		}
+		endIndex := wordIndex
+		for endIndex < len(words) && wordMidpoint(words[endIndex]) <= segment.End {
+			endIndex++
+		}
+		ranges[i] = wordRange{start: wordIndex, end: endIndex}
+		wordIndex = endIndex
+	}
+
+	for i := 1; i+1 < len(segments); i++ {
+		wordRange := ranges[i]
+		if wordRange.end-wordRange.start < 3 {
+			continue
+		}
+		segmentWords := words[wordRange.start:wordRange.end]
+		runs := collectWordSpeakerRuns(segmentWords)
+		if len(runs) != 2 {
+			continue
+		}
+
+		leading, destination := runs[0], runs[1]
+		previousSpeaker := transcriptSegmentSpeaker(segments[i-1])
+		nextSpeaker := transcriptSegmentSpeaker(segments[i+1])
+		if previousSpeaker == "" || nextSpeaker == "" || previousSpeaker == nextSpeaker ||
+			leading.speaker != previousSpeaker || destination.speaker != nextSpeaker {
+			continue
+		}
+		if leading.end-leading.start > delayedBoundaryMaxWords || destination.end-destination.start < 2 {
+			continue
+		}
+		if leading.end-leading.start == 1 && isLikelyBackchannel(segmentWords[leading.start].Word) {
+			continue
+		}
+		if !startsWithUppercase(segmentWords[leading.start].Word) || !startsWithLowercase(segmentWords[destination.start].Word) ||
+			!endsSentence(segmentWords[len(segmentWords)-1].Word) {
+			continue
+		}
+
+		validLeadingRun := true
+		for j := leading.start; j < leading.end; j++ {
+			if endsSentence(segmentWords[j].Word) {
+				validLeadingRun = false
+				break
+			}
+		}
+		if !validLeadingRun {
+			continue
+		}
+
+		leadingDuration := segmentWords[leading.end-1].End - segmentWords[leading.start].Start
+		transitionGap := segmentWords[destination.start].Start - segmentWords[leading.end-1].End
+		destinationDuration := segmentWords[destination.end-1].End - segmentWords[destination.start].Start
+		if leadingDuration > delayedBoundaryMaxDuration || transitionGap > delayedBoundaryMaxGap || destinationDuration < delayedBoundaryMaxGap {
+			continue
+		}
+
+		for j := wordRange.start + leading.start; j < wordRange.start+leading.end; j++ {
+			setWordSpeaker(&words[j], nextSpeaker)
+		}
+	}
+}
+
+func collectWordSpeakerRuns(words []interfaces.TranscriptWord) []wordSpeakerRun {
+	runs := make([]wordSpeakerRun, 0)
+	for i := range words {
+		speaker := transcriptWordSpeaker(words[i])
+		if len(runs) == 0 || runs[len(runs)-1].speaker != speaker {
+			runs = append(runs, wordSpeakerRun{speaker: speaker, start: i, end: i + 1})
+			continue
+		}
+		runs[len(runs)-1].end = i + 1
+	}
+	return runs
+}
+
+func transcriptWordSpeaker(word interfaces.TranscriptWord) string {
+	if word.Speaker == nil {
+		return ""
+	}
+	return strings.TrimSpace(*word.Speaker)
+}
+
+func transcriptSegmentSpeaker(segment interfaces.TranscriptSegment) string {
+	if segment.Speaker == nil {
+		return ""
+	}
+	return strings.TrimSpace(*segment.Speaker)
+}
+
+func setWordSpeaker(word *interfaces.TranscriptWord, speaker string) {
+	value := speaker
+	word.Speaker = &value
+}
+
+func endsSentence(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimRight(trimmed, "\"'\u2019\u201d)]}")
+	return strings.HasSuffix(trimmed, ".") || strings.HasSuffix(trimmed, "!") || strings.HasSuffix(trimmed, "?") || strings.HasSuffix(trimmed, "\u2026")
+}
+
+func startsWithUppercase(value string) bool {
+	for _, r := range strings.TrimSpace(value) {
+		return unicode.IsUpper(r)
+	}
+	return false
+}
+
+func startsWithLowercase(value string) bool {
+	for _, r := range strings.TrimSpace(value) {
+		return unicode.IsLower(r)
+	}
+	return false
+}
+
+func isLikelyBackchannel(value string) bool {
+	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(value), ".,!?;:\"'\u2019\u201d()[]{}"))
+	switch normalized {
+	case "yeah", "yes", "yep", "yup", "no", "nope", "ok", "okay", "right",
+		"mhm", "mm", "mm-hmm", "uh-huh",
+		"ja", "nein", "genau", "doch",
+		"sim", "não", "sí", "oui", "non":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitSegmentsAtWordSpeakerChanges(
