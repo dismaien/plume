@@ -9,6 +9,7 @@ import json
 import sys
 import os
 import functools
+import wave
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,7 @@ for _submod_name in ("file_download", "_hf_api", "hub_mixin", "utils"):
 # ---------------------------------------------------------------------------
 
 from pyannote.audio import Pipeline
+import numpy as np
 import torch
 
 # Fix for PyTorch 2.6+ which defaults weights_only=True
@@ -63,6 +65,26 @@ except ImportError:
     pass
 except Exception as e:
     print(f"Warning: Could not add safe globals: {e}")
+
+
+def load_audio_waveform(audio_path: str):
+    """Load Plume's prepared PCM WAV without the optional TorchCodec decoder."""
+    with wave.open(audio_path, "rb") as wav:
+        channels = wav.getnchannels()
+        sample_rate = wav.getframerate()
+        sample_width = wav.getsampwidth()
+        frames = wav.readframes(wav.getnframes())
+
+    if sample_width != 2:
+        raise ValueError(
+            f"Expected 16-bit PCM WAV input, got {sample_width * 8}-bit audio"
+        )
+    samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    samples = samples.reshape(-1, channels).T.copy()
+    return {
+        "waveform": torch.from_numpy(samples),
+        "sample_rate": sample_rate,
+    }
 
 
 def diarize_audio(
@@ -112,6 +134,8 @@ def diarize_audio(
     print(f"Processing audio file: {audio_path}")
 
     try:
+        audio = load_audio_waveform(audio_path)
+
         # Run diarization
         diarization_params = {}
         if min_speakers is not None:
@@ -121,10 +145,10 @@ def diarize_audio(
 
         if diarization_params:
             print(f"Using speaker constraints: {diarization_params}")
-            diarization = pipeline(audio_path, **diarization_params)
+            diarization = pipeline(audio, **diarization_params)
         else:
             print("Using automatic speaker detection")
-            diarization = pipeline(audio_path)
+            diarization = pipeline(audio)
 
         print(f"Diarization completed. Saving results to: {output_file}")
 

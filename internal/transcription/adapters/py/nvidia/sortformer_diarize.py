@@ -170,27 +170,23 @@ def _create_postprocessing_yaml(max_speakers: int) -> str:
 
 def filter_ghost_speakers(segments, min_activity_ratio=0.05, min_absolute_seconds=1.0):
     """
-    Remove ghost speakers with negligible activity (always-on filter).
+    Remove only speaker traces that are unambiguously negligible.
 
     The Sortformer 4spk model always outputs 4 speaker heads. When audio has
-    fewer actual speakers, unused heads produce ghost speakers with near-zero
-    activity. This filter removes them based on two thresholds — a speaker must
-    pass BOTH to be kept:
+    fewer actual speakers, unused heads can produce ghost speakers with near-zero
+    activity. A short share of a long recording is not sufficient evidence that a
+    speaker is a ghost: real participants may speak for less than 5% of a meeting.
+    This filter therefore removes a label only when it fails BOTH safety floors:
 
-      1. Relative: total speaking time >= min_activity_ratio of total audio duration
-      2. Absolute: total speaking time >= min_absolute_seconds
+      1. Relative: total speaking time is below min_activity_ratio
+      2. Absolute: total speaking time is below min_absolute_seconds
 
-    Ghost segments are reassigned to the nearest remaining speaker by temporal
-    proximity (same strategy as limit_speakers). At least one speaker is always
-    kept.
+    This intentionally preserves low-share labels that contain substantive audio.
+    Reassigning tens of seconds by temporal proximity can merge two real voices.
+    At least one speaker is always kept.
 
-    Based on NVIDIA recommendation (5-10% activity threshold) and community
-    best practices:
-      - NVIDIA: onset=0.64/offset=0.74 + filter speakers with <5-10% activity
-      - NeMo has no built-in total-duration filter (only per-frame onset threshold)
-      - pyannote uses cluster -2 for zero-activity speakers
-      - diart uses tau_active=0.5-0.62 per-chunk
-      - Application-level filtering at 0.5-1.0s is the standard approach
+    The relative threshold remains useful as corroborating evidence for tiny
+    traces, but it is never used alone to erase a speaker label.
     """
     if not segments:
         return segments
@@ -209,7 +205,9 @@ def filter_ghost_speakers(segments, min_activity_ratio=0.05, min_absolute_second
     if total_duration <= 0:
         return segments
 
-    # Determine which speakers to keep: must pass BOTH thresholds
+    # Only remove labels that fail BOTH thresholds. A participant speaking for
+    # 52 seconds in an 18-minute recording is plausible, even though that is
+    # below a 5% share, and must not be reassigned automatically.
     sorted_speakers = sorted(speaker_time.items(), key=lambda x: x[1], reverse=True)
     kept_speakers = set()
     ghost_speakers = set()
@@ -217,10 +215,10 @@ def filter_ghost_speakers(segments, min_activity_ratio=0.05, min_absolute_second
     for spk, duration in sorted_speakers:
         passes_ratio = duration >= (total_duration * min_activity_ratio)
         passes_absolute = duration >= min_absolute_seconds
-        if passes_ratio and passes_absolute:
-            kept_speakers.add(spk)
-        else:
+        if not passes_ratio and not passes_absolute:
             ghost_speakers.add(spk)
+        else:
+            kept_speakers.add(spk)
 
     # Always keep at least the most active speaker
     if not kept_speakers:

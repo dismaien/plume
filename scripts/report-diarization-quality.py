@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Rank completed Plume recordings whose speaker diarization likely collapsed.
+"""Rank completed Plume recordings whose speaker diarization likely failed.
 
 This is a conservative audit helper. It does not modify transcripts. A result
-is included when trusted names imply multiple people but the transcript does
-not, or when sherpa-onnx emitted several labels while assigning nearly all
-speech to one label with very few turns.
+is included when trusted names and detected labels disagree, or when
+sherpa-onnx emitted several labels while assigning nearly all speech to one
+label with very few turns.
 """
 
 from __future__ import annotations
@@ -138,6 +138,8 @@ def scan(db_path: Path) -> list[DiarizationRow]:
         reasons: list[str] = []
         if len(known) >= 2 and speaker_count < len(known):
             reasons.append("known_people_missing")
+        if len(known) >= 1 and speaker_count > len(known):
+            reasons.append("extra_speaker_labels")
         if len(known) >= 2 and dominant_ratio >= 0.90:
             reasons.append("known_conversation_dominated")
         if (
@@ -155,6 +157,7 @@ def scan(db_path: Path) -> list[DiarizationRow]:
         score += max(0, 20 - round(switches_per_hour)) * 2
         score += 100 if len(known) >= 2 else 0
         score += 50 if speaker_count < len(known) else 0
+        score += 40 if len(known) >= 1 and speaker_count > len(known) else 0
         results.append(
             DiarizationRow(
                 suspicion_score=score,
