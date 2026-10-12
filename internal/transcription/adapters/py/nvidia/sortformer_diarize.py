@@ -28,6 +28,7 @@ def diarize_audio(
     output_format: str = "rttm",
     streaming_mode: bool = False,
     chunk_length_s: float = 30.0,
+    raw_heads: bool = False,
 ):
     """
     Perform speaker diarization using NVIDIA's Sortformer model.
@@ -115,7 +116,7 @@ def diarize_audio(
 
         # Process and save results — pass max_speakers as a safety net in case
         # the threshold tuning wasn't aggressive enough for this particular audio.
-        save_results(predicted_segments, output_file, audio_path, output_format, max_speakers)
+        save_results(predicted_segments, output_file, audio_path, output_format, max_speakers, raw_heads)
 
     except Exception as e:
         print(f"Error during diarization: {e}")
@@ -335,7 +336,7 @@ def limit_speakers(segments, max_speakers):
     return merged
 
 
-def save_results(segments, output_file: str, audio_path: str, output_format: str, max_speakers: int = 4):
+def save_results(segments, output_file: str, audio_path: str, output_format: str, max_speakers: int = 4, raw_heads: bool = False):
     """
     Save diarization results to output file.
     Supports both JSON and RTTM formats based on output_format parameter.
@@ -343,12 +344,12 @@ def save_results(segments, output_file: str, audio_path: str, output_format: str
     output_path = Path(output_file)
 
     if output_format == "rttm":
-        save_rttm_format(segments, output_file, audio_path, max_speakers)
+        save_rttm_format(segments, output_file, audio_path, max_speakers, raw_heads)
     else:
-        save_json_format(segments, output_file, audio_path, max_speakers)
+        save_json_format(segments, output_file, audio_path, max_speakers, raw_heads)
 
 
-def save_json_format(segments, output_file: str, audio_path: str, max_speakers: int = 4):
+def save_json_format(segments, output_file: str, audio_path: str, max_speakers: int = 4, raw_heads: bool = False):
     """Save results in JSON format."""
     results = {
         "audio_file": audio_path,
@@ -427,13 +428,14 @@ def save_json_format(segments, output_file: str, audio_path: str, max_speakers: 
     if results["segments"]:
         results["segments"].sort(key=lambda x: x["start"])
 
-    # Filter ghost speakers (always-on, runs before max_speakers limit)
-    if results["segments"]:
+    # Raw heads are activity tracks for downstream voice-embedding
+    # reclustering. Never merge them by temporal proximity first.
+    if results["segments"] and not raw_heads:
         results["segments"] = filter_ghost_speakers(results["segments"])
         speakers = {seg["speaker"] for seg in results["segments"]}
 
     # Enforce max_speakers limit by merging excess speakers
-    if len(speakers) > max_speakers and results["segments"]:
+    if not raw_heads and len(speakers) > max_speakers and results["segments"]:
         results["segments"] = limit_speakers(results["segments"], max_speakers)
         speakers = {seg["speaker"] for seg in results["segments"]}
 
@@ -450,7 +452,7 @@ def save_json_format(segments, output_file: str, audio_path: str, max_speakers: 
     print(f"Found {len(speakers)} speakers: {', '.join(sorted(speakers))}")
 
 
-def save_rttm_format(segments, output_file: str, audio_path: str, max_speakers: int = 4):
+def save_rttm_format(segments, output_file: str, audio_path: str, max_speakers: int = 4, raw_heads: bool = False):
     """Save results in RTTM (Rich Transcription Time Marked) format."""
     audio_filename = Path(audio_path).stem
     speakers = set()
@@ -502,13 +504,13 @@ def save_rttm_format(segments, output_file: str, audio_path: str, max_speakers: 
             print(f"Warning: Could not process segment {i} for RTTM: {e}")
             print(f"Segment: {segment}")
 
-    # Filter ghost speakers (always-on, runs before max_speakers limit)
-    if parsed_segments:
+    # Preserve raw activity heads for downstream global voice reclustering.
+    if parsed_segments and not raw_heads:
         parsed_segments = filter_ghost_speakers(parsed_segments)
         speakers = {seg["speaker"] for seg in parsed_segments}
 
     # Enforce max_speakers limit
-    if len(speakers) > max_speakers and parsed_segments:
+    if not raw_heads and len(speakers) > max_speakers and parsed_segments:
         parsed_segments = limit_speakers(parsed_segments, max_speakers)
         speakers = {seg["speaker"] for seg in parsed_segments}
 
@@ -549,6 +551,7 @@ Note: This script requires diar_streaming_sortformer_4spk-v2.1.nemo to be in the
     parser.add_argument("--output-format", choices=["json", "rttm"], help="Output format (auto-detected from file extension if not specified)")
     parser.add_argument("--streaming", action="store_true", help="Enable streaming mode")
     parser.add_argument("--chunk-length-s", type=float, default=30.0, help="Chunk length in seconds for streaming mode (default: 30.0)")
+    parser.add_argument("--raw-heads", action="store_true", help="Preserve raw activity heads for identity reclustering")
 
     args = parser.parse_args()
 
@@ -582,6 +585,7 @@ Note: This script requires diar_streaming_sortformer_4spk-v2.1.nemo to be in the
         output_format=output_format,
         streaming_mode=args.streaming,
         chunk_length_s=args.chunk_length_s,
+        raw_heads=args.raw_heads,
     )
 
 
