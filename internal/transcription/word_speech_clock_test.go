@@ -56,3 +56,12 @@ func TestSpeechClockOneAcousticPieceAfterARealVadCut(t *testing.T) {
 		t.Fatal("masked unsupported time without VAD provenance")
 	}
 }
+
+func TestModelSoloVerdictDoesNotConfirmUnobservedWords(t *testing.T) {
+	source := &interfaces.TranscriptResult{Text: "quiet reply", WordSegments: []interfaces.TranscriptWord{{Start: 2, End: 2.3, Word: "quiet"}}, Segments: []interfaces.TranscriptSegment{{Start: 2, End: 2.3, Text: "quiet reply"}}}
+	diar := &interfaces.DiarizationResult{Segments: []interfaces.DiarizationSegment{{Start: 0, End: 1, Speaker: "A"}}, Speakers: []string{"A"}, Metadata: map[string]string{"speaker_identity_status": "solo"}}
+	result := AssembleDiarizedTranscript(source, diar)
+	if result.WordSegments[0].Speaker != nil {
+		t.Fatal("model solo claim filled unsupported speech")
+	}
+}

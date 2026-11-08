@@ -309,3 +309,19 @@ test('rerun candidate is compared anonymously before explicit acceptance', async
   await expect(dialog.getByTestId('revision-text')).not.toContainText('Alice');
   await expect(dialog.getByRole('button', { name: 'Accept this candidate' })).toBeEnabled();
 });
+
+test('a model solo verdict does not rename an unclear phrase', async ({ page }) => {
+  const transcript = {
+    text: 'Known phrase. Quiet reply. Another known phrase.',
+    metadata: { diarization_status: 'uncertain', text_status: 'ready', speaker_identity_status: 'solo' },
+    segments: [
+      { start: 0, end: 2, text: 'Known phrase.', speaker: 'SPEAKER_00' },
+      { start: 2, end: 3, text: 'Quiet reply.' },
+      { start: 3, end: 5, text: 'Another known phrase.', speaker: 'SPEAKER_00' },
+    ],
+  };
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: { available: true, transcript } }));
+  await page.goto('/audio/1');
+  await expect(page.getByText('Speaker unclear', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('Quiet reply.', { exact: true })).toBeVisible();
+});
