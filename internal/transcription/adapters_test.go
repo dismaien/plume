@@ -603,6 +603,12 @@ func TestTranscriptionIncludesDiarization(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:    "WhisperX with Sortformer does NOT include diarization",
+			modelID: ModelWhisperX,
+			params:  models.WhisperXParams{Diarize: true, DiarizeModel: DiarizeSortformer},
+			expected: false,
+		},
+		{
 			name:     "WhisperX with Sortformer does NOT include diarization",
 			modelID:  ModelWhisperX,
 			params:   models.WhisperXParams{Diarize: true, DiarizeModel: DiarizeSortformer},

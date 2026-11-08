@@ -302,7 +302,7 @@ export async function installApiMocks(page: Page) {
   );
 
   // Upload
-  await page.route('**/api/v1/transcription/upload', (route) =>
+  await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) =>
     route.fulfill({
       json: {
         id: 5,

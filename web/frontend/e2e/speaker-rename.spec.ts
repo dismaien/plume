@@ -155,9 +155,9 @@ test.describe('Speaker Rename Dialog', () => {
       await expect(dialog).toContainText('Rename Speakers');
 
       // Should show speaker labels (SPEAKER_00, SPEAKER_01, SPEAKER_02)
-      await expect(dialog.locator('text=SPEAKER_00').first()).toBeVisible();
-      await expect(dialog.locator('text=SPEAKER_01').first()).toBeVisible();
-      await expect(dialog.locator('text=SPEAKER_02').first()).toBeVisible();
+      await expect(dialog.getByText('Speaker A', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Speaker B', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Speaker C', { exact: true })).toBeVisible();
     }
   });
 
@@ -239,13 +239,13 @@ test.describe('Speaker Rename Dialog', () => {
       // SPEAKER_00 has match_source="auto" with 92% confidence
       const autoBadge = dialog.locator('[data-testid="badge-auto-SPEAKER_00"]');
       if (await autoBadge.isVisible().catch(() => false)) {
-        await expect(autoBadge).toContainText('Auto 92%');
+        await expect(autoBadge).toHaveAttribute('aria-label', 'Automatic voice match score 92%');
       }
 
       // SPEAKER_01 has match_source="suggestion_promoted" with 75% confidence
       const matchedBadge = dialog.locator('[data-testid="badge-matched-SPEAKER_01"]');
       if (await matchedBadge.isVisible().catch(() => false)) {
-        await expect(matchedBadge).toContainText('Matched 75%');
+        await expect(matchedBadge).toHaveAttribute('aria-label', 'Accepted voice match score 75%');
       }
 
       // SPEAKER_02 has match_source="manual" — no auto or matched badge
@@ -254,7 +254,7 @@ test.describe('Speaker Rename Dialog', () => {
     }
   });
 
-  test('auto-matched speaker inputs are read-only', async ({ page }) => {
+  test('automatic and accepted voice matches remain editable for human correction', async ({ page }) => {
     await page.goto('/audio/1');
     await page.waitForLoadState('networkidle');
 
@@ -274,11 +274,17 @@ test.describe('Speaker Rename Dialog', () => {
 
     const dialog = page.locator('[role="dialog"]');
     if (await dialog.isVisible().catch(() => false)) {
-      // SPEAKER_00 (auto-matched) should be read-only
+      // A model suggestion must never prevent a human correction.
       const autoInput = dialog.locator('input#speaker-SPEAKER_00');
       if (await autoInput.isVisible().catch(() => false)) {
-        await expect(autoInput).toHaveAttribute('readonly', '');
+        await expect(autoInput).toBeEditable();
         await expect(autoInput).toHaveValue('Alice');
+        await autoInput.fill('Corrected Alice');
+        await expect(autoInput).toHaveValue('Corrected Alice');
+        const promotedInput = dialog.locator('input#speaker-SPEAKER_01');
+        await expect(promotedInput).toBeEditable();
+        await promotedInput.fill('Corrected Bob');
+        await expect(promotedInput).toHaveValue('Corrected Bob');
       }
 
       // SPEAKER_02 (manual) should be editable
@@ -290,41 +296,13 @@ test.describe('Speaker Rename Dialog', () => {
     }
   });
 
-  test('save button is disabled when no speakers exist', async ({ page }) => {
-    // Override to return empty speakers
-    await page.route('**/api/v1/transcription/*/speakers', (route) => {
-      if (route.request().method() === 'GET') {
-        return route.fulfill({ json: [] });
-      }
-      return route.continue();
-    });
-
+  test('does not offer rename controls when no speaker identities exist', async ({ page }) => {
+    await page.route('**/api/v1/transcription/*/speakers', route => route.fulfill({ json: [] }));
+    await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+      available: true, transcript: { text: 'Speech without speaker identities.', segments: [{ start: 0, end: 5, text: 'Speech without speaker identities.' }] },
+    } }));
     await page.goto('/audio/1');
-    await page.waitForLoadState('networkidle');
-
-    // Open dialog
-    const triggers = [
-      page.locator('button:has-text("Rename")').first(),
-      page.locator('button:has-text("Speaker")').first(),
-    ];
-
-    for (const trigger of triggers) {
-      if (await trigger.isVisible().catch(() => false)) {
-        await trigger.click();
-        break;
-      }
-    }
-
-    const dialog = page.locator('[role="dialog"]');
-    if (await dialog.isVisible().catch(() => false)) {
-      // Save button should be disabled when no speakers
-      const saveButton = dialog.locator('button:has-text("Save")');
-      if (await saveButton.isVisible().catch(() => false)) {
-        await expect(saveButton).toBeDisabled();
-      }
-
-      // Should show "No speakers found" message
-      await expect(dialog.locator('text=No speakers found')).toBeVisible();
-    }
+    await expect(page.locator('h1.recording-title')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Rename Speakers', exact: true })).toHaveCount(0);
   });
 });

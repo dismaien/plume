@@ -39,7 +39,7 @@ function ensureTestAudio() {
  * so the last-registered handler for a given URL pattern wins.
  */
 async function overrideUploadAsDuplicate(page: Parameters<typeof installApiMocks>[0]) {
-  await page.route('**/api/v1/transcription/upload', (route) => {
+  await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) => {
     const url = new URL(route.request().url());
     const force = url.searchParams.get('force');
 
@@ -94,7 +94,7 @@ test.describe('Duplicate Upload Detection', () => {
     await page.waitForLoadState('networkidle');
 
     // Confirm the upload request is intercepted by the mock
-    const uploadRequest = page.waitForRequest('**/api/v1/transcription/upload');
+    const uploadRequest = page.waitForRequest(/\/api\/v1\/transcription\/upload(?:\?.*)?$/);
 
     await triggerFileUpload(page);
 
@@ -138,7 +138,7 @@ test.describe('Duplicate Upload Detection', () => {
     await overrideUploadAsDuplicate(page);
 
     // Spy on any subsequent force upload attempts
-    await page.route('**/api/v1/transcription/upload', (route) => {
+    await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) => {
       const url = new URL(route.request().url());
       if (url.searchParams.get('force') === 'true') {
         forceUploadCalled = true;
@@ -197,7 +197,7 @@ test.describe('Duplicate Upload Detection', () => {
     // Override upload: non-force → 409, force → 200.
     // This handler is registered after beforeEach's installApiMocks, so it takes
     // LIFO priority and intercepts ALL upload requests for this test.
-    await page.route('**/api/v1/transcription/upload', (route) => {
+    await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) => {
       const url = new URL(route.request().url());
 
       if (url.searchParams.get('force') === 'true') {
@@ -253,7 +253,7 @@ test.describe('Duplicate Upload Detection', () => {
   // ── 6. Dialog description shows the correct existing title ───────────────
   test('dialog description shows the correct existing file title', async ({ page }) => {
     // Override with a different existing title to verify dynamic rendering
-    await page.route('**/api/v1/transcription/upload', (route) => {
+    await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) => {
       return route.fulfill({
         status: 409,
         json: {

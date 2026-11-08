@@ -2,9 +2,36 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
+
+func TestReviewMalformedJSONDoesNotReadArchiveOrInvokeModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &Handler{} // Nil dependencies would panic if validation read the archive.
+	for _, route := range []struct {
+		path   string
+		handle gin.HandlerFunc
+	}{
+		{"/review/generate", handler.GenerateConversationReview},
+		{"/review/ask", handler.AskConversationArchive},
+	} {
+		router := gin.New()
+		router.POST(route.path, route.handle)
+		request := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader("{"))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s returned %d", route.path, response.Code)
+		}
+	}
+}
 
 func TestParseReviewWindowDefaultsAndCapsLimit(t *testing.T) {
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)

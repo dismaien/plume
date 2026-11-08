@@ -33,3 +33,18 @@ func TestCommunityJSONRetainsRegularExclusiveAndProvenance(t *testing.T) {
 		t.Fatal("lost overlap/provenance or invented confidence")
 	}
 }
+
+func TestCommunityOverlapOnlyVoiceCannotBecomeSolo(t *testing.T) {
+	directory := t.TempDir()
+	raw := `{"segments":[{"start":0,"end":10,"speaker":"a"}],"regular_segments":[{"start":0,"end":10,"speaker":"a"},{"start":4,"end":4.4,"speaker":"b"}],"speakers":["a"],"speaker_count":1,"metadata":{"speaker_identity_status":"solo"}}`
+	if err := os.WriteFile(filepath.Join(directory, "result.json"), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewPyAnnoteAdapter(directory).parseJSONResult(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SpeakerCount != 2 || len(result.Speakers) != 2 || result.Metadata["speaker_identity_status"] == "solo" {
+		t.Fatal("overlap-only voice disappeared", result)
+	}
+}

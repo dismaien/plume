@@ -566,23 +566,18 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                     </div>
                     {autoAssigned.map((speaker) => {
                       const detail = mappingDetails.get(speaker);
-                      const isJustPromoted = promotedSpeakers.has(speaker);
                       return (
                         <div key={speaker} className="space-y-1">
                           <div className="flex items-center gap-2">
                             <Label htmlFor={`speaker-${speaker}`} className="text-xs font-medium text-muted-foreground">
                               {speakerDisplayLabel(speaker)}
                             </Label>
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400 inline-flex items-center gap-1" data-testid={`badge-auto-${speaker}`}>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400 inline-flex items-center gap-1" data-testid={`${detail?.match_source === 'suggestion_promoted' ? 'badge-matched' : 'badge-auto'}-${speaker}`}
+                              aria-label={`${detail?.match_source === 'suggestion_promoted' ? 'Accepted' : 'Automatic'} voice match score ${Math.round((detail?.confidence_score ?? 0) * 100)}%`}>
                               <Check className="h-3 w-3" />
                               {Math.round((detail?.confidence_score ?? 0) * 100)}%
                             </span>
                           </div>
-                          {isJustPromoted ? (
-                            <div className="text-sm font-medium truncate px-3 py-2 rounded-md bg-green-500/5 border border-green-500/20">
-                              {speakerMappings[speaker] || detail?.custom_name}
-                            </div>
-                          ) : (
                             <Popover
                               open={activeSpeaker === speaker}
                               onOpenChange={(nextOpen) => {
@@ -668,7 +663,6 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                                 </div>
                               </PopoverContent>
                             </Popover>
-                          )}
                         </div>
                       );
                     })}

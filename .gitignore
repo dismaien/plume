@@ -88,3 +88,8 @@ test-results/
 
 # Omit upstream GitHub Actions workflows from private seed until gh token has workflow scope.
 .github/workflows/
+
+# Private benchmark audio, databases, credentials and local verification artifacts
+.diagnostics/
+/tests/queue_test.db*
+/tests/api_handlers_test.db*

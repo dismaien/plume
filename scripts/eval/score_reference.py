@@ -11,6 +11,7 @@ import importlib.metadata
 import json
 import math
 import unicodedata
+import wave
 from pathlib import Path
 
 
@@ -75,11 +76,37 @@ def diarization_scores(reference, hypothesis, uem):
                     if a.intersects(b): matched.add(a & b)
         denominator = expected.duration()
         recall[str(label)] = matched.support().duration()/denominator if denominator else None
+    # Aggregate DER can hide the loss of a brief second speaker. Preserve the
+    # actual missed reference turns for inspection, including overlapping turns.
+    missed_turns = []
+    brief_seconds, brief_matched = 0.0, 0.0
+    for turn, _, label in ref.itertracks(yield_label=True):
+        matched = Timeline()
+        for h, r in mapping.items():
+            if r == label:
+                for actual in hyp.label_timeline(h).support():
+                    if actual.intersects(turn):
+                        matched.add(actual & turn)
+        correct = matched.support().duration()
+        duration = turn.duration
+        if duration < 1:
+            brief_seconds += duration
+            brief_matched += correct
+        if correct < duration - 1e-6:
+            overlap = any(other != label and turn.intersects(segment)
+                          for segment, _, other in ref.itertracks(yield_label=True))
+            missed_turns.append(dict(start=turn.start, end=turn.end, speaker=str(label),
+                                     matched_fraction=correct/duration,
+                                     missed_seconds=duration-correct,
+                                     overlapping_reference_speech=overlap))
     total = sum(ref.label_duration(label) for label in ref.labels())
     attributed = sum(ref.label_timeline(label).crop(hyp.get_timeline().support()).support().duration() for label in ref.labels())
     results.update(per_speaker_recall=recall, reference_speakers=len(ref.labels()),
                    hypothesis_speakers=len(hyp.labels()), false_solo=len(ref.labels())>1 and len(hyp.labels())==1,
-                   unattributed_reference_fraction=1-attributed/total if total else None)
+                   unattributed_reference_fraction=1-attributed/total if total else None,
+                   brief_turn_reference_seconds=brief_seconds,
+                   brief_turn_recall=brief_matched/brief_seconds if brief_seconds else None,
+                   missed_reference_turns=sorted(missed_turns, key=lambda t: -t['missed_seconds'])[:20])
     return results
 
 
@@ -112,6 +139,16 @@ def word_scores(reference, hypothesis, uri, uem):
             'attribution_policy':'unattributed_words_count_as_deletions', 'tcpwer_collar_seconds':5,
             'reference_words':len(ref),'hypothesis_words':len(hyp),'unattributed_words':len(hyp)-len(known),
             'normalization':'unicode_nfkc_casefold_strip_punctuation_v1; same policy for every model'}
+
+
+def full_text_wer(reference_words, text):
+    """Include decoded words that an aligner failed to give timestamps."""
+    import meeteval.wer
+    def normalize(value):
+        return ' '.join(''.join(c for c in unicodedata.normalize('NFKC', token).casefold()
+                                if not unicodedata.category(c).startswith('P')) for token in value.split()).strip()
+    reference = normalize(' '.join(word['word'] for word in reference_words))
+    return dataclasses.asdict(meeteval.wer.siso_word_error_rate(reference, normalize(text)))
 
 
 def score(manifest_path, candidate_path):
@@ -147,6 +184,19 @@ def score(manifest_path, candidate_path):
     if manifest.get('words'):
         words=json.loads((root/manifest['words']).read_text())
         result['words']=word_scores(words,payload.get('word_segments',[]),uri,uem)
+        result['words']['full_text_wer_status']='unavailable_for_non_wav_or_partial_uem'
+        # Full text cannot be filtered to a partial UEM without guessing its
+        # missing word times. Score it only when the reference covers the WAV.
+        try:
+            with wave.open(str(audio)) as wav:
+                duration=wav.getnframes()/wav.getframerate()
+            support=uem.support()
+            if support.crop(Segment(0,duration)).duration() >= duration-1e-6 and isinstance(payload.get('text'),str):
+                result['words']['full_text_wer']=full_text_wer(words,payload['text'])
+                result['words']['full_text_wer_status']='scored_all_decoded_text_including_unaligned_words'
+                result['words']['primary_text_metric']='full_text_wer'
+        except (wave.Error, EOFError):
+            pass
     return result
 
 

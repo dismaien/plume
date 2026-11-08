@@ -1,0 +1,392 @@
+{
+  "date": "2026-11-07",
+  "dataset": "AMI IS1009a Mix-Headset",
+  "annotation_source": "https://github.com/pyannote/AMI-diarization-setup/tree/67c2d539286e89f68952d5dcf83912bd9f01dfae",
+  "manual_word_source": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+  "manual_archive_sha256": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d",
+  "audio_sha256": "6eb5a0ede0d9e72794f976ce7bea5b78133eae969f99b4c5418b43c2468d25b1",
+  "split": "tuning",
+  "limitations": [
+    "One public meeting, not a held-out estimate for personal memos",
+    "Two-speaker excerpt is nested in opening excerpt and must not be double-counted",
+    "Raw Sortformer heads are diagnostic, not the production identity policy",
+    "Timings include process start/model load under concurrent app work and are not a controlled speed ranking",
+    "Oracle-word experiments isolate attribution; their text WER is zero by construction"
+  ],
+  "diarization": [
+    {
+      "excerpt": "two-speakers",
+      "engine": "community1-auto",
+      "reference_speakers": 2,
+      "hypothesis_speakers": 2,
+      "declared_speaker_count_in_captured_output": 1,
+      "strict_der": 0.09818870436105505,
+      "der_250ms": 0.0709748688207676,
+      "per_speaker_recall": {
+        "FIE088": 0.9362198599948147,
+        "FIO089": 0.20362787356321346
+      },
+      "process_seconds_under_concurrent_app_load": 44.76941741599876,
+      "candidate_sha256": "146b667e90aa9901b0f1dfefbbfd415784e10a64a4e4d01cc913a814d63b9c49",
+      "script_sha256": "58353b56b0dba0ff2fe4be437959f307b3954c3a3e9a43b4155357dabd8bad16"
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "sortformer-heads",
+      "reference_speakers": 2,
+      "hypothesis_speakers": 2,
+      "declared_speaker_count_in_captured_output": 2,
+      "strict_der": 0.16708924949290063,
+      "der_250ms": 0.14236398784866064,
+      "per_speaker_recall": {
+        "FIE088": 0.8426238008815142,
+        "FIO089": 1.0
+      },
+      "process_seconds_under_concurrent_app_load": 50.24341416700918,
+      "candidate_sha256": "e1a2659c0fbfdfad649edd05d897a11bd6af7f9c1af7cba968b8904a13ab70fb",
+      "script_sha256": "69e8383ed9d98f9d5f5da46ed85ab7ce49c2deb1b65c5250976bf2c9bcf1147e"
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "sortformer-recluster",
+      "reference_speakers": 2,
+      "hypothesis_speakers": 2,
+      "declared_speaker_count_in_captured_output": 2,
+      "strict_der": 0.22489858012170388,
+      "der_250ms": 0.1857221761944215,
+      "per_speaker_recall": {
+        "FIE088": 0.8016593207155821,
+        "FIO089": 0.0
+      },
+      "process_seconds_under_concurrent_app_load": 58.960212584002875,
+      "candidate_sha256": "8fbb9a5be33d3e281a433d10029ec00d3ce941d0a4f0df160c6dd3778d0b5635",
+      "script_sha256": "552de33b14d9924c07b453341cb22a2e3e350200403e642c01a81e776d61cef4"
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "community1-auto",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.1882487397449839,
+      "der_250ms": 0.1415657641561294,
+      "per_speaker_recall": {
+        "FIE088": 0.8883385951065508,
+        "FIO084": 0.991373998767714,
+        "FIO087": 1.0,
+        "FIO089": 0.7956233085250277
+      },
+      "process_seconds_under_concurrent_app_load": 82.68510829200386,
+      "candidate_sha256": "1b297590307dfc823f57233b6526aa82a887d0c84e6ccb7ca9f132b209e56ee4",
+      "script_sha256": "58353b56b0dba0ff2fe4be437959f307b3954c3a3e9a43b4155357dabd8bad16"
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "sortformer-heads",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.2756746070969651,
+      "der_250ms": 0.24645409565695361,
+      "per_speaker_recall": {
+        "FIE088": 0.8355169692186271,
+        "FIO084": 0.8817005545286506,
+        "FIO087": 0.02112676056338108,
+        "FIO089": 0.9837618403247627
+      },
+      "process_seconds_under_concurrent_app_load": 183.56476691599528,
+      "candidate_sha256": "4c25076d914c43cc8446955d27ce1b68458274ece536e09a90e2072d925df7e4",
+      "script_sha256": "69e8383ed9d98f9d5f5da46ed85ab7ce49c2deb1b65c5250976bf2c9bcf1147e"
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "sortformer-recluster",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.1836512800237221,
+      "der_250ms": 0.14452996151731654,
+      "per_speaker_recall": {
+        "FIE088": 0.810576164167325,
+        "FIO084": 0.8151571164510159,
+        "FIO087": 0.8584507042253517,
+        "FIO089": 0.9837618403247627
+      },
+      "process_seconds_under_concurrent_app_load": 161.6669495410024,
+      "candidate_sha256": "99dd8cf60a0bf3cdfde194476389e5115d9ef7791aae68831e1b59f939e91447",
+      "script_sha256": "552de33b14d9924c07b453341cb22a2e3e350200403e642c01a81e776d61cef4"
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "community1-auto",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 5,
+      "declared_speaker_count_in_captured_output": 5,
+      "strict_der": 0.2805687709030103,
+      "der_250ms": 0.2348570362762575,
+      "per_speaker_recall": {
+        "FIE088": 0.9386039598245206,
+        "FIO084": 0.10871624564459968,
+        "FIO087": 0.5885887096774188,
+        "FIO089": 0.5521148144605965
+      },
+      "process_seconds_under_concurrent_app_load": 48.09142312500626,
+      "candidate_sha256": "91184787134095bb5b294e9af9dd18d55db668b07aa677cf2090c1496d05d948",
+      "script_sha256": "e2de0e6639d57978fce0edd3930c052bd40f65c321321db5a7f70b545143813f"
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "sortformer-heads",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.30207357859531797,
+      "der_250ms": 0.2697465312766449,
+      "per_speaker_recall": {
+        "FIE088": 0.8442622950819673,
+        "FIO084": 0.4878048780487829,
+        "FIO087": 0.5387096774193538,
+        "FIO089": 0.5110941086457528
+      },
+      "process_seconds_under_concurrent_app_load": 28.801853041994036,
+      "candidate_sha256": "a9e38cea6c01e9547044c6cd8897c974ac4955371da4b3a6702d1a3e3bf06d37",
+      "script_sha256": "69e8383ed9d98f9d5f5da46ed85ab7ce49c2deb1b65c5250976bf2c9bcf1147e"
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "sortformer-recluster",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.35591973244147196,
+      "der_250ms": 0.3121851019300829,
+      "per_speaker_recall": {
+        "FIE088": 0.8319094897252365,
+        "FIO084": 0.0,
+        "FIO087": 0.5387096774193538,
+        "FIO089": 0.3213465952563121
+      },
+      "process_seconds_under_concurrent_app_load": 36.994400666997535,
+      "candidate_sha256": "101e0b7d1f8d8afd8ecac7ca2fe78adf52da87c1bfd39f275f178379b64cb75a",
+      "script_sha256": "552de33b14d9924c07b453341cb22a2e3e350200403e642c01a81e776d61cef4"
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "community1-auto",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 3,
+      "declared_speaker_count_in_captured_output": 3,
+      "strict_der": 0.14283465927572397,
+      "der_250ms": 0.1001871398145833,
+      "per_speaker_recall": {
+        "FIE088": 0.959972652991583,
+        "FIO084": 0.5992471675611192,
+        "FIO087": 0.0,
+        "FIO089": 0.8459969243620892
+      },
+      "process_seconds_under_concurrent_app_load": 21.43641245800245,
+      "candidate_sha256": "3c22838f4f20fb6ff67c480dc8afb864607b99cbed0540f509bc0778f1fb4c9f",
+      "script_sha256": "e2de0e6639d57978fce0edd3930c052bd40f65c321321db5a7f70b545143813f"
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "sortformer-heads",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.17505150168058092,
+      "der_250ms": 0.14861563517915338,
+      "per_speaker_recall": {
+        "FIE088": 0.8638810950178206,
+        "FIO084": 0.7233154442456763,
+        "FIO087": 0.8413793103448252,
+        "FIO089": 0.892162818955042
+      },
+      "process_seconds_under_concurrent_app_load": 24.05883779100259,
+      "candidate_sha256": "1bfb1a8a8e41fd97e4a6bc0742f6edb06be469d43c43aa933c2282f68c3f1048",
+      "script_sha256": "69e8383ed9d98f9d5f5da46ed85ab7ce49c2deb1b65c5250976bf2c9bcf1147e"
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "sortformer-recluster",
+      "reference_speakers": 4,
+      "hypothesis_speakers": 4,
+      "declared_speaker_count_in_captured_output": 4,
+      "strict_der": 0.242979507752358,
+      "der_250ms": 0.213636933099474,
+      "per_speaker_recall": {
+        "FIE088": 0.8484113141730494,
+        "FIO084": 0.3673225998807387,
+        "FIO087": 0.0,
+        "FIO089": 0.7557715674362088
+      },
+      "process_seconds_under_concurrent_app_load": 32.71028733400453,
+      "candidate_sha256": "afa1e1e884ccbd3ad757817823f6d415b6349e3f8e2aa3b8a9a155ab156ecde4",
+      "script_sha256": "552de33b14d9924c07b453341cb22a2e3e350200403e642c01a81e776d61cef4"
+    }
+  ],
+  "word_policy_tradeoff": [
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "community1-auto",
+      "assignment": "previous",
+      "cpwer_with_manual_words": 0.23693379790940766,
+      "fixed_word_attribution": {
+        "reference_words": 574,
+        "correctly_attributed": 491,
+        "wrong_person": 74,
+        "unattributed": 9,
+        "known_label_precision": 0.8690265486725663,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "community1-auto",
+      "assignment": "overlap-aware",
+      "cpwer_with_manual_words": 0.25261324041811845,
+      "fixed_word_attribution": {
+        "reference_words": 574,
+        "correctly_attributed": 446,
+        "wrong_person": 33,
+        "unattributed": 95,
+        "known_label_precision": 0.9311064718162839,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "community1-auto",
+      "assignment": "previous",
+      "cpwer_with_manual_words": 0.30133333333333334,
+      "fixed_word_attribution": {
+        "reference_words": 375,
+        "correctly_attributed": 306,
+        "wrong_person": 62,
+        "unattributed": 7,
+        "known_label_precision": 0.8315217391304348,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "community1-auto",
+      "assignment": "overlap-aware",
+      "cpwer_with_manual_words": 0.31466666666666665,
+      "fixed_word_attribution": {
+        "reference_words": 375,
+        "correctly_attributed": 278,
+        "wrong_person": 42,
+        "unattributed": 55,
+        "known_label_precision": 0.86875,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "community1-auto",
+      "assignment": "previous",
+      "cpwer_with_manual_words": 0.1552346570397112,
+      "fixed_word_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 253,
+        "wrong_person": 24,
+        "unattributed": 0,
+        "known_label_precision": 0.9133574007220217,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "community1-auto",
+      "assignment": "overlap-aware",
+      "cpwer_with_manual_words": 0.15162454873646208,
+      "fixed_word_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 252,
+        "wrong_person": 22,
+        "unattributed": 3,
+        "known_label_precision": 0.9197080291970803,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "community1-auto",
+      "assignment": "previous",
+      "cpwer_with_manual_words": 0.05454545454545454,
+      "fixed_word_attribution": {
+        "reference_words": 110,
+        "correctly_attributed": 107,
+        "wrong_person": 3,
+        "unattributed": 0,
+        "known_label_precision": 0.9727272727272728,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "community1-auto",
+      "assignment": "overlap-aware",
+      "cpwer_with_manual_words": 0.05454545454545454,
+      "fixed_word_attribution": {
+        "reference_words": 110,
+        "correctly_attributed": 107,
+        "wrong_person": 3,
+        "unattributed": 0,
+        "known_label_precision": 0.9727272727272728,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      }
+    }
+  ],
+  "shipping_decision": {
+    "speaker_inventory": "union of regular and exclusive tracks; defensive normalization in Go",
+    "production_word_assignment": "retain existing exclusive-timeline policy; flag a detected voice that has no attributed words",
+    "experimental_only": "regular-overlap-aware assignment; cpWER worsened on two excerpts despite fewer wrong-person labels",
+    "engine_winner": "not established; no candidate meets the brief-speaker goals"
+  },
+  "asr_pilot": {
+    "input": "AMI two-speaker 60s excerpt, full-timeline large-v3 int8, auto language",
+    "reference_words": 110,
+    "timed_words": 101,
+    "full_text_wer": {
+      "error_rate": 0.16363636363636364,
+      "errors": 18,
+      "length": 110,
+      "insertions": 3,
+      "deletions": 10,
+      "substitutions": 5,
+      "reference_self_overlap": null,
+      "hypothesis_self_overlap": null
+    },
+    "timed_words_wer": {
+      "error_rate": 0.14545454545454545,
+      "errors": 16,
+      "length": 110,
+      "insertions": 1,
+      "deletions": 10,
+      "substitutions": 5,
+      "reference_self_overlap": null,
+      "hypothesis_self_overlap": null
+    },
+    "alignment_warning": "One Thank you segment failed backtracking despite overall aligned=True; full-text WER includes it",
+    "features_finite": true,
+    "timings": {
+      "load": 2.7,
+      "asr": 63.6,
+      "align": 10.4
+    }
+  },
+  "known_count_diagnostic": {
+    "excerpt": "four-middle",
+    "provided_count": 4,
+    "count_source": "published reference, intentionally supplied; not automatic speaker counting",
+    "strict_der": 0.2336958612040137,
+    "per_speaker_recall": {
+      "FIE088": 0.8911145664973446,
+      "FIO084": 0.0,
+      "FIO087": 0.714354838709677,
+      "FIO089": 0.8522797915072682
+    }
+  }
+}

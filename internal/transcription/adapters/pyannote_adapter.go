@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -510,6 +511,31 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 			End:        seg.End,
 			Speaker:    seg.Speaker,
 			Confidence: seg.Confidence,
+		}
+	}
+	// Defend against cached scripts that counted only the exclusive timeline.
+	// A quiet person speaking only in overlap is still a distinct speaker.
+	if len(result.RegularSegments) > 0 {
+		identities := map[string]bool{}
+		for _, timeline := range [][]interfaces.DiarizationSegment{result.Segments, result.RegularSegments} {
+			for _, segment := range timeline {
+				if strings.TrimSpace(segment.Speaker) != "" && segment.End > segment.Start {
+					identities[segment.Speaker] = true
+				}
+			}
+		}
+		result.Speakers = nil
+		for speaker := range identities {
+			result.Speakers = append(result.Speakers, speaker)
+		}
+		sort.Strings(result.Speakers)
+		result.SpeakerCount = len(result.Speakers)
+		if result.Metadata == nil {
+			result.Metadata = map[string]string{}
+		}
+		result.Metadata["speaker_count_source"] = "regular_and_exclusive_tracks"
+		if result.SpeakerCount > 1 && result.Metadata["speaker_identity_status"] == "solo" {
+			result.Metadata["speaker_identity_status"] = "accepted"
 		}
 	}
 

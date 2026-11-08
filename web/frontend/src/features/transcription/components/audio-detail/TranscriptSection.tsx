@@ -231,6 +231,26 @@ export function TranscriptSection({
         window.getSelection()?.removeAllRanges();
     };
 
+    const unclearPassages = useMemo(() => {
+        const items = transcript?.word_segments?.length ? transcript.word_segments : transcript?.segments ?? [];
+        const runs: { start: number; end: number }[] = [];
+        let inRun = false;
+        for (const item of items) {
+            if (item.speaker || !Number.isFinite(item.start) || !Number.isFinite(item.end)) {
+                inRun = false;
+                continue;
+            }
+            const previous = runs[runs.length - 1];
+            if (inRun && previous && item.start <= previous.end + 0.75) previous.end = Math.max(previous.end, item.end);
+            else runs.push({ start: item.start, end: item.end });
+            inRun = true;
+        }
+        const missingVoiceStart = Number(transcript?.metadata?.speaker_review_start ?? NaN);
+        if (Number.isFinite(missingVoiceStart) && missingVoiceStart >= 0) runs.push({ start: missingVoiceStart, end: missingVoiceStart });
+        return runs.sort((a, b) => a.start - b.start);
+    }, [transcript]);
+    const unlabelledWordCount = transcript?.word_segments?.filter(word => !word.speaker).length ?? 0;
+
     if (!transcript) return null;
 
     return (
@@ -242,7 +262,20 @@ export function TranscriptSection({
                 <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text needs review: no usable text was returned. This recording has not been verified as silence.</p>
             )}
             {transcript.metadata?.text_status !== 'needs_review' && ['uncertain', 'failed'].includes(transcript.metadata?.diarization_status || '') && (
-                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text ready · speakers need review. Unattributed turns are marked “Speaker unclear”.</p>
+                <div role="status" className="mb-4 text-sm text-[var(--text-secondary)]">
+                    <p>Text ready · speakers need review. {unlabelledWordCount > 0
+                        ? `${unlabelledWordCount} of ${transcript.word_segments!.length} words have no speaker label. `
+                        : ''}Unattributed turns are marked “Speaker unclear”.</p>
+                    {transcript.metadata?.speaker_review_reason === 'detected_voice_has_no_attributed_words' && (
+                        <p>A detected voice has no attributed words. Review the overlapping or brief speech before trusting the speaker labels.</p>
+                    )}
+                    {unclearPassages.length > 0 && (
+                        <button type="button" className="mt-2 underline underline-offset-4" onClick={() => {
+                            const target = unclearPassages.find(passage => passage.start > currentTime + 0.25) ?? unclearPassages[0];
+                            onSeek(Math.max(0, target.start));
+                        }}>Review next unclear passage</button>
+                    )}
+                </div>
             )}
             {transcript.metadata?.alignment_status === 'failed' && (
                 <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text recovered · alignment needs review. Word times come from the speech decoder.</p>
