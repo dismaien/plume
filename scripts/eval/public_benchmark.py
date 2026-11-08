@@ -86,6 +86,17 @@ def prepare(source, out):
         (directory / 'reference.json').write_text(json.dumps(manifest, indent=2))
 
 
+def run_command(command, log_path, env, timeout=900):
+    started = time.monotonic()
+    with log_path.open('w') as log:
+        try:
+            process = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env, timeout=timeout)
+            return process.returncode, time.monotonic()-started
+        except subprocess.TimeoutExpired:
+            log.write(f'\nBenchmark stage exceeded {timeout} seconds and was terminated.\n')
+            return 124, time.monotonic()-started
+
+
 def benchmark(args):
     root = Path(__file__).resolve().parents[2]
     if args.fetch_source:
@@ -114,24 +125,25 @@ def benchmark(args):
                                       str(audio), str(directory / 'sortformer-heads.json'), str(directory / 'sortformer-recluster.json'), '--max-identities', '4']),
         ]
         for engine, command in commands:
-            started = time.monotonic()
             script_hash = digest(command[1])
-            with (directory / f'{engine}.log').open('w') as log:
-                process = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env, timeout=900)
-            receipt = dict(excerpt=name, engine=engine, seconds=time.monotonic()-started,
-                           exit_code=process.returncode, source_sha256=digest(audio),
+            exit_code, elapsed = run_command(command, directory / f'{engine}.log', env)
+            receipt = dict(excerpt=name, engine=engine, seconds=elapsed,
+                           exit_code=exit_code, source_sha256=digest(audio),
                            stage_script_sha256=script_hash, command=command,
                            production_identity_result=engine != 'sortformer-heads')
             candidate = directory / f'{engine}.json'
-            if process.returncode == 0 and candidate.exists():
-                measured = score(directory / 'reference.json', candidate)
-                (directory / f'{engine}-score.json').write_text(json.dumps(measured, indent=2, allow_nan=False))
-                receipt['diarization'] = measured['diarization']
-                receipt['candidate_sha256'] = digest(candidate)
-                payload = json.loads(candidate.read_text())
-                receipt['declared_speaker_count'] = payload.get('speaker_count', payload.get('identity_count'))
-                receipt['exclusive_speaker_count'] = len({t['speaker'] for t in payload.get('segments', []) if t.get('speaker')})
-                receipt['regular_speaker_count'] = len({t['speaker'] for t in payload.get('regular_segments', []) if t.get('speaker')})
+            if exit_code == 0 and candidate.exists():
+                try:
+                    measured = score(directory / 'reference.json', candidate)
+                    (directory / f'{engine}-score.json').write_text(json.dumps(measured, indent=2, allow_nan=False))
+                    receipt['diarization'] = measured['diarization']
+                    receipt['candidate_sha256'] = digest(candidate)
+                    payload = json.loads(candidate.read_text())
+                    receipt['declared_speaker_count'] = payload.get('speaker_count', payload.get('identity_count'))
+                    receipt['exclusive_speaker_count'] = len({t['speaker'] for t in payload.get('segments', []) if t.get('speaker')})
+                    receipt['regular_speaker_count'] = len({t['speaker'] for t in payload.get('regular_segments', []) if t.get('speaker')})
+                except Exception as error:
+                    receipt['error'] = f'Reference scoring failed: {error}'
             else:
                 receipt['error'] = 'Inference failed; inspect stage log'
             results.append(receipt)
@@ -139,7 +151,7 @@ def benchmark(args):
                 benchmark='AMI IS1009a fixed tuning smoke excerpts', results=results,
                 limitations=['single public meeting', 'not held out', 'no private memo accuracy estimate',
                              'raw Sortformer heads are a diagnostic, not stable people']), indent=2, allow_nan=False))
-            print(name, engine, process.returncode, round(receipt['seconds'], 2), flush=True)
+            print(name, engine, exit_code, round(receipt['seconds'], 2), flush=True)
     return int(any(r['exit_code'] or r.get('error') for r in results))
 
 

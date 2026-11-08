@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Global speaker reclustering over per-turn embeddings (no temporal merging).
+"""Historical diagnostic, not production: speaker reclustering over embeddings.
+
+Its duration/share identity rule is obsolete. Do not use it for accuracy
+selection; public_benchmark.py invokes the actual current production code.
 Input: emb-*.json {turns:[{start,end,speaker}], embeddings:[[..]], model}.
 Output: clusters per turn with a threshold sweep, separation metrics, purity of
 the original diarizer labels against the clusters, and uncertainty flags."""

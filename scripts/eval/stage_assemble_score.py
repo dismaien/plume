@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Assemble words + turns with the production rule (per-word max overlap) for
+"""Historical diagnostic: assemble words + turns with the old max-overlap rule for
 every ASR x diarizer x recluster combination present in the job dir, and score
-text, coverage, speakers, and anchors. Stdlib only. Writes assembled-*.json,
+text, coverage, speakers, and anchors. NOT the current production assembler or
+an accuracy benchmark. Use compare_local.py + transcription-eval + reviewed
+references for current evaluation. Stdlib only. Writes assembled-*.json,
 assembled-*.md and score.json; prints a compact report."""
 import argparse, itertools, json, re
 from pathlib import Path
@@ -58,7 +60,7 @@ def speech_seconds(items):
 
 
 def assign(words, turns):
-    """Production findBestSpeakerForSegment: speaker of the turn with maximum overlap."""
+    """Legacy diagnostic only: speaker of the turn with maximum overlap."""
     turns = sorted(turns, key=lambda t: t["start"]); out = []; j = 0
     for w in words:
         best, bo = None, 0.0
