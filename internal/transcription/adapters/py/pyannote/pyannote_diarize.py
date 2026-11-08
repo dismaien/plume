@@ -43,6 +43,11 @@ def annotation_segments(annotation):
                   key=lambda t: (t['start'], t['end'], t['speaker']))
 
 
+def speaker_inventory(regular_segments, exclusive_segments):
+    # Exclusive diarization can omit a person who only speaks during overlap.
+    return sorted({s['speaker'] for s in regular_segments + exclusive_segments if s.get('speaker')})
+
+
 def diarize_audio(audio_path, output_file, hf_token='',
                   model='pyannote/speaker-diarization-community-1',
                   min_speakers=None, max_speakers=None, output_format='json', device='auto'):
@@ -62,20 +67,24 @@ def diarize_audio(audio_path, output_file, hf_token='',
     regular = getattr(result, 'speaker_diarization', result)
     exclusive = getattr(result, 'exclusive_speaker_diarization', regular)
     segments = annotation_segments(exclusive)
-    speakers = sorted({s['speaker'] for s in segments})
+    regular_segments = annotation_segments(regular)
+    speakers = speaker_inventory(regular_segments, segments)
     metadata = {
         'diarization_engine': model, 'diarization_device': actual_device,
         'pyannote_audio_version': importlib.metadata.version('pyannote.audio'),
         'torch_version': torch.__version__, 'speaker_identity_status': ('solo' if len(speakers)==1 else 'accepted') if speakers else 'uncertain',
         'speaker_identity_reason': '' if speakers else 'no_speech_tracks_not_verified_silence',
         'confidence_kind': 'unavailable', 'assignment_timeline': 'exclusive',
+        'speaker_count_source': 'regular_and_exclusive_tracks',
+        'exclusive_speaker_count': str(len(speaker_inventory([], segments))),
+        'regular_speaker_count': str(len(speaker_inventory(regular_segments, []))),
         'speaker_constraints': json.dumps(params, sort_keys=True),
         'processing_seconds': str(time.monotonic() - started),
         'diarization_script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'mps_fallback_enabled': os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK','0'),
     }
     payload = {'audio_file': str(audio_path), 'model': model, 'segments': segments,
-               'regular_segments': annotation_segments(regular), 'speakers': speakers,
+               'regular_segments': regular_segments, 'speakers': speakers,
                'speaker_count': len(speakers), 'metadata': metadata}
     try:
         from huggingface_hub import hf_hub_download

@@ -12,7 +12,7 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 		result.Metadata = map[string]string{}
 	}
 	m := result.Metadata
-	m["speaker_assignment_policy"] = "overlap_union_majority_v1"
+	m["speaker_assignment_policy"] = "overlap_union_majority_v2_regular_tracks"
 	m["text_status"] = "ready"
 	if strings.TrimSpace(result.Text) == "" {
 		m["text_status"] = "needs_review"
@@ -69,11 +69,19 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 	}
 	m["speaker_labelled_units"] = fmt.Sprint(labelled)
 	m["speaker_total_units"] = fmt.Sprint(total)
+	m["speaker_unattributed_units"] = fmt.Sprint(total - labelled)
+	m["speaker_unit_kind"] = "segments"
+	if len(result.WordSegments) > 0 {
+		m["speaker_unit_kind"] = "words"
+	}
 	if total > 0 {
 		m["speaker_labelled_coverage"] = fmt.Sprintf("%.6f", float64(labelled)/float64(total))
 	}
 	if requested && (total == 0 || labelled < total) && m["diarization_status"] != "failed" {
 		m["diarization_status"] = "uncertain"
+		if total > 0 && labelled < total && m["diarization_reason"] == "" {
+			m["diarization_reason"] = "partial_speaker_attribution"
+		}
 	}
 	if diarErr != nil {
 		m["diarization_status"] = "failed"

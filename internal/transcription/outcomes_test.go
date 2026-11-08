@@ -18,6 +18,9 @@ func TestUncertainDiarizationRetainsEvidenceAndUnknownTurns(t *testing.T) {
 	if result.Metadata["diarization_status"] != "uncertain" || result.Diarization == nil || len(result.Diarization.Segments) != 2 {
 		t.Fatal("lost outcome/timeline")
 	}
+	if result.Metadata["speaker_unattributed_units"] != "2" || result.Metadata["speaker_unit_kind"] != "words" {
+		t.Fatal("missing actionable review counts", result.Metadata)
+	}
 	if result.WordSegments[1].Speaker != nil {
 		t.Fatal("unknown word acquired identity")
 	}
@@ -34,6 +37,40 @@ func TestUncertainDiarizationRetainsEvidenceAndUnknownTurns(t *testing.T) {
 	payload := &markdownTranscriptPayload{Metadata: result.Metadata, Segments: []markdownTranscriptSegment{{Text: "known", Speaker: &a}, {Text: "unknown"}}}
 	if !strings.Contains(renderMarkdownTranscript(&models.TranscriptionJob{}, payload, nil), "**Speaker unclear**") {
 		t.Fatal("export hid unknown turn")
+	}
+}
+
+func TestPartialAttributionHasAReasonWithoutDiscardingGoodWords(t *testing.T) {
+	speaker := "a"
+	result := &interfaces.TranscriptResult{Text: "known unclear", WordSegments: []interfaces.TranscriptWord{
+		{Start: 0, End: 1, Word: "known", Speaker: &speaker}, {Start: 1, End: 2, Word: "unclear"},
+	}}
+	annotateOutcomes(result, true, &interfaces.DiarizationResult{SpeakerCount: 1, Metadata: map[string]string{"speaker_identity_status": "accepted"}}, nil)
+	if result.Metadata["diarization_reason"] != "partial_speaker_attribution" || result.Metadata["speaker_unattributed_units"] != "1" {
+		t.Fatal(result.Metadata)
+	}
+	if result.WordSegments[0].Speaker == nil || result.Text != "known unclear" {
+		t.Fatal("review annotation changed accepted evidence")
+	}
+}
+
+func TestExclusiveTimelineCannotHideWordLevelOverlap(t *testing.T) {
+	source := &interfaces.TranscriptResult{Text: "Known quiet reply.", Segments: []interfaces.TranscriptSegment{{Start: 0, End: 3, Text: "Known quiet reply."}}, WordSegments: []interfaces.TranscriptWord{
+		{Start: 0, End: 1, Word: "Known"}, {Start: 1, End: 2, Word: "quiet"}, {Start: 2, End: 3, Word: "reply."},
+	}}
+	diar := &interfaces.DiarizationResult{SpeakerCount: 2,
+		Segments:        []interfaces.DiarizationSegment{{Start: 0, End: 3, Speaker: "a"}},
+		RegularSegments: []interfaces.DiarizationSegment{{Start: 0, End: 3, Speaker: "a"}, {Start: 1, End: 2, Speaker: "b"}},
+	}
+	result := AssembleDiarizedTranscript(source, diar)
+	if result.WordSegments[0].Speaker == nil || *result.WordSegments[0].Speaker != "a" || result.WordSegments[2].Speaker == nil {
+		t.Fatal("unambiguous words lost their speaker")
+	}
+	if result.WordSegments[1].Speaker != nil || result.Metadata["diarization_status"] != "uncertain" {
+		t.Fatal("exclusive timeline hid an overlapping voice", result.Metadata)
+	}
+	if result.Text != source.Text || source.WordSegments[0].Speaker != nil || len(result.Diarization.RegularSegments) != 2 {
+		t.Fatal("original text, input or acoustic evidence changed")
 	}
 }
 func TestStageFailureAndEmptyOutputAreNotSuccessOrSilence(t *testing.T) {

@@ -91,3 +91,4 @@ test-results/
 
 # Private benchmark audio, databases, credentials and local verification artifacts
 .diagnostics/
+/tests/queue_test.db*

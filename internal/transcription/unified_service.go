@@ -1199,12 +1199,20 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 		mergedTranscript.Metadata[diarizationMetadataKey(k)] = v
 	}
 	mergedTranscript.Diarization = diarization
+	assignmentTurns := diarization.Segments
+	mergedTranscript.Metadata["word_assignment_timeline"] = "primary"
+	if len(diarization.RegularSegments) > 0 {
+		// An exclusive track picks one voice even when two are audible. Use the
+		// overlap-preserving evidence so temporal ties stay explicitly unclear.
+		assignmentTurns = diarization.RegularSegments
+		mergedTranscript.Metadata["word_assignment_timeline"] = "regular_overlap_aware"
+	}
 
 	// Assign speakers to transcript segments based on timing overlap
 	for i := range mergedTranscript.Segments {
 		segment := &mergedTranscript.Segments[i]
 		segment.Speaker = nil
-		bestSpeaker := u.findBestSpeakerForSegment(segment.Start, segment.End, diarization.Segments)
+		bestSpeaker := u.findBestSpeakerForSegment(segment.Start, segment.End, assignmentTurns)
 		if bestSpeaker != "" {
 			segment.Speaker = &bestSpeaker
 		}
@@ -1218,7 +1226,7 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 		for i := range mergedTranscript.WordSegments {
 			word := &mergedTranscript.WordSegments[i]
 			word.Speaker = nil
-			bestSpeaker := u.findBestSpeakerForSegment(word.Start, word.End, diarization.Segments)
+			bestSpeaker := u.findBestSpeakerForSegment(word.Start, word.End, assignmentTurns)
 			if bestSpeaker != "" {
 				word.Speaker = &bestSpeaker
 			}

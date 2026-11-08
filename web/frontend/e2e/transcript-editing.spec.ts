@@ -245,6 +245,24 @@ test('uncertain speaker turns remain visible after API normalization', async ({ 
   await expect(page.locator('[data-transcript-text]')).toHaveCount(2);
 });
 
+test('partial attribution shows its size and a review navigation action', async ({ page }) => {
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+    available: true,
+    transcript: {
+      text: 'Known quiet reply',
+      metadata: { text_status: 'ready', diarization_status: 'uncertain' },
+      segments: [{ start: 0, end: 3, text: 'Known quiet reply', speaker: 'SPEAKER_00' }],
+      word_segments: [
+        { start: 0, end: 1, word: 'Known', speaker: 'SPEAKER_00' },
+        { start: 1, end: 2, word: 'quiet' }, { start: 2, end: 3, word: 'reply' },
+      ],
+    },
+  } }));
+  await page.goto('/audio/1');
+  await expect(page.getByRole('status').filter({ hasText: 'speakers need review' })).toContainText('2 of 3 words have no speaker label');
+  await expect(page.getByRole('button', { name: 'Review next unclear passage' })).toBeVisible();
+});
+
 test('rerun candidate is compared anonymously before explicit acceptance', async ({ page }) => {
   const candidate = { text: 'New words.', segments: [{ start: 0, end: 2, text: 'New words.', speaker: 'SPEAKER_00' }] };
   await page.route('**/api/v1/transcription/1/transcript/editor', route => route.fulfill({ json: { version: 'v1', transcript: initial } }));

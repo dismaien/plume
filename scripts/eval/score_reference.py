@@ -75,11 +75,37 @@ def diarization_scores(reference, hypothesis, uem):
                     if a.intersects(b): matched.add(a & b)
         denominator = expected.duration()
         recall[str(label)] = matched.support().duration()/denominator if denominator else None
+    # Aggregate DER can hide the loss of a brief second speaker. Preserve the
+    # actual missed reference turns for inspection, including overlapping turns.
+    missed_turns = []
+    brief_seconds, brief_matched = 0.0, 0.0
+    for turn, _, label in ref.itertracks(yield_label=True):
+        matched = Timeline()
+        for h, r in mapping.items():
+            if r == label:
+                for actual in hyp.label_timeline(h).support():
+                    if actual.intersects(turn):
+                        matched.add(actual & turn)
+        correct = matched.support().duration()
+        duration = turn.duration
+        if duration < 1:
+            brief_seconds += duration
+            brief_matched += correct
+        if correct < duration - 1e-6:
+            overlap = any(other != label and turn.intersects(segment)
+                          for segment, _, other in ref.itertracks(yield_label=True))
+            missed_turns.append(dict(start=turn.start, end=turn.end, speaker=str(label),
+                                     matched_fraction=correct/duration,
+                                     missed_seconds=duration-correct,
+                                     overlapping_reference_speech=overlap))
     total = sum(ref.label_duration(label) for label in ref.labels())
     attributed = sum(ref.label_timeline(label).crop(hyp.get_timeline().support()).support().duration() for label in ref.labels())
     results.update(per_speaker_recall=recall, reference_speakers=len(ref.labels()),
                    hypothesis_speakers=len(hyp.labels()), false_solo=len(ref.labels())>1 and len(hyp.labels())==1,
-                   unattributed_reference_fraction=1-attributed/total if total else None)
+                   unattributed_reference_fraction=1-attributed/total if total else None,
+                   brief_turn_reference_seconds=brief_seconds,
+                   brief_turn_recall=brief_matched/brief_seconds if brief_seconds else None,
+                   missed_reference_turns=sorted(missed_turns, key=lambda t: -t['missed_seconds'])[:20])
     return results
 
 
