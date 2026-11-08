@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { formatRecordingSidebarDateTime } from "@/lib/recording-date";
 import { useAudioListInfinite, type AudioFile } from "@/features/transcription/hooks/useAudioFiles";
 
+import { useRecordingActions } from "./RecordingActions";
+
 interface RecordingListSidebarProps {
     currentAudioId: string;
     dashboardReturnPath: string;
@@ -69,6 +71,9 @@ function RecordingStatusIcon({ status }: { status: AudioFile["status"] }) {
 export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onClose }: RecordingListSidebarProps) {
     const navigate = useNavigate();
     const location = useLocation();
+    const actions = useRecordingActions((id) => {
+        if (id === currentAudioId) navigate(dashboardReturnPath, { replace: true });
+    });
     const inheritedParams = useMemo(
         () => parseDashboardListParams(dashboardReturnPath),
         [dashboardReturnPath],
@@ -200,23 +205,26 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                             const selected = file.id === currentAudioId;
                             const duration = formatDuration(file.duration);
                             return (
-                                <button
+                                <div
                                     key={file.id}
-                                    ref={selected ? selectedRowRef : undefined}
-                                    type="button"
-                                    aria-current={selected ? "page" : undefined}
-                                    onClick={() => openRecording(file.id)}
                                     className={cn(
-                                        "group w-full rounded-[var(--radius-btn)] border px-3 py-2.5 text-left transition-colors",
+                                        "group relative w-full rounded-[var(--radius-btn)] border text-left transition-colors",
                                         selected
-                                            ? "border-[var(--brand-solid)]/45 bg-[var(--brand-light)]"
+                                            ? "border-[var(--border-focus)] bg-[var(--bg-elevated)]"
                                             : "border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)]",
                                     )}
                                 >
+                                    <button
+                                        ref={selected ? selectedRowRef : undefined}
+                                        type="button"
+                                        aria-current={selected ? "page" : undefined}
+                                        onClick={() => openRecording(file.id)}
+                                        className="w-full rounded-[var(--radius-btn)] px-3 py-2.5 pr-11 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-solid)]"
+                                    >
                                     <div className="flex items-start gap-2">
                                         <span className={cn(
                                             "line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug",
-                                            selected ? "text-[var(--brand-solid)]" : "text-[var(--text-primary)]",
+                                            "text-[var(--text-primary)]",
                                         )}>
                                             {file.title || "Untitled Recording"}
                                         </span>
@@ -228,7 +236,9 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                                         <span>{formatRecordingSidebarDateTime(file.recorded_at, file.created_at, file.title)}</span>
                                         {duration && <span>{duration}</span>}
                                     </div>
-                                </button>
+                                    </button>
+                                    <div className="absolute right-1 top-1.5">{actions.menu(file)}</div>
+                                </div>
                             );
                         })}
                         <div ref={loadMoreRef} className="flex h-10 items-center justify-center">
@@ -237,6 +247,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                     </div>
                 )}
             </div>
+            {actions.dialogs}
         </aside>
     );
 }

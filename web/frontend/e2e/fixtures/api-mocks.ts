@@ -539,6 +539,16 @@ export async function installApiMocks(page: Page) {
     }),
   );
 
+  await page.route('**/api/v1/transcription/*/waveform*', (route) =>
+    route.fulfill({
+      json: {
+        peaks: Array.from({ length: 420 }, (_, index) =>
+          index < 80 ? 0.02 : 0.15 + Math.abs(Math.sin(index / 19)) * 0.8,
+        ),
+      },
+    }),
+  );
+
   // Audio file (EmberPlayer fetches from /audio endpoint)
   await page.route('**/api/v1/transcription/*/audio', (route) => {
     // Minimal WAV header (44 bytes, no audio data)

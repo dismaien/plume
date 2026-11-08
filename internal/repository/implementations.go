@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -54,11 +55,14 @@ func (r *userRepository) CountWithAutoTranscription(ctx context.Context) (int64,
 type ListParams struct {
 	Offset             int
 	Limit              int
+	Columns            []string // optional internal projection for read-heavy views
 	SortBy             string
 	SortOrder          string
 	SearchQuery        string
 	FTSJobIDs          []string // Pre-resolved FTS matches; when set, replaces LIKE search
 	UpdatedAfter       *time.Time
+	RecordedAfter      *time.Time
+	RecordedBefore     *time.Time
 	VaultID            *uint
 	Folder             *string // nil = all, pointer to "" = root/unfiled, pointer to "X" = specific folder
 	FolderPrefix       string  // filter by folder prefix (e.g., "Work" matches "Work" and "Work/Meetings")
@@ -86,13 +90,14 @@ func IsSortColumnAllowed(col string) bool {
 // JobRepository handles transcription job operations
 type JobRepository interface {
 	Repository[models.TranscriptionJob]
+	FindAudioSourceByID(ctx context.Context, id string) (*models.TranscriptionJob, error)
 	FindWithAssociations(ctx context.Context, id string) (*models.TranscriptionJob, error)
 	FindActiveTrackJobs(ctx context.Context, parentJobID string) ([]models.TranscriptionJob, error)
 	FindLatestCompletedExecution(ctx context.Context, jobID string) (*models.TranscriptionJobExecution, error)
 	ListWithParams(ctx context.Context, params ListParams) ([]models.TranscriptionJob, int64, error)
 	ListByUser(ctx context.Context, userID uint, offset, limit int) ([]models.TranscriptionJob, int64, error)
 	ListDistinctSpeakers(ctx context.Context, vaultID *uint) ([]string, error)
-	UpdateTranscript(ctx context.Context, jobID string, transcript string) error
+	UpdateTranscript(ctx context.Context, jobID string, transcript string, audioDurationMillis int64) error
 	CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error
 	UpdateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error
 	DeleteExecutionsByJobID(ctx context.Context, jobID string) error
@@ -121,6 +126,21 @@ func NewJobRepository(db *gorm.DB) JobRepository {
 	}
 }
 
+// FindAudioSourceByID loads only the fields required to serve audio. Transcript
+// payloads can be very large, so selecting a complete job here can block
+// playback while SQLite reads and allocates data the audio route never uses.
+func (r *jobRepository) FindAudioSourceByID(ctx context.Context, id string) (*models.TranscriptionJob, error) {
+	var job models.TranscriptionJob
+	err := r.db.WithContext(ctx).
+		Select("id", "title", "status", "audio_path", "artifact_dir", "is_multi_track", "merged_audio_path").
+		Where("id = ?", id).
+		First(&job).Error
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
 func (r *jobRepository) FindWithAssociations(ctx context.Context, id string) (*models.TranscriptionJob, error) {
 	var job models.TranscriptionJob
 	err := r.db.WithContext(ctx).
@@ -145,6 +165,9 @@ func (r *jobRepository) ListWithParams(ctx context.Context, params ListParams) (
 	}
 
 	db = db.Model(&models.TranscriptionJob{})
+	if len(params.Columns) > 0 {
+		db = db.Select(params.Columns)
+	}
 
 	if !params.IncludeSourceParts {
 		db = db.Where("(is_source_part = ? OR is_source_part IS NULL)", false)
@@ -152,6 +175,12 @@ func (r *jobRepository) ListWithParams(ctx context.Context, params ListParams) (
 
 	if params.UpdatedAfter != nil {
 		db = db.Where("updated_at > ?", *params.UpdatedAfter)
+	}
+	if params.RecordedAfter != nil {
+		db = db.Where("COALESCE(recorded_at, created_at) >= ?", *params.RecordedAfter)
+	}
+	if params.RecordedBefore != nil {
+		db = db.Where("COALESCE(recorded_at, created_at) <= ?", *params.RecordedBefore)
 	}
 
 	if params.VaultID != nil {
@@ -261,10 +290,38 @@ func (r *jobRepository) ListByUser(ctx context.Context, userID uint, offset, lim
 	return r.List(ctx, offset, limit)
 }
 
-func (r *jobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string) error {
-	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
-		Where("id = ?", jobID).
-		Update("transcript", transcript).Error
+func (r *jobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string, audioDurationMillis int64) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.TranscriptionJob
+		if err := tx.First(&job, "id = ?", jobID).Error; err != nil {
+			return err
+		}
+		if job.Transcript != nil && strings.TrimSpace(*job.Transcript) != "" {
+			mappings := []models.SpeakerMapping{}
+			if err := tx.Where("transcription_job_id = ?", jobID).Order("id").Find(&mappings).Error; err != nil {
+				return err
+			}
+			raw, err := json.Marshal(mappings)
+			if err != nil {
+				return err
+			}
+			snapshot := string(raw)
+			before := models.TranscriptRevision{TranscriptionJobID: jobID, Kind: "before_rerun", Transcript: *job.Transcript, SpeakerMappings: &snapshot, DiarizationRequested: &job.Diarization}
+			if err := tx.Create(&before).Error; err != nil {
+				return err
+			}
+			candidate := models.TranscriptRevision{TranscriptionJobID: jobID, Kind: "candidate", Transcript: transcript, BaseTranscript: *job.Transcript, SpeakerMappings: &snapshot, DiarizationRequested: &job.Parameters.Diarize}
+			if err := tx.Create(&candidate).Error; err != nil {
+				return err
+			}
+			return tx.Model(&job).Update("candidate_transcript_revision_id", candidate.ID).Error
+		}
+		updates := map[string]interface{}{"transcript": transcript}
+		if audioDurationMillis > 0 {
+			updates["audio_duration_ms"] = audioDurationMillis
+		}
+		return tx.Model(&job).Updates(updates).Error
+	})
 }
 
 func (r *jobRepository) CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error {

@@ -133,9 +133,11 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 				uploadRoutes.POST("/upload-video", handler.UploadVideo)
 				uploadRoutes.POST("/upload-multitrack", handler.UploadMultiTrack)
 				uploadRoutes.GET("/:id/audio", handler.GetAudioFile) // Audio streaming shouldn't be compressed
+				uploadRoutes.GET("/:id/waveform", handler.GetAudioWaveform)
 			}
 
 			// Regular API routes with compression
+			transcription.POST("/voice-memos/sync", handler.SyncVoiceMemos)
 			transcription.POST("/youtube", handler.DownloadFromYouTube)
 			transcription.POST("/submit", handler.SubmitJob)
 			transcription.POST("/:id/start", handler.StartTranscription)
@@ -143,6 +145,10 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			transcription.GET("/:id/logs", handler.GetJobLogs)
 			transcription.GET("/:id/status", handler.GetJobStatus)
 			transcription.GET("/:id/transcript", handler.GetTranscript)
+			transcription.GET("/:id/transcript/editor", handler.GetTranscriptEditor)
+			transcription.PUT("/:id/transcript/editor", handler.SaveTranscriptEdit)
+			transcription.GET("/:id/transcript/revisions", handler.ListTranscriptRevisions)
+			transcription.GET("/:id/transcript/revisions/:revisionId", handler.GetTranscriptRevision)
 			transcription.GET("/:id/execution", handler.GetJobExecutionData)
 			transcription.GET("/:id/merge-status", handler.GetMergeStatus)
 			transcription.GET("/:id/track-progress", handler.GetTrackProgress)
@@ -186,6 +192,14 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			transcription.PUT("/folders/move", handler.MoveFolder)
 			transcription.DELETE("/folders", handler.DeleteFolder)
 			transcription.PUT("/:id/folder", handler.MoveTranscriptToFolder)
+		}
+
+		// Cross-recording review uses only the configured local Ollama service.
+		review := v1.Group("/review")
+		review.Use(middleware.AuthMiddleware(authService))
+		{
+			review.POST("/generate", handler.GenerateConversationReview)
+			review.POST("/ask", handler.AskConversationArchive)
 		}
 
 		// Profile routes (require authentication)
@@ -315,14 +329,13 @@ func SetupRoutes(handler *Handler, authService *auth.AuthService) *gin.Engine {
 			cloudProviders.DELETE("/:provider", handler.DeleteCloudProvider)
 		}
 
-		// // Hugging Face token settings — commented out, pyannote disabled
-		// settings := v1.Group("/settings")
-		// settings.Use(middleware.AuthMiddleware(authService))
-		// {
-		// 	settings.GET("/hf-token", handler.GetHFTokenStatus)
-		// 	settings.PUT("/hf-token", handler.UpsertHFToken)
-		// 	settings.DELETE("/hf-token", handler.DeleteHFToken)
-		// }
+		settings := v1.Group("/settings")
+		settings.Use(middleware.AuthMiddleware(authService))
+		{
+			settings.GET("/hf-token", handler.GetHFTokenStatus)
+			settings.PUT("/hf-token", handler.UpsertHFToken)
+			settings.DELETE("/hf-token", handler.DeleteHFToken)
+		}
 
 		// LLM configuration routes (require authentication)
 		llm := v1.Group("/llm")

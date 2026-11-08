@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -302,7 +303,8 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 
 	// Build a per-job pipeline to avoid accumulating preprocessors across jobs.
 	jobPipeline := pipeline.NewProcessingPipeline()
-	if job.Parameters.VadPreprocess && u.envPath != "" {
+	useOuterVAD := job.Parameters.VadPreprocess && !job.Parameters.WhisperFullAudio
+	if useOuterVAD && u.envPath != "" {
 		jobPipeline.RegisterPreprocessor(&pipeline.SileroVadPreprocessor{
 			Enabled: true,
 			EnvPath: filepath.Join(u.envPath, "silero-vad"),
@@ -324,7 +326,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	// Apply preprocessing
 	preprocessedInput, err = jobPipeline.ProcessAudio(ctx, audioInput, capabilities)
 	if err != nil {
-		if job.Parameters.VadPreprocess {
+		if useOuterVAD {
 			return fmt.Errorf("required VAD preprocessing failed: %w", err)
 		}
 		logger.Warn("Audio preprocessing failed, using original", "error", err)
@@ -362,6 +364,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 
 	var transcriptResult *interfaces.TranscriptResult
 	var diarizationResult *interfaces.DiarizationResult
+	var diarizationErr error
 
 	// Determine whether transcription and diarization can run in parallel.
 	// Parallel execution is possible when diarization is a separate step
@@ -389,7 +392,6 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		// does not cancel transcription. Transcription is the critical path;
 		// diarization is best-effort — a failure just means no speaker labels.
 		var g errgroup.Group
-		var diarizationErr error
 
 		// Transcription goroutine
 		g.Go(func() error {
@@ -451,6 +453,7 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 			}
 			dParams := u.convertParametersForModel(job.Parameters, diarizationModelID)
 			result, dErr := dAdapter.Diarize(ctx, diarizationInput, dParams, procCtx)
+			diarizationResult = result
 			if dErr != nil {
 				diarizationErr = fmt.Errorf("diarization failed: %w", dErr)
 				logger.Warn("Diarization failed, transcription will proceed without speaker labels", "error", diarizationErr)
@@ -535,6 +538,8 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 				dParams := u.convertParametersForModel(job.Parameters, diarizationModelID)
 				return dAdapter.Diarize(ctx, diarizationInput, dParams, procCtx)
 			}(); dErr != nil {
+				diarizationResult = dResult
+				diarizationErr = dErr
 				logger.Warn("Diarization failed, transcription will proceed without speaker labels", "error", dErr)
 				writeDiaLog(fmt.Sprintf("ERROR: %v", dErr))
 			} else {
@@ -548,9 +553,12 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 		}
 	}
 
-	// Save results to database
+	// Persist stage outcomes even when diarisation failed but text is usable.
 	if transcriptResult != nil {
-		if err := u.saveTranscriptionResults(job.ID, transcriptResult); err != nil {
+		annotateOutcomes(transcriptResult, job.Parameters.Diarize, diarizationResult, diarizationErr)
+		annotateRunConfiguration(transcriptResult, job.Parameters)
+
+		if err := u.saveTranscriptionResults(job.ID, transcriptResult, audioInput.Duration.Milliseconds()); err != nil {
 			return fmt.Errorf("failed to save transcription results: %w", err)
 		}
 	}
@@ -694,18 +702,7 @@ func (u *UnifiedTranscriptionService) selectModels(params models.WhisperXParams)
 
 // transcriptionIncludesDiarization checks if the transcription model already includes diarization
 func (u *UnifiedTranscriptionService) transcriptionIncludesDiarization(modelID string, params models.WhisperXParams) bool {
-	// WhisperX includes diarization when enabled
-	// WhisperX includes diarization when enabled
-	if modelID == ModelWhisperX {
-		if params.Diarize {
-			// Check if it's using a separate diarization adapter (not WhisperX's built-in pyannote)
-			if params.DiarizeModel == DiarizeSortformer || params.DiarizeModel == DiarizeSherpaOnnx {
-				return false
-			}
-			return true
-		}
-	}
-
+	// Separate execution preserves model provenance, full audio and stage failures.
 	return false
 }
 
@@ -975,7 +972,7 @@ func (u *UnifiedTranscriptionService) convertToCanaryParams(params models.Whispe
 
 // convertToWhisperXParams converts to WhisperX-specific parameters
 func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.WhisperXParams) map[string]interface{} {
-	useWhisperXDiarization := params.Diarize && params.DiarizeModel != DiarizeSortformer && params.DiarizeModel != DiarizeSherpaOnnx
+	useWhisperXDiarization := false
 
 	// For WhisperX, we use the standard WhisperX parameters (no NVIDIA-specific ones)
 	paramMap := map[string]interface{}{
@@ -1012,7 +1009,7 @@ func (u *UnifiedTranscriptionService) convertToWhisperXParams(params models.Whis
 		"vad_onset":                         params.VadOnset,
 		"vad_offset":                        params.VadOffset,
 		"chunk_size":                        params.ChunkSize,
-		"whisper_full_audio":                params.WhisperFullAudio,
+		"whisper_full_audio":                params.WhisperFullAudio || params.VadPreprocess,
 		"temperature_increment_on_fallback": params.TemperatureIncrementOnFallback,
 	}
 
@@ -1056,7 +1053,11 @@ func (u *UnifiedTranscriptionService) convertToPyannoteParams(params models.Whis
 	paramMap := map[string]interface{}{
 		"output_format":      OutputFormatJSON,
 		"auto_convert_audio": true,
-		"device":             "auto",
+		"device":             params.DiarizationDevice,
+	}
+
+	if params.DiarizationDevice == "" {
+		paramMap["device"] = "auto"
 	}
 
 	if params.MinSpeakers != nil {
@@ -1190,10 +1191,19 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 	mergedTranscript := *transcript
 	mergedTranscript.Segments = make([]interfaces.TranscriptSegment, len(transcript.Segments))
 	copy(mergedTranscript.Segments, transcript.Segments)
+	mergedTranscript.Metadata = map[string]string{}
+	for k, v := range transcript.Metadata {
+		mergedTranscript.Metadata[k] = v
+	}
+	for k, v := range diarization.Metadata {
+		mergedTranscript.Metadata[diarizationMetadataKey(k)] = v
+	}
+	mergedTranscript.Diarization = diarization
 
 	// Assign speakers to transcript segments based on timing overlap
 	for i := range mergedTranscript.Segments {
 		segment := &mergedTranscript.Segments[i]
+		segment.Speaker = nil
 		bestSpeaker := u.findBestSpeakerForSegment(segment.Start, segment.End, diarization.Segments)
 		if bestSpeaker != "" {
 			segment.Speaker = &bestSpeaker
@@ -1207,18 +1217,15 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 
 		for i := range mergedTranscript.WordSegments {
 			word := &mergedTranscript.WordSegments[i]
+			word.Speaker = nil
 			bestSpeaker := u.findBestSpeakerForSegment(word.Start, word.End, diarization.Segments)
 			if bestSpeaker != "" {
 				word.Speaker = &bestSpeaker
 			}
 		}
 
-		// Diarization boundaries and ASR word timestamps are produced by
-		// different models, so a speaker change can land a few words late or
-		// briefly flicker for a fraction of a second. Reconcile only the
-		// high-confidence boundary cases before exposing every word-level change
-		// as its own transcript turn.
-		smoothWordSpeakerBoundaries(mergedTranscript.Segments, mergedTranscript.WordSegments)
+		// Keep the acoustic model's timing decisions. Text-based smoothing
+		// cannot establish who actually spoke an ambiguous word.
 
 		// A Whisper segment can span a short exchange between speakers. Keeping
 		// only the segment's dominant speaker hides diarization boundaries that
@@ -1262,7 +1269,7 @@ func removeMicroSpeakerIslands(words []interfaces.TranscriptWord) {
 		changed := false
 		for i := 1; i+1 < len(runs); i++ {
 			previous, island, next := runs[i-1], runs[i], runs[i+1]
-			if previous.speaker == "" || previous.speaker != next.speaker || island.end-island.start != 1 {
+			if island.speaker == "" || previous.speaker == "" || previous.speaker != next.speaker || island.end-island.start != 1 {
 				continue
 			}
 
@@ -1455,12 +1462,8 @@ func splitSegmentsAtWordSpeakerChanges(
 			words   []interfaces.TranscriptWord
 		}
 		runs := make([]speakerRun, 0, 2)
-		fallbackSpeaker := ""
-		if segment.Speaker != nil {
-			fallbackSpeaker = strings.TrimSpace(*segment.Speaker)
-		}
 		for _, word := range segmentWords {
-			speaker := fallbackSpeaker
+			speaker := ""
 			if word.Speaker != nil && strings.TrimSpace(*word.Speaker) != "" {
 				speaker = strings.TrimSpace(*word.Speaker)
 			}
@@ -1471,6 +1474,7 @@ func splitSegmentsAtWordSpeakerChanges(
 		}
 
 		if len(runs) <= 1 {
+			segment.Speaker = nil
 			if len(runs) == 1 && runs[0].speaker != "" {
 				speaker := runs[0].speaker
 				segment.Speaker = &speaker
@@ -1479,14 +1483,46 @@ func splitSegmentsAtWordSpeakerChanges(
 			continue
 		}
 
-		for _, run := range runs {
+		// Split the original characters, never regenerate text from aligned words.
+		// Alignment can omit punctuation or whole words. If matching fails, keep
+		// the original segment unattributed instead of losing or inventing text.
+		boundaries := []int{0}
+		cursor, matched := 0, true
+		for runIndex, run := range runs {
+			for wordIndex, word := range run.words {
+				token := strings.TrimSpace(word.Word)
+				if token == "" {
+					continue
+				}
+				rel := strings.Index(segment.Text[cursor:], token)
+				if rel < 0 {
+					matched = false
+					break
+				}
+				position := cursor + rel
+				if runIndex > 0 && wordIndex == 0 {
+					boundaries = append(boundaries, position)
+				}
+				cursor = position + len(token)
+			}
+			if !matched {
+				break
+			}
+		}
+		if !matched || len(boundaries) != len(runs) {
+			segment.Speaker = nil
+			result = append(result, segment)
+			continue
+		}
+		boundaries = append(boundaries, len(segment.Text))
+		for runIndex, run := range runs {
 			if len(run.words) == 0 {
 				continue
 			}
 			split := interfaces.TranscriptSegment{
 				Start:    run.words[0].Start,
 				End:      run.words[len(run.words)-1].End,
-				Text:     joinTranscriptWords(run.words),
+				Text:     segment.Text[boundaries[runIndex]:boundaries[runIndex+1]],
 				Language: segment.Language,
 			}
 			if run.speaker != "" {
@@ -1521,26 +1557,70 @@ func joinTranscriptWords(words []interfaces.TranscriptWord) string {
 
 // findBestSpeakerForSegment finds the speaker with maximum overlap for a given time segment
 func (u *UnifiedTranscriptionService) findBestSpeakerForSegment(start, end float64, diarizationSegments []interfaces.DiarizationSegment) string {
-	maxOverlap := 0.0
-	bestSpeaker := ""
-
-	for _, diarSeg := range diarizationSegments {
-		// Calculate overlap
-		overlapStart := max(start, diarSeg.Start)
-		overlapEnd := min(end, diarSeg.End)
-		overlap := max(0, overlapEnd-overlapStart)
-
-		if overlap > maxOverlap {
-			maxOverlap = overlap
-			bestSpeaker = diarSeg.Speaker
+	if end < start {
+		return ""
+	}
+	type span struct{ start, end float64 }
+	bySpeaker := map[string][]span{}
+	for _, turn := range diarizationSegments {
+		if end == start {
+			if turn.Start <= start && start < turn.End {
+				bySpeaker[turn.Speaker] = []span{{0, 1}}
+			}
+		} else if left, right := max(start, turn.Start), min(end, turn.End); right > left {
+			bySpeaker[turn.Speaker] = append(bySpeaker[turn.Speaker], span{left, right})
 		}
 	}
-
+	best, runner, bestSpeaker := 0.0, 0.0, ""
+	for identity, intervals := range bySpeaker {
+		sort.Slice(intervals, func(i, j int) bool { return intervals[i].start < intervals[j].start })
+		total, left, right := 0.0, intervals[0].start, intervals[0].end
+		for _, interval := range intervals[1:] {
+			if interval.start <= right {
+				right = max(right, interval.end)
+			} else {
+				total += right - left
+				left, right = interval.start, interval.end
+			}
+		}
+		total += right - left
+		if total > best {
+			runner = best
+			best = total
+			bestSpeaker = identity
+		} else if total > runner {
+			runner = total
+		}
+	}
+	duration := end - start
+	if duration == 0 {
+		duration = 1
+	}
+	if best < duration*0.5 || best-runner < duration*0.1 {
+		return ""
+	}
 	return bestSpeaker
 }
 
 // saveTranscriptionResults saves the transcription results to the database
-func (u *UnifiedTranscriptionService) saveTranscriptionResults(jobID string, result *interfaces.TranscriptResult) error {
+func (u *UnifiedTranscriptionService) saveTranscriptionResults(jobID string, result *interfaces.TranscriptResult, audioDurationMillis int64) error {
+	// Retain every model result for forensic review, including a rejected one.
+	// This artifact is private and never replaces the accepted bundle files.
+	if raw, err := json.Marshal(result); err == nil {
+		directory := filepath.Join(u.outputDirectory, jobID, "candidates")
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return err
+		}
+		path := filepath.Join(directory, fmt.Sprintf("%d.json", time.Now().UnixNano()))
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			return err
+		}
+	}
+	if err := validateTranscriptQuality(result); err != nil {
+		logger.Error("Transcript failed quality gate", "job_id", jobID, "error", err)
+		return err
+	}
+
 	// Convert result to JSON string for database storage
 	resultJSON, err := u.convertTranscriptResultToJSON(result)
 	if err != nil {
@@ -1548,10 +1628,18 @@ func (u *UnifiedTranscriptionService) saveTranscriptionResults(jobID string, res
 	}
 
 	// Update the job in the database
-	if err := u.jobRepo.UpdateTranscript(context.Background(), jobID, resultJSON); err != nil {
+	if err := u.jobRepo.UpdateTranscript(context.Background(), jobID, resultJSON, audioDurationMillis); err != nil {
 		return fmt.Errorf("failed to update job transcript: %w", err)
 	}
 
+	job, err := u.jobRepo.FindByID(context.Background(), jobID)
+	if err != nil {
+		return err
+	}
+	if job.CandidateTranscriptRevisionID != nil {
+		logger.Info("Rerun saved for review; accepted transcript retained", "job_id", jobID)
+		return nil
+	}
 	if err := u.materializeTranscriptArtifacts(context.Background(), jobID, resultJSON); err != nil {
 		logger.Warn("Failed to materialize transcript artifacts", "job_id", jobID, "error", err)
 	}
@@ -1611,6 +1699,7 @@ type markdownTranscriptSegment struct {
 type markdownTranscriptPayload struct {
 	Text     string                      `json:"text"`
 	Segments []markdownTranscriptSegment `json:"segments,omitempty"`
+	Metadata map[string]string           `json:"metadata"`
 }
 
 func shortID(value string) string {
@@ -1645,6 +1734,9 @@ func renderMarkdownTranscript(job *models.TranscriptionJob, payload *markdownTra
 	b.WriteString("format: transcript-markdown-v1\n")
 	b.WriteString("---\n\n")
 	b.WriteString(fmt.Sprintf("# %s\n\n", title))
+	if status := payload.Metadata["diarization_status"]; status == "uncertain" || status == "failed" {
+		b.WriteString("> Text ready · speakers need review. Unattributed turns are marked Speaker unclear.\n\n")
+	}
 
 	if len(payload.Segments) == 0 {
 		b.WriteString(strings.TrimSpace(payload.Text))
@@ -1670,6 +1762,9 @@ func renderMarkdownTranscript(job *models.TranscriptionJob, payload *markdownTra
 
 	for _, segment := range payload.Segments {
 		speaker := ""
+		if payload.Metadata["diarization_status"] != "" && payload.Metadata["diarization_status"] != "not_requested" {
+			speaker = "Speaker unclear"
+		}
 		if segment.Speaker != nil && strings.TrimSpace(*segment.Speaker) != "" {
 			speaker = strings.TrimSpace(*segment.Speaker)
 			if name, ok := speakerNames[speaker]; ok && name != "" {

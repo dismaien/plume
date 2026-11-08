@@ -73,7 +73,7 @@ export function DownloadDialog({ audioId, isOpen, onClose, initialFormat = 'txt'
                             id="speaker-labels"
                             checked={includeSpeakerLabels}
                             onCheckedChange={setIncludeSpeakerLabels}
-                            disabled={!transcript?.segments?.some(s => s.speaker)}
+                            disabled={!transcript?.segments?.some(s => s.speaker) && !transcript?.metadata?.diarization_status}
                         />
                     </div>
 

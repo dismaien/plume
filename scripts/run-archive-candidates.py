@@ -5,12 +5,14 @@ Each candidate remains unreviewed. Per-recording failures are retained and do no
 block unrelated offline work. Resource/queue conflicts stop the worker cleanly.
 """
 import argparse
+import collections
 import dataclasses
 import difflib
 import fcntl
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import traceback
@@ -20,6 +22,20 @@ from archive_repair import DEFAULT_DB, load_script, now, read_db, sha256, write_
 
 class PauseWork(Exception):
     pass
+
+
+def repetition_signals(output):
+    """Triage only: genuine speech/music can repeat; never edit or accept text."""
+    words = re.findall(r"\b[\w']+\b", output.get('text', '').lower())
+    phrase_count = 0
+    for offset in range(0, len(words), 80):
+        window = words[offset:offset + 200]
+        counts = collections.Counter(tuple(window[i:i + 8]) for i in range(max(0, len(window) - 7)))
+        phrase_count = max(phrase_count, max(counts.values(), default=0))
+    return {
+        'high_compression': any(s.get('compression_ratio', 0) > 2.4 for s in output.get('segments', [])),
+        'local_phrase_loop': phrase_count >= 3,
+    }
 
 
 def numeric_values_finite(value):
@@ -37,6 +53,8 @@ def main():
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--db', type=Path, default=DEFAULT_DB)
+    parser.add_argument('--fallback-on-repetition', action='store_true',
+                        help='Save an additional unreviewed retry when the baseline has repetition signals; retain both primary candidates')
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -73,7 +91,8 @@ def main():
         fcntl.flock(repair, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             guard()
-            manifest.update(state='loading_model', worker_pid=os.getpid())
+            manifest.update(state='loading_model', worker_pid=os.getpid(), optional_fallback_enabled=args.fallback_on_repetition)
+            manifest.pop('reason', None)
             save()
             cache = args.db.parent / 'whisperx-env/cache'
             os.environ.update(HF_HOME=str(cache / 'huggingface'),
@@ -118,39 +137,58 @@ def main():
                     item['state'] = 'decoding'
                     language = None
                     outputs = {}
-                    for mode in ('full_audio', 'silero_comparison'):
+                    modes = ['full_audio', 'silero_comparison']
+                    for mode in modes:
                         guard()
-                        output_path = target / (mode + '.json')
-                        if output_path.exists():
-                            output = json.loads(output_path.read_text())
-                            if output['metadata']['source_sha256'] != before['audio_sha256']:
-                                raise ValueError('Cached output belongs to a different source')
-                        else:
-                            segments, info = model.transcribe(
-                                audio, language=language, beam_size=5, best_of=5,
-                                temperature=0, condition_on_previous_text=False,
-                                word_timestamps=True, vad_filter=mode != 'full_audio',
-                                vad_parameters=VadOptions(threshold=.5, neg_threshold=.363, max_speech_duration_s=30) if mode != 'full_audio' else None,
-                                log_prob_threshold=-.5, no_speech_threshold=.5)
-                            result = []
-                            for segment in segments:
-                                guard()
-                                result.append(dataclasses.asdict(segment))
-                            output = {'language': info.language, 'segments': result,
-                                      'text': ' '.join(s['text'] for s in result),
-                                      'metadata': {'offline_candidate': True, 'human_reviewed': False,
-                                                   'model': 'large-v3', 'compute_type': 'int8',
-                                                   'vad_filter': mode != 'full_audio', 'temperature': 0,
-                                                   'logprob_threshold': -.5, 'no_speech_threshold': .5,
-                                                   'condition_on_previous_text': False,
-                                                   'source_sha256': before['audio_sha256']}}
-                            if not numeric_values_finite(output):
-                                raise ValueError('Non-finite decoding diagnostics')
-                            write_json(output_path, output)
-                        outputs[mode] = output
-                        language = output['language']
-                        item[mode + '_metrics'] = audit.parse_transcript(output_path)
-                        save()
+                        is_retry = mode == 'temperature_fallback'
+                        temperature = [0, .2, .4, .6, .8, 1] if is_retry else 0
+                        use_vad = mode == 'silero_comparison'
+                        try:
+                            output_path = target / (mode + '.json')
+                            if output_path.exists():
+                                output = json.loads(output_path.read_text())
+                                if output['metadata']['source_sha256'] != before['audio_sha256']:
+                                    raise ValueError('Cached output belongs to a different source')
+                            else:
+                                segments, info = model.transcribe(
+                                    audio, language=outputs['full_audio']['language'] if is_retry else language, beam_size=5, best_of=5,
+                                    temperature=temperature, condition_on_previous_text=False,
+                                    word_timestamps=True, vad_filter=use_vad,
+                                    vad_parameters=VadOptions(threshold=.5, neg_threshold=.363, max_speech_duration_s=30) if use_vad else None,
+                                    log_prob_threshold=-.5, no_speech_threshold=.5)
+                                result = []
+                                for segment in segments:
+                                    guard()
+                                    result.append(dataclasses.asdict(segment))
+                                output = {'language': info.language, 'segments': result,
+                                          'text': ' '.join(s['text'] for s in result),
+                                          'metadata': {'offline_candidate': True, 'human_reviewed': False,
+                                                       'model': 'large-v3', 'compute_type': 'int8',
+                                                       'vad_filter': use_vad, 'temperature': temperature,
+                                                       'candidate_mode': mode,
+                                                       'logprob_threshold': -.5, 'no_speech_threshold': .5,
+                                                       'condition_on_previous_text': False,
+                                                       'source_sha256': before['audio_sha256']}}
+                                if not numeric_values_finite(output):
+                                    raise ValueError('Non-finite decoding diagnostics')
+                                write_json(output_path, output)
+                            outputs[mode] = output
+                            if mode == 'full_audio' and args.fallback_on_repetition:
+                                signals = repetition_signals(output)
+                                item['retry_triage'] = signals
+                                if any(signals.values()):
+                                    modes.append('temperature_fallback')
+                            language = output['language']
+                            item[mode + '_metrics'] = audit.parse_transcript(output_path)
+                            save()
+                        except PauseWork:
+                            raise
+                        except Exception as exc:
+                            if not is_retry:
+                                raise
+                            item['retry_error'] = str(exc)
+                            traceback.print_exc()
+                            save()
                     del audio
                     if sha256(source) != before['audio_sha256'] or sha256(before['job']['transcript_json_path']) != before['transcript_sha256']:
                         raise ValueError('Original audio or live transcript changed during decoding')

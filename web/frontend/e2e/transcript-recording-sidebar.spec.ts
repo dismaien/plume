@@ -15,14 +15,14 @@ test("opens the recordings list by default and switches transcripts without retu
     await expect(page.getByRole("button", { name: "Hide recordings list" }).first()).toBeVisible();
     await expect(sidebar.getByText(AUDIO_FILES[0].title)).toBeVisible();
     await expect(sidebar).toContainText('Mar 10 · 10:15');
-    await expect(sidebar.getByRole("button", { name: /Team Standup March 10/ })).toHaveAttribute("aria-current", "page");
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText("Team Standup March 10");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(sidebar).toBeVisible();
 
-    await sidebar.getByRole("button", { name: /Product Review/ }).click();
+    await sidebar.getByRole("button", { name: /Product Review/ }).first().click();
     await expect(page).toHaveURL(/\/audio\/2$/);
-    await expect(sidebar.getByRole("button", { name: /Product Review/ })).toHaveAttribute("aria-current", "page");
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText("Product Review");
 });
 
 test("keeps the sidebar scroll position when selecting a visible recording", async ({ page }) => {

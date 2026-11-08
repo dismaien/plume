@@ -45,7 +45,7 @@ export function buildMarkdownTranscript(
         const rawSpeaker = options.includeSpeakerLabels ? segment.speaker ?? "" : "";
         const speaker = rawSpeaker
             ? getDisplaySpeakerName(rawSpeaker, speakerMappings).replace(/\s+/g, " ").trim() || formatSpeakerLabel(rawSpeaker)
-            : "";
+            : options.includeSpeakerLabels && transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== "not_requested" ? "Speaker unclear" : "";
         const previous = blocks.at(-1);
         // Join on the raw speaker key: distinct speakers sharing a display name stay separate,
         // and unlabelled segments keep their own timestamps.

@@ -52,6 +52,23 @@ func TestFormatGeneratedArchiveTitlePreservesExplicitTitle(t *testing.T) {
 	}
 }
 
+func TestFormatGeneratedArchiveTitleFormatsAppleLocationAfterSpeakers(t *testing.T) {
+	recordedAt := time.Date(2026, time.October, 4, 21, 54, 48, 0, time.UTC)
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		RecordedAt:       &recordedAt,
+		Subject:          "Struggling With Suicide Ideation",
+		CurrentTitle:     "Rua Regedoura Guinta da Regedoura 120 [Leona]",
+		OriginalFilename: "20261004 215448-74FB0B7B.m4a",
+		Transcript:       "I had a dream about struggling with suicide ideation.",
+		Speakers:         []string{"Leona"},
+		DurationMillis:   1_557_000,
+	})
+	want := "261004 21:54 (dream) Struggling With Suicide Ideation [Leona] @Rua Regedoura Guinta da Regedoura 120 {25:57}"
+	if got != want {
+		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatGeneratedArchiveTitleDoesNotNestCanonicalTitle(t *testing.T) {
 	recordedAt := time.Date(2026, time.August, 12, 10, 44, 56, 0, time.UTC)
 	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{

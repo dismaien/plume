@@ -25,11 +25,12 @@ type ScannedBundle struct {
 
 // BundleSyncResult summarizes a filesystem synchronization pass.
 type BundleSyncResult struct {
-	Imported int `json:"imported"`
-	Updated  int `json:"updated"`
-	Deleted  int `json:"deleted"`
-	Missing  int `json:"missing"`
-	Skipped  int `json:"skipped"`
+	Imported  int `json:"imported"`
+	Updated   int `json:"updated"`
+	Deleted   int `json:"deleted"`
+	Missing   int `json:"missing"`
+	Skipped   int `json:"skipped"`
+	Conflicts int `json:"conflicts"`
 }
 
 // ScanBundles walks the transcripts directory and returns all bundle directories found.
@@ -120,20 +121,30 @@ func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncR
 		return result, fmt.Errorf("scanning bundles: %w", err)
 	}
 
+	// Resolve identity collisions before choosing any filesystem copy. Directory
+	// traversal order is not authority to replace an accepted recording.
+	type preparedBundle struct {
+		bundle ScannedBundle
+		meta   *BundleMetadata
+	}
+	prepared := make([]preparedBundle, 0, len(bundles))
+	counts := map[string]int{}
 	seenIDs := make(map[string]bool, len(bundles))
-
 	for _, bundle := range bundles {
 		meta, readErr := ReadOrCreateMetadata(bundle.Dir)
 		if readErr != nil {
 			logger.Warn("bundle sync: failed to read metadata", "dir", bundle.Dir, "error", readErr)
 			continue
 		}
-
 		if meta.ID == "" {
 			meta.ID = uuid.New().String()
 		}
+		counts[meta.ID]++
 		seenIDs[meta.ID] = true
-
+		prepared = append(prepared, preparedBundle{bundle, meta})
+	}
+	for _, item := range prepared {
+		bundle, meta := item.bundle, item.meta
 		// Skip self-written metadata
 		if bundle.MtimeNS > 0 && s.isSelfWrite(MetadataPath(bundle.Dir), bundle.MtimeNS) {
 			result.Skipped++
@@ -142,6 +153,10 @@ func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncR
 
 		existing, findErr := s.jobRepo.FindByID(ctx, meta.ID)
 		if findErr != nil {
+			if counts[meta.ID] > 1 {
+				result.Conflicts++
+				continue
+			}
 			// Job doesn't exist — import
 			if importErr := s.importBundle(ctx, meta, bundle); importErr != nil {
 				logger.Warn("bundle sync: import failed", "id", meta.ID, "dir", bundle.Dir, "error", importErr)
@@ -157,6 +172,25 @@ func (s *BundleSyncService) SyncFromFilesystem(ctx context.Context) (BundleSyncR
 		pathMismatch := existing.ArtifactDir != nil &&
 			*existing.ArtifactDir != "" &&
 			filepath.Clean(*existing.ArtifactDir) != filepath.Clean(bundle.Dir)
+
+		if existing.Status == models.StatusPending || existing.Status == models.StatusProcessing || existing.CandidateTranscriptRevisionID != nil {
+			result.Skipped++
+			continue
+		}
+		if counts[meta.ID] > 1 && (existing.ArtifactDir == nil || *existing.ArtifactDir == "" || pathMismatch) {
+			result.Conflicts++
+			logger.Warn("bundle sync: duplicate recording ID; accepted bundle retained", "id", meta.ID)
+			continue
+		}
+		if pathMismatch {
+			// A real move removes the old directory. If it still exists, this is
+			// a duplicate/conflict, not evidence that the accepted result moved.
+			if _, err := os.Stat(*existing.ArtifactDir); !os.IsNotExist(err) {
+				result.Conflicts++
+				logger.Warn("bundle sync: alternate bundle conflicts with existing accepted path", "id", meta.ID)
+				continue
+			}
+		}
 
 		if !pathMismatch {
 			// Job exists — skip if DB is at least as new as metadata on disk.

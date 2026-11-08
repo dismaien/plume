@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { installApiMocks, setLocalAuthState, TRANSCRIPT_SEGMENTS, SPEAKER_MAPPINGS } from './fixtures/api-mocks';
+import { AUDIO_FILES, installApiMocks, setLocalAuthState, TRANSCRIPT_SEGMENTS, SPEAKER_MAPPINGS } from './fixtures/api-mocks';
 
 test.beforeEach(async ({ page }) => {
   await setLocalAuthState(page);
@@ -45,6 +45,7 @@ test.describe('View Completed Transcription', () => {
       .or(page.locator('text=Unable to load audio'));
     const count = await audioArea.count();
     expect(count).toBeGreaterThan(0);
+    await expect(page.getByTestId('audio-waveform')).toBeVisible();
   });
 
   test('space toggles playback without hijacking title editing', async ({ page }) => {
@@ -80,5 +81,64 @@ test.describe('View Completed Transcription', () => {
 
     await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible();
     await expect(titleInput).toHaveValue(/ $/);
+  });
+
+  test('keeps the title caret where the user is typing', async ({ page }) => {
+    await page.goto('/audio/1');
+    await page.waitForLoadState('networkidle');
+
+    await page.locator('h1.recording-title').click();
+    const titleInput = page.locator('input.recording-title');
+    await expect(titleInput).toHaveValue(AUDIO_FILES[0].title);
+
+    const insertion = 'Edited ';
+    const insertionPoint = AUDIO_FILES[0].title.indexOf('Team');
+    await titleInput.evaluate((input, position) => {
+      const element = input as HTMLInputElement;
+      element.focus();
+      element.setSelectionRange(position, position);
+    }, insertionPoint);
+    await page.keyboard.type(insertion);
+
+    const expected =
+      AUDIO_FILES[0].title.slice(0, insertionPoint)
+      + insertion
+      + AUDIO_FILES[0].title.slice(insertionPoint);
+    await expect(titleInput).toHaveValue(expected);
+    await expect.poll(() => titleInput.evaluate(input => (input as HTMLInputElement).selectionStart))
+      .toBe(insertionPoint + insertion.length);
+  });
+
+  test('recovers from a playback error when another recording is opened', async ({ page }) => {
+    await page.goto('/audio/1');
+    await page.waitForLoadState('networkidle');
+
+    await page.locator('audio').dispatchEvent('error');
+    await expect(page.getByText('Unable to load audio stream.')).toBeVisible();
+
+    await page.getByText('Product Review', { exact: true }).click();
+    await expect(page).toHaveURL(/\/audio\/2$/);
+    await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible();
+    await expect(page.getByText('Unable to load audio stream.')).toHaveCount(0);
+  });
+
+  test('labels a sub-second recording as too short instead of showing a broken player', async ({ page }) => {
+    await page.route('**/api/v1/transcription/1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...AUDIO_FILES[0],
+          has_audio: true,
+          duration: 64,
+        }),
+      });
+    });
+
+    await page.goto('/audio/1');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Recording is too short to play.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Play recording' })).toHaveCount(0);
   });
 });

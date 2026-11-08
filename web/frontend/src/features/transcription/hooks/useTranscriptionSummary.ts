@@ -79,18 +79,15 @@ export function useSummarizer(audioId: string) {
         setStreamContent("");
         setError(null);
 
-        const transcriptLabel = includeSpeakerInfo
-            ? 'Transcript (with speaker labels - each line is prefixed with [SPEAKER_NAME]):'
-            : 'Transcript:';
-        const combinedContent = `${transcriptLabel}\n${transcriptText}\n\nInstructions:\n${prompt}`;
-
         try {
             const res = await fetch('/api/v1/summarize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                 body: JSON.stringify({
                     model: model,
-                    content: combinedContent,
+                    transcript: transcriptText,
+                    instructions: prompt,
+                    include_speaker_info: includeSpeakerInfo ?? false,
                     transcription_id: audioId,
                     template_id: templateId
                 }),

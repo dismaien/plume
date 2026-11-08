@@ -128,3 +128,9 @@ First paragraph.
 Second paragraph.`);
     });
 });
+
+test('uncertain diarisation export labels unresolved speech', () => {
+  const markdown = buildMarkdownTranscript({ text: 'Quiet reply.', metadata: { diarization_status: 'uncertain' }, segments: [{ start: 1, end: 3, text: 'Quiet reply.' }] }, 'Memo', {}, { includeSpeakerLabels: true, includeTimestamps: true });
+  expect(markdown).toContain('**Speaker unclear**');
+  expect(markdown).toContain('Quiet reply.');
+});

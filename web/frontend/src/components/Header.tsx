@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -6,7 +7,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Upload, Mic, Settings, LogOut, Home, Plus, Grip, Zap, Youtube, Video, Users, MonitorSpeaker } from "lucide-react";
+import { Upload, Mic, Settings, LogOut, Home, Plus, Grip, Zap, Youtube, Video, Users, MonitorSpeaker, RefreshCw, BookOpenText } from "lucide-react";
 import { QuillLogo } from "./QuillLogo";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { AudioRecorder } from "./AudioRecorder";
@@ -18,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { isVideoFile, isAudioFile } from "../utils/fileProcessor";
 import { useGlobalUpload } from "@/contexts/GlobalUploadContext";
+import { useToast } from "@/components/ui/toast";
 
 interface FileWithType {
 	file: File;
@@ -33,13 +35,16 @@ interface HeaderProps {
 
 export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete, homePath = "/" }: HeaderProps) {
 	const navigate = useNavigate();
-	const { logout, isLocalMode } = useAuth();
+	const queryClient = useQueryClient();
+	const { toast } = useToast();
+	const { logout, isLocalMode, getAuthHeaders } = useAuth();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const videoFileInputRef = useRef<HTMLInputElement>(null);
 	const [isRecorderOpen, setIsRecorderOpen] = useState(false);
 	const [isSystemRecorderOpen, setIsSystemRecorderOpen] = useState(false);
 	const [isQuickTranscriptionOpen, setIsQuickTranscriptionOpen] = useState(false);
 	const [isYouTubeDialogOpen, setIsYouTubeDialogOpen] = useState(false);
+	const [isSyncingVoiceMemos, setIsSyncingVoiceMemos] = useState(false);
 
 	// Use global upload context as fallback when props are not provided
 	const globalUpload = useGlobalUpload();
@@ -77,8 +82,50 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete, ho
 		effectiveMultiTrackClick();
 	};
 
+	const handleVoiceMemoSync = async () => {
+		if (isSyncingVoiceMemos) return;
+		setIsSyncingVoiceMemos(true);
+		try {
+			const response = await fetch("/api/v1/transcription/voice-memos/sync", {
+				method: "POST",
+				headers: { ...getAuthHeaders() },
+			});
+			const result = await response.json() as {
+				error?: string;
+				copied_files?: number;
+				reconciled_files?: number;
+				queued_jobs?: number;
+			};
+			if (!response.ok) {
+				throw new Error(result.error || `Voice Memos sync failed (${response.status})`);
+			}
+			const discovered = (result.copied_files ?? 0) + (result.reconciled_files ?? 0);
+			if (discovered === 0) {
+				toast({ title: "Voice Memos are current", description: "No new recordings were found." });
+			} else {
+				toast({
+					title: `${result.queued_jobs ?? discovered} memo${(result.queued_jobs ?? discovered) === 1 ? "" : "s"} queued`,
+					description: "New recordings were archived and transcription has started.",
+				});
+			}
+			await queryClient.invalidateQueries({ queryKey: ["audioFiles"] });
+		} catch (error) {
+			toast({
+				title: "Voice Memos sync failed",
+				description: error instanceof Error ? error.message : "Unknown error",
+				variant: "error",
+			});
+		} finally {
+			setIsSyncingVoiceMemos(false);
+		}
+	};
+
 	const handleSettingsClick = () => {
 		navigate("/settings");
+	};
+
+	const handleReviewClick = () => {
+		navigate("/review");
 	};
 
 	const handleContactsClick = () => {
@@ -149,6 +196,29 @@ export function Header({ onFileSelect, onMultiTrackClick, onDownloadComplete, ho
 
 				{/* Right side - Plus (Add Audio), Grip Menu, Theme Switcher */}
 				<div className="flex items-center gap-2 sm:gap-3">
+					<Button
+						variant="outline"
+						onClick={handleReviewClick}
+						title="Review themes and open loops across conversations"
+						className="h-8 sm:h-10 gap-2 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 sm:px-3 text-[var(--text-primary)] hover:border-[var(--brand-solid)]/40 hover:bg-[var(--brand-light)]"
+					>
+						<BookOpenText className="h-4 w-4 text-[var(--brand-solid)]" />
+						<span className="hidden lg:inline text-sm">Review</span>
+						<span className="sr-only lg:hidden">Review conversations</span>
+					</Button>
+
+					<Button
+						variant="outline"
+						onClick={handleVoiceMemoSync}
+						disabled={isSyncingVoiceMemos}
+						title="Find and transcribe new Apple Voice Memos"
+						className="h-8 sm:h-10 gap-2 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 sm:px-3 text-[var(--text-primary)] hover:border-[var(--brand-solid)]/40 hover:bg-[var(--brand-light)]"
+					>
+						<RefreshCw className={`h-4 w-4 text-[var(--brand-solid)] ${isSyncingVoiceMemos ? "animate-spin" : ""}`} />
+						<span className="hidden md:inline text-sm">{isSyncingVoiceMemos ? "Syncing..." : "Sync Memos"}</span>
+						<span className="sr-only md:hidden">{isSyncingVoiceMemos ? "Syncing Voice Memos" : "Sync Voice Memos"}</span>
+					</Button>
+
 					{/* Add Audio (icon-only) */}
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>

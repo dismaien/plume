@@ -22,6 +22,8 @@ var (
 	)
 	archiveDreamSubjectPrefixPattern = regexp.MustCompile(`(?i)^dream(?: account| note| recording)?\s*[:\-]\s*`)
 	archiveDreamSubjectSuffixPattern = regexp.MustCompile(`(?i)\s+dream$`)
+	archiveLocationSourcePattern     = regexp.MustCompile(`(?i)^(?:rua\s+|malplaquetstra(?:ss|ß)e\b)`)
+	archiveSourceSpeakerBlockPattern = regexp.MustCompile(`\s+\[[^\[\]\n]+\]\s*$`)
 )
 
 // GeneratedArchiveTitleInput contains the durable metadata surrounding an
@@ -38,7 +40,7 @@ type GeneratedArchiveTitleInput struct {
 }
 
 // FormatGeneratedArchiveTitle builds the canonical, scan-friendly Plume title:
-// YYMMDD HH:MM (dream) Subject (original title) [Speakers] {MM:SS|HH:MM}.
+// YYMMDD HH:MM (dream) Subject (original title) [Speakers] @Location {MM:SS|HH:MM}.
 func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 	recordedAt := input.CreatedAt
 	if input.RecordedAt != nil && !input.RecordedAt.IsZero() {
@@ -56,12 +58,20 @@ func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 		parts = append(parts, subject)
 	}
 
+	sourceLocation := ""
 	if original := sourceTitleLabel(input.CurrentTitle, input.OriginalFilename, subject); original != "" {
-		parts = append(parts, "("+original+")")
+		if location := sourceLocationLabel(original); location != "" {
+			sourceLocation = location
+		} else {
+			parts = append(parts, "("+original+")")
+		}
 	}
 
 	if speakers := normalizeSpeakerTitleNames(input.Speakers); len(speakers) > 0 {
 		parts = append(parts, "["+strings.Join(speakers, ", ")+"]")
+	}
+	if sourceLocation != "" {
+		parts = append(parts, "@"+sourceLocation)
 	}
 
 	if input.DurationMillis > 0 {
@@ -69,6 +79,14 @@ func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func sourceLocationLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if !archiveLocationSourcePattern.MatchString(label) {
+		return ""
+	}
+	return strings.TrimSpace(archiveSourceSpeakerBlockPattern.ReplaceAllString(label, ""))
 }
 
 func sourceTitleLabel(currentTitle string, originalFilename string, subject string) string {

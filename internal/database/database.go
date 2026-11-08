@@ -95,6 +95,31 @@ func Initialize(dbPath string) error {
 		fmt.Println("Skipping automatic schema migration for this startup")
 	}
 
+	// Add a nullable pointer without rebuilding the large archive jobs table.
+	if !DB.Migrator().HasColumn(&models.TranscriptionJob{}, "CandidateTranscriptRevisionID") {
+		if err := DB.Migrator().AddColumn(&models.TranscriptionJob{}, "CandidateTranscriptRevisionID"); err != nil {
+			return err
+		}
+	}
+	for _, entry := range []struct {
+		model  interface{}
+		column string
+	}{
+		{&models.TranscriptionJob{}, "diarization_device"},
+		{&models.TranscriptionJobExecution{}, "actual_diarization_device"},
+		{&models.TranscriptionProfile{}, "diarization_device"},
+	} {
+		if !DB.Migrator().HasColumn(entry.model, entry.column) {
+			if err := DB.Migrator().AddColumn(entry.model, "DiarizationDevice"); err != nil {
+				return err
+			}
+		}
+	}
+	// This additive table is required even on an existing desktop recovery install.
+	if err := DB.AutoMigrate(&models.TranscriptRevision{}); err != nil {
+		return fmt.Errorf("failed to migrate transcript history: %w", err)
+	}
+
 	skipStartupBackfills := strings.EqualFold(os.Getenv("QUILL_SKIP_STARTUP_BACKFILLS"), "true")
 	if !skipStartupBackfills {
 		if err := contacts.BackfillContactsFileFirst(context.Background(), DB); err != nil {
@@ -302,17 +327,24 @@ func backfillSpeakerMappingMatchSource(db *gorm.DB) error {
 	return nil
 }
 
-// seedDefaultSummaryTemplate creates a "Meeting Notes" template if no templates exist yet.
+// seedDefaultSummaryTemplate creates the stock template and upgrades only an
+// untouched legacy copy. User-authored and customized templates are preserved.
 func seedDefaultSummaryTemplate(db *gorm.DB) error {
 	var count int64
 	if err := db.Model(&models.SummaryTemplate{}).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
-		return nil
+		return db.Model(&models.SummaryTemplate{}).
+			Where("name = ? AND prompt = ?", "Meeting Notes", legacyMeetingNotesPrompt).
+			Updates(map[string]interface{}{
+				"description":          "Detailed, speaker-attributed notes for meetings and personal conversations.",
+				"prompt":               defaultMeetingNotesPrompt,
+				"include_speaker_info": true,
+			}).Error
 	}
 
-	desc := "Structured meeting notes with summary, decisions, action items, and next steps."
+	desc := "Detailed, speaker-attributed notes for meetings and personal conversations."
 	template := models.SummaryTemplate{
 		Name:               "Meeting Notes",
 		Description:        &desc,
@@ -323,7 +355,7 @@ func seedDefaultSummaryTemplate(db *gorm.DB) error {
 	return db.Create(&template).Error
 }
 
-const defaultMeetingNotesPrompt = `You are a skilled meeting analyst. Analyze the following transcript and produce structured meeting notes in Markdown format.
+const legacyMeetingNotesPrompt = `You are a skilled meeting analyst. Analyze the following transcript and produce structured meeting notes in Markdown format.
 
 ## Summary
 Write a 2-3 sentence executive overview. Lead with the most important outcome or decision, then provide essential context.
@@ -347,6 +379,36 @@ Guidelines:
 - Use speakers' names when available for attribution.
 - Do not invent or infer information not present in the transcript.
 - Omit any section that has no relevant content rather than writing "None" or "N/A".`
+
+const defaultMeetingNotesPrompt = `Analyze the complete transcript and produce specific, speaker-attributed notes in Markdown. This may be a work meeting, a personal conversation, or a reflective discussion; use the structure that fits the actual material instead of forcing a corporate-meeting interpretation.
+
+## Summary
+Write a substantive overview of the central situation, what mattered to each person, and how the conversation developed. Name the people involved. Include important tensions, changes in position, or outcomes rather than listing broad subject areas.
+
+## Speaker Perspectives
+Give each named speaker a short subsection. Describe their position, concerns, feelings, requests, and reasoning with concrete details from the transcript. Note meaningful agreement, disagreement, misunderstanding, or emotional movement between speakers. Omit this section only when the recording truly has one speaker.
+
+## Key Themes and Dynamics
+Organize the most important themes by meaning, not chronology. Explain the connection between events, motivations, relationship dynamics, practical constraints, and consequences. Preserve telling examples and distinctions that would be lost in a surface-level topic list.
+
+## Decisions and Commitments
+List only decisions or commitments that were explicit in the conversation. Attribute each one to the named person or people who made it. Omit this section when there were none.
+
+## Action Items
+List only concrete future tasks that were explicitly agreed to or requested. Use this format:
+- **[Owner]**: Task description *(deadline, if stated)*
+Assign an owner only when the transcript states or clearly establishes one. Do not turn reflections, hopes, possible ideas, or unresolved issues into action items. Omit this section when no concrete tasks exist; never output "Unassigned", "None", or "N/A" as filler.
+
+## Open Questions
+List genuinely unresolved questions, points of uncertainty, or areas the speakers deliberately left open. Attribute them where useful. Omit this section when none exist.
+
+Guidelines:
+- Use exact speaker names whenever labels are available. Never call a named person "the speaker" and do not flatten multiple people into "they".
+- Be detailed enough to recover the reasoning and interpersonal context, while removing verbal filler and repetition.
+- Distinguish what a person explicitly said from cautious interpretation. Do not invent facts, motives, decisions, tasks, owners, agreement, or certainty.
+- Represent different viewpoints separately before synthesizing them.
+- Prefer concrete claims and examples over generic phrases such as "the participants discussed" or "various challenges".
+- Omit empty sections entirely rather than writing placeholders.`
 
 // Close closes the database connection gracefully
 func Close() error {

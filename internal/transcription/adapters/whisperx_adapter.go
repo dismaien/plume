@@ -778,6 +778,16 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 			logger.Warn("Failed to read log tail", "error", readErr)
 		}
 
+		if w.GetBoolParameter(params, "whisper_full_audio") && ctx.Err() == nil {
+			if evidence, readErr := os.ReadFile(filepath.Join(tempDir, "decoding-diagnostics", "asr-0.json")); readErr == nil {
+				if recovered, recoverErr := recoverFullAudioTranscript(evidence); recoverErr == nil {
+					recovered.ModelUsed = w.GetStringParameter(params, "model")
+					recovered.ProcessingTime = time.Since(startTime)
+					logger.Warn("Returning decoded text after post-ASR failure; alignment needs review")
+					return recovered, nil
+				}
+			}
+		}
 		logger.Error("WhisperX execution failed", "error", err)
 		return nil, fmt.Errorf("WhisperX execution failed: %w\nLogs:\n%s", err, logTail)
 	}

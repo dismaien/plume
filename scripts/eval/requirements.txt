@@ -1,0 +1,4 @@
+# Isolated evaluation environment. Does not modify any managed inference runtime.
+pyannote.metrics==4.2.0
+meeteval==0.4.3
+pytest==9.2.0

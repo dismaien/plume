@@ -1,9 +1,11 @@
+import { getTranscriptSpeakerOrder } from "@/lib/speaker-utils";
 import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { TranscriptView } from "@/components/transcript/TranscriptView";
 import { useNotes, useCreateNote, useUpdateNote, useDeleteNote } from "@/features/transcription/hooks/useTranscriptionNotes";
 import { useSelectionMenu } from "@/features/transcription/hooks/useSelectionMenu";
+import { TranscriptEditor, type TranscriptEditTarget } from "./TranscriptEditor";
 import { DownloadDialog } from "./DownloadDialog";
 import SpeakerRenameDialog from "./SpeakerRenameDialog";
 import { NotesSidebar } from "./NotesSidebar";
@@ -13,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { X, StickyNote } from "lucide-react";
 import { computeWordOffsets } from "@/features/transcription/hooks/useKaraokeHighlight";
-import type { Transcript } from "@/features/transcription/hooks/useAudioDetail";
+import { useAudioDetail, type Transcript } from "@/features/transcription/hooks/useAudioDetail";
 import type { SpeakerMapping } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import type { TranscriptMode } from "@/components/transcript/TranscriptView";
 import { cn } from "@/lib/utils";
@@ -43,6 +45,36 @@ interface TranscriptSectionProps {
     onSpeakerMappingsSaved?: (mappings: SpeakerMapping[]) => void;
 }
 
+function computeSegmentSelectionOffsets(transcript: Transcript | undefined, mode: TranscriptMode) {
+    if (!transcript?.segments?.length) return [];
+
+    const texts = transcript.segments.map(segment =>
+        mode === 'compacted' ? segment.text.trim() : segment.text
+    );
+    const renderedText = mode === 'plain'
+        ? (transcript.text || texts.join(' '))
+        : texts.join(' ');
+    let cursor = 0;
+
+    return transcript.segments.map((segment, index) => {
+        const text = texts[index];
+        let startChar = renderedText.indexOf(text, cursor);
+        if (startChar < 0 && text !== text.trim()) {
+            startChar = renderedText.indexOf(text.trim(), cursor);
+        }
+        if (startChar < 0) startChar = cursor;
+        const endChar = Math.min(renderedText.length, startChar + text.length);
+        cursor = endChar + (index < transcript.segments!.length - 1 ? 1 : 0);
+
+        return {
+            startChar,
+            endChar,
+            startTime: segment.start,
+            endTime: segment.end,
+        };
+    });
+}
+
 export function TranscriptSection({
     audioId,
     currentWordIndex,
@@ -68,6 +100,7 @@ export function TranscriptSection({
     const isMobile = useIsMobile();
     const isDesktop = useIsDesktop();
     const queryClient = useQueryClient();
+    const { data: audio } = useAudioDetail(audioId);
 
     // Data hooks
     const { data: notes = [] } = useNotes(audioId);
@@ -78,6 +111,7 @@ export function TranscriptSection({
     // Refs
     const transcriptRef = useRef<HTMLDivElement>(null);
     const highlightedWordRef = useRef<HTMLSpanElement>(null);
+    const [editTarget, setEditTarget] = useState<TranscriptEditTarget | null>(null);
 
     // Search
     const [searchQuery, setSearchQuery] = useState("");
@@ -105,14 +139,19 @@ export function TranscriptSection({
     // Compute offsets for selection logic
     const words = useMemo(() => transcript?.word_segments || [], [transcript?.word_segments]);
     const { offsets } = useMemo(() => computeWordOffsets(words), [words]);
+    const selectionOffsets = useMemo(
+        () => offsets.length > 0 ? offsets : computeSegmentSelectionOffsets(transcript, transcriptMode),
+        [offsets, transcript, transcriptMode]
+    );
 
     // Unified Selection Hook for both desktop and mobile
     const {
         menuState,
         showEditor,
         openEditor,
-        closeEditor
-    } = useSelectionMenu(transcriptRef, offsets);
+        closeEditor,
+        dismissMenu
+    } = useSelectionMenu(transcriptRef, selectionOffsets);
 
     // Auto-scroll logic
     useEffect(() => {
@@ -157,17 +196,7 @@ export function TranscriptSection({
     }, [onSeek, isDesktop]);
 
     // Helpers
-    const getDetectedSpeakers = () => {
-        // Safe check for segments array
-        if (!transcript?.segments) return [];
-        const speakers = new Set<string>();
-        // Using any for segment here if strict typing is an issue, or typed via Transcript
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        transcript.segments.forEach((segment: any) => {
-            if (segment.speaker) speakers.add(segment.speaker);
-        });
-        return Array.from(speakers).sort();
-    };
+    const detectedSpeakers = useMemo(() => getTranscriptSpeakerOrder(transcript), [transcript]);
 
     const handleSaveNote = (content: string) => {
         if (menuState) {
@@ -191,13 +220,38 @@ export function TranscriptSection({
         }
     };
 
+    const handleEditSelection = () => {
+        if (!menuState) return;
+        setEditTarget({
+            requestId: Date.now(),
+            startTime: menuState.startTime,
+            selectedText: menuState.selectedText,
+        });
+        dismissMenu();
+        window.getSelection()?.removeAllRanges();
+    };
+
     if (!transcript) return null;
 
     return (
         <div className="obsidian-pane p-4 md:p-5 min-h-[500px]">
-            {/* 
-                  TOOLBAR REMOVED -> Moved to Context Menu 
-                */}
+            {audio?.candidate_transcript_revision_id && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Rerun candidate ready. Your accepted transcript is shown below. Open Edit history to compare and accept the candidate.</p>
+            )}
+            {transcript.metadata?.text_status === 'needs_review' && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text needs review: no usable text was returned. This recording has not been verified as silence.</p>
+            )}
+            {transcript.metadata?.text_status !== 'needs_review' && ['uncertain', 'failed'].includes(transcript.metadata?.diarization_status || '') && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text ready · speakers need review. Unattributed turns are marked “Speaker unclear”.</p>
+            )}
+            {transcript.metadata?.alignment_status === 'failed' && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text recovered · alignment needs review. Word times come from the speech decoder.</p>
+            )}
+            <TranscriptEditor
+                audioId={audioId}
+                speakerMappings={speakerMappings}
+                contextualTarget={editTarget}
+            />
 
             {/* Transcript Content - Systematic Typography */}
             <div
@@ -257,7 +311,7 @@ export function TranscriptSection({
                 open={speakerRenameOpen}
                 onOpenChange={setSpeakerRenameOpen}
                 transcriptionId={audioId}
-                initialSpeakers={getDetectedSpeakers()}
+                initialSpeakers={detectedSpeakers}
                 onSpeakerMappingsUpdate={(mappings) => {
                     queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
@@ -277,6 +331,7 @@ export function TranscriptSection({
                             menuState={menuState}
                             onAddNote={openEditor}
                             onListenFromHere={handleListenFromHere}
+                            onEditSelection={handleEditSelection}
                         />
                     )}
 

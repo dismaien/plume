@@ -6,6 +6,7 @@ import { useGlobalEvents } from '@/features/transcription/hooks/useGlobalEvents'
 const Dashboard = lazy(() => import("@/features/transcription/components/Dashboard").then(module => ({ default: module.Dashboard })));
 const AudioDetailView = lazy(() => import("@/features/transcription/components/AudioDetailView").then(module => ({ default: module.AudioDetailView })));
 const ContactsPage = lazy(() => import("@/features/contacts/pages/ContactsPage").then(module => ({ default: module.ContactsPage })));
+const ReviewPage = lazy(() => import("@/features/review/pages/ReviewPage").then(module => ({ default: module.ReviewPage })));
 const Settings = lazy(() => import('@/features/settings/pages/SettingsPage').then(module => ({ default: module.Settings })))
 const CLISettings = lazy(() => import('@/features/settings/pages/CLISettingsPage').then(module => ({ default: module.CLISettings })))
 const CLIAuthConfirmation = lazy(() => import('./features/auth/components/CLIAuthConfirmation').then(module => ({ default: module.CLIAuthConfirmation })))
@@ -28,6 +29,7 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/audio/:audioId" element={<AudioDetailView />} />
         <Route path="/contacts" element={<ContactsPage />} />
+        <Route path="/review" element={<ReviewPage />} />
 
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/cli" element={<CLISettings />} />

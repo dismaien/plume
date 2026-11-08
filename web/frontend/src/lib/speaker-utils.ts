@@ -28,3 +28,14 @@ export function formatSpeakerLabel(rawSpeaker: string): string {
     }
     return rawSpeaker;
 }
+
+/** Collect detected keys for editing; their order must not determine letter labels. */
+export function getTranscriptSpeakerOrder(transcript?: {
+    segments?: { speaker?: string }[];
+    word_segments?: { speaker?: string }[];
+} | null): string[] {
+    const from = (items?: { speaker?: string }[]) =>
+        [...new Set(items?.map(item => item.speaker).filter((speaker): speaker is string => !!speaker))];
+    const speakers = from(transcript?.segments);
+    return speakers.length ? speakers : from(transcript?.word_segments);
+}

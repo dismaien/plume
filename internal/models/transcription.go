@@ -9,38 +9,40 @@ import (
 
 // TranscriptionJob represents a transcription job record
 type TranscriptionJob struct {
-	ID                     string         `json:"id" gorm:"primaryKey;type:varchar(36)"`
-	Title                  *string        `json:"title,omitempty" gorm:"type:text"`
-	Status                 JobStatus      `json:"status" gorm:"type:varchar(20);not null;default:'pending'"`
-	AudioPath              string         `json:"audio_path" gorm:"type:text;not null"`
-	VaultID                *uint          `json:"vault_id,omitempty" gorm:"index"`
-	ArtifactDir            *string        `json:"artifact_dir,omitempty" gorm:"type:text"`
-	TranscriptJSONPath     *string        `json:"transcript_json_path,omitempty" gorm:"type:text"`
-	TranscriptMarkdownPath *string        `json:"transcript_markdown_path,omitempty" gorm:"type:text"`
-	Folder                 *string        `json:"folder,omitempty" gorm:"type:text;index"`
-	Transcript             *string        `json:"transcript,omitempty" gorm:"type:text"`
-	Diarization            bool           `json:"diarization" gorm:"type:boolean;default:false"`
-	Summary                *string        `json:"summary,omitempty" gorm:"type:text"`
-	ErrorMessage           *string        `json:"error_message,omitempty" gorm:"type:text"`
-	IsMultiTrack           bool           `json:"is_multi_track" gorm:"type:boolean;default:false"`
-	AupFilePath            *string        `json:"aup_file_path,omitempty" gorm:"type:text"`
-	MultiTrackFolder       *string        `json:"multi_track_folder,omitempty" gorm:"type:text"`
-	MergedAudioPath        *string        `json:"merged_audio_path,omitempty" gorm:"type:text"`
-	MergeStatus            string         `json:"merge_status" gorm:"type:varchar(20);default:'none'"` // none, pending, processing, completed, failed
-	MergeError             *string        `json:"merge_error,omitempty" gorm:"type:text"`
-	IndividualTranscripts  *string        `json:"individual_transcripts,omitempty" gorm:"type:text"` // JSON-serialized map[string]*string
-	OriginalFilename       string         `json:"original_filename,omitempty" gorm:"type:text"`
-	FileHash               string         `json:"file_hash,omitempty" gorm:"type:varchar(64);index"`
-	RecordedAt             *time.Time     `json:"recorded_at,omitempty" gorm:"type:datetime"`
-	IsSourcePart           bool           `json:"is_source_part" gorm:"type:boolean;default:false;index"`
-	SourceParentID         string         `json:"source_parent_id,omitempty" gorm:"type:varchar(36);index"`
-	SourceGroupID          string         `json:"source_group_id,omitempty" gorm:"type:text;index"`
-	SourcePartIndex        int            `json:"source_part_index,omitempty" gorm:"type:int;default:0"`
-	SourcePartCount        int            `json:"source_part_count,omitempty" gorm:"type:int;default:0"`
-	ObsidianSyncedAt       *time.Time     `json:"obsidian_synced_at,omitempty" gorm:"type:datetime"`
-	CreatedAt              time.Time      `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt              time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
-	DeletedAt              gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index" swaggertype:"string"`
+	ID                            string         `json:"id" gorm:"primaryKey;type:varchar(36)"`
+	Title                         *string        `json:"title,omitempty" gorm:"type:text"`
+	Status                        JobStatus      `json:"status" gorm:"type:varchar(20);not null;default:'pending'"`
+	AudioPath                     string         `json:"audio_path" gorm:"type:text;not null"`
+	VaultID                       *uint          `json:"vault_id,omitempty" gorm:"index"`
+	ArtifactDir                   *string        `json:"artifact_dir,omitempty" gorm:"type:text"`
+	TranscriptJSONPath            *string        `json:"transcript_json_path,omitempty" gorm:"type:text"`
+	TranscriptMarkdownPath        *string        `json:"transcript_markdown_path,omitempty" gorm:"type:text"`
+	Folder                        *string        `json:"folder,omitempty" gorm:"type:text;index"`
+	Transcript                    *string        `json:"transcript,omitempty" gorm:"type:text"`
+	CandidateTranscriptRevisionID *uint          `json:"candidate_transcript_revision_id,omitempty"`
+	Diarization                   bool           `json:"diarization" gorm:"type:boolean;default:false"`
+	Summary                       *string        `json:"summary,omitempty" gorm:"type:text"`
+	ErrorMessage                  *string        `json:"error_message,omitempty" gorm:"type:text"`
+	IsMultiTrack                  bool           `json:"is_multi_track" gorm:"type:boolean;default:false"`
+	AupFilePath                   *string        `json:"aup_file_path,omitempty" gorm:"type:text"`
+	MultiTrackFolder              *string        `json:"multi_track_folder,omitempty" gorm:"type:text"`
+	MergedAudioPath               *string        `json:"merged_audio_path,omitempty" gorm:"type:text"`
+	MergeStatus                   string         `json:"merge_status" gorm:"type:varchar(20);default:'none'"` // none, pending, processing, completed, failed
+	MergeError                    *string        `json:"merge_error,omitempty" gorm:"type:text"`
+	IndividualTranscripts         *string        `json:"individual_transcripts,omitempty" gorm:"type:text"` // JSON-serialized map[string]*string
+	OriginalFilename              string         `json:"original_filename,omitempty" gorm:"type:text"`
+	FileHash                      string         `json:"file_hash,omitempty" gorm:"type:varchar(64);index"`
+	AudioDurationMillis           int64          `json:"audio_duration_ms,omitempty" gorm:"column:audio_duration_ms;type:bigint;default:0"`
+	RecordedAt                    *time.Time     `json:"recorded_at,omitempty" gorm:"type:datetime"`
+	IsSourcePart                  bool           `json:"is_source_part" gorm:"type:boolean;default:false;index"`
+	SourceParentID                string         `json:"source_parent_id,omitempty" gorm:"type:varchar(36);index"`
+	SourceGroupID                 string         `json:"source_group_id,omitempty" gorm:"type:text;index"`
+	SourcePartIndex               int            `json:"source_part_index,omitempty" gorm:"type:int;default:0"`
+	SourcePartCount               int            `json:"source_part_count,omitempty" gorm:"type:int;default:0"`
+	ObsidianSyncedAt              *time.Time     `json:"obsidian_synced_at,omitempty" gorm:"type:datetime"`
+	CreatedAt                     time.Time      `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt                     time.Time      `json:"updated_at" gorm:"autoUpdateTime"`
+	DeletedAt                     gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index" swaggertype:"string"`
 
 	// WhisperX parameters
 	Parameters WhisperXParams `json:"parameters" gorm:"embedded"`
@@ -104,6 +106,7 @@ type WhisperXParams struct {
 	WhisperFullAudio bool    `json:"whisper_full_audio" gorm:"type:boolean;default:false"`
 
 	// Diarization settings
+	DiarizationDevice string `json:"diarization_device" gorm:"type:varchar(10);default:auto"`
 	Diarize           bool   `json:"diarize" gorm:"type:boolean;default:false"`
 	MinSpeakers       *int   `json:"min_speakers,omitempty" gorm:"type:int"`
 	MaxSpeakers       *int   `json:"max_speakers,omitempty" gorm:"type:int"`

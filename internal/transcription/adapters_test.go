@@ -32,6 +32,14 @@ func (m *MockJobRepository) FindByID(ctx context.Context, id interface{}) (*mode
 	return args.Get(0).(*models.TranscriptionJob), args.Error(1)
 }
 
+func (m *MockJobRepository) FindAudioSourceByID(ctx context.Context, id string) (*models.TranscriptionJob, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.TranscriptionJob), args.Error(1)
+}
+
 func (m *MockJobRepository) Update(ctx context.Context, entity *models.TranscriptionJob) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
@@ -60,7 +68,7 @@ func (m *MockJobRepository) ListByUser(ctx context.Context, userID uint, offset,
 	return args.Get(0).([]models.TranscriptionJob), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockJobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string) error {
+func (m *MockJobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string, audioDurationMillis int64) error {
 	args := m.Called(ctx, jobID, transcript)
 	return args.Error(0)
 }
@@ -589,39 +597,39 @@ func TestTranscriptionIncludesDiarization(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:    "WhisperX with PyAnnote diarization includes diarization",
-			modelID: ModelWhisperX,
-			params:  models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
-			expected: true,
-		},
-		{
-			name:    "WhisperX with Sortformer does NOT include diarization",
-			modelID: ModelWhisperX,
-			params:  models.WhisperXParams{Diarize: true, DiarizeModel: DiarizeSortformer},
+			name:     "WhisperX with PyAnnote uses separate diarization",
+			modelID:  ModelWhisperX,
+			params:   models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
 			expected: false,
 		},
 		{
-			name:    "WhisperX without diarization enabled",
-			modelID: ModelWhisperX,
-			params:  models.WhisperXParams{Diarize: false},
+			name:     "WhisperX with Sortformer does NOT include diarization",
+			modelID:  ModelWhisperX,
+			params:   models.WhisperXParams{Diarize: true, DiarizeModel: DiarizeSortformer},
 			expected: false,
 		},
 		{
-			name:    "MLX Whisper never includes diarization",
-			modelID: ModelMLXWhisper,
-			params:  models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
+			name:     "WhisperX without diarization enabled",
+			modelID:  ModelWhisperX,
+			params:   models.WhisperXParams{Diarize: false},
 			expected: false,
 		},
 		{
-			name:    "Whisper.cpp never includes diarization",
-			modelID: ModelWhisperCpp,
-			params:  models.WhisperXParams{Diarize: true},
+			name:     "MLX Whisper never includes diarization",
+			modelID:  ModelMLXWhisper,
+			params:   models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
 			expected: false,
 		},
 		{
-			name:    "Parakeet never includes diarization",
-			modelID: ModelParakeet,
-			params:  models.WhisperXParams{Diarize: true},
+			name:     "Whisper.cpp never includes diarization",
+			modelID:  ModelWhisperCpp,
+			params:   models.WhisperXParams{Diarize: true},
+			expected: false,
+		},
+		{
+			name:     "Parakeet never includes diarization",
+			modelID:  ModelParakeet,
+			params:   models.WhisperXParams{Diarize: true},
 			expected: false,
 		},
 	}
@@ -646,11 +654,11 @@ func TestParallelizationDecision(t *testing.T) {
 	service := NewUnifiedTranscriptionService(mockRepo, "data/temp", "data/transcripts", "")
 
 	tests := []struct {
-		name                string
-		transcriptionModel  string
-		diarizationModel    string
-		params              models.WhisperXParams
-		expectParallel      bool
+		name               string
+		transcriptionModel string
+		diarizationModel   string
+		params             models.WhisperXParams
+		expectParallel     bool
 	}{
 		{
 			name:               "MLX Whisper + Sortformer → parallel",
@@ -674,11 +682,11 @@ func TestParallelizationDecision(t *testing.T) {
 			expectParallel:     true,
 		},
 		{
-			name:               "WhisperX + PyAnnote → sequential (built-in diarization)",
+			name:               "WhisperX + PyAnnote → parallel separate pipeline",
 			transcriptionModel: ModelWhisperX,
 			diarizationModel:   ModelPyannote,
 			params:             models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
-			expectParallel:     false,
+			expectParallel:     true,
 		},
 		{
 			name:               "WhisperX no diarization → sequential",
@@ -744,12 +752,12 @@ func TestConvertToWhisperXParamsWithSortformerDiarization(t *testing.T) {
 	pyannoteParams.DiarizeModel = ModelPyannote
 	paramMap = service.convertToWhisperXParams(pyannoteParams)
 
-	if diarize, ok := paramMap["diarize"].(bool); !ok || !diarize {
-		t.Fatalf("expected diarize=true for pyannote path, got %v", paramMap["diarize"])
+	if diarize, ok := paramMap["diarize"].(bool); !ok || diarize {
+		t.Fatalf("expected separate diarize=false for pyannote path, got %v", paramMap["diarize"])
 	}
 
-	if gotModel, ok := paramMap["diarize_model"].(string); !ok || gotModel != ModelPyannote {
-		t.Fatalf("expected diarize_model=%q for pyannote path, got %v", ModelPyannote, paramMap["diarize_model"])
+	if _, exists := paramMap["diarize_model"]; exists {
+		t.Fatalf("expected separate pyannote model omitted, got %v", paramMap["diarize_model"])
 	}
 }
 

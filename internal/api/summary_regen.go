@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"quill/internal/llm"
 	"quill/internal/models"
 	"quill/internal/sse"
 	"quill/pkg/logger"
@@ -35,10 +34,13 @@ func formatTranscriptWithSpeakers(jsonPath string, mappings map[string]string) (
 	if err != nil {
 		return "", fmt.Errorf("summary_regen: read transcript %s: %w", jsonPath, err)
 	}
+	return formatTranscriptJSONWithSpeakers(raw, mappings)
+}
 
+func formatTranscriptJSONWithSpeakers(raw []byte, mappings map[string]string) (string, error) {
 	var payload regenPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("summary_regen: parse transcript %s: %w", jsonPath, err)
+		return "", fmt.Errorf("summary_regen: parse transcript: %w", err)
 	}
 
 	if len(payload.Segments) == 0 {
@@ -47,16 +49,19 @@ func formatTranscriptWithSpeakers(jsonPath string, mappings map[string]string) (
 
 	var sb strings.Builder
 	for _, seg := range payload.Segments {
-		// Resolve display name: speaker_name > mapping > raw speaker key
+		// A current manual mapping must override a stale name embedded in the
+		// transcript JSON. Fall back to the embedded name, then the raw key.
 		displayName := ""
-		if seg.SpeakerName != nil && *seg.SpeakerName != "" {
-			displayName = *seg.SpeakerName
-		} else if seg.Speaker != nil {
-			if mapped, ok := mappings[*seg.Speaker]; ok {
+		if seg.Speaker != nil {
+			if mapped, ok := mappings[*seg.Speaker]; ok && strings.TrimSpace(mapped) != "" {
 				displayName = mapped
+			} else if seg.SpeakerName != nil && strings.TrimSpace(*seg.SpeakerName) != "" {
+				displayName = *seg.SpeakerName
 			} else {
 				displayName = *seg.Speaker
 			}
+		} else if seg.SpeakerName != nil && strings.TrimSpace(*seg.SpeakerName) != "" {
+			displayName = *seg.SpeakerName
 		}
 
 		text := strings.TrimSpace(seg.Text)
@@ -143,27 +148,19 @@ func (h *Handler) regenerateSpeakerSummaries(job *models.TranscriptionJob, mappi
 				continue
 			}
 
-			// 7. Build the prompt (same format as frontend).
-			combinedContent := fmt.Sprintf(
-				"Transcript (with speaker labels - each line is prefixed with [SPEAKER_NAME]):\n%s\n\nInstructions:\n%s",
-				transcriptText, tmpl.Prompt,
-			)
-
-			// 8. Call LLM (non-streaming for background regen).
-			messages := []llm.ChatMessage{{Role: "user", Content: combinedContent}}
-			resp, err := svc.ChatCompletion(ctx, summary.Model, messages, 0.0)
+			// 7. Run the same context-safe summary pipeline as manual generation.
+			messages, err := prepareSummaryMessages(ctx, svc, summary.Model, transcriptText, tmpl.Prompt, true)
+			if err != nil {
+				logger.Warn("summary_regen: evidence preparation failed", "job_id", jobID, "summary_id", summary.ID, "error", err)
+				continue
+			}
+			newContent, err := runSummaryCompletion(ctx, svc, summary.Model, messages)
 			if err != nil {
 				logger.Warn("summary_regen: LLM call failed", "job_id", jobID, "summary_id", summary.ID, "error", err)
 				continue
 			}
-			if resp == nil || len(resp.Choices) == 0 {
-				logger.Warn("summary_regen: empty LLM response", "job_id", jobID, "summary_id", summary.ID)
-				continue
-			}
 
-			newContent := resp.Choices[0].Message.Content
-
-			// 9. Update the existing summary with new content.
+			// 8. Update the existing summary with new content.
 			summary.Content = newContent
 			summary.UpdatedAt = time.Now()
 			if err := h.summaryRepo.SaveSummary(ctx, &summary); err != nil {

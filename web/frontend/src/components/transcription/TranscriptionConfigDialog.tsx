@@ -62,6 +62,7 @@ export interface WhisperXParams {
     min_speakers?: number;
     max_speakers?: number;
     diarize_model: string;
+    diarization_device?: string;
     speaker_embeddings: boolean;
     temperature: number;
     best_of: number;
@@ -105,16 +106,10 @@ interface TranscriptionConfigDialogProps {
 
 const DEFAULT_DIARIZE_MODEL = "nvidia_sortformer";
 
-type DiarizationMode = "local" | /* "pyannote" | */ "sherpa-onnx";
+type DiarizationMode = "local" | "pyannote" | "sherpa-onnx";
 
 const normalizeDiarizeModel = (model?: string): string => {
-    // if (
-    //     model === "pyannote" ||
-    //     model === "pyannote/speaker-diarization-3.1" ||
-    //     model === "pyannote/speaker-diarization-community-1"
-    // ) {
-    //     return "pyannote";
-    // }
+    if (model === "pyannote" || model === "pyannote/speaker-diarization-community-1") return "pyannote";
     if (model === "nvidia_sortformer") {
         return "nvidia_sortformer";
     }
@@ -132,7 +127,7 @@ const getDiarizationMode = (params: WhisperXParams): DiarizationMode => {
     if (diarizeModel === "sherpa-onnx") {
         return "sherpa-onnx";
     }
-    return "sherpa-onnx"; // was "pyannote"
+    return "pyannote";
 };
 
 const applyDiarizationMode = (
@@ -154,9 +149,8 @@ const applyDiarizationMode = (
         updateParam("hf_token", undefined);
         return;
     }
-    // // pyannote — backend resolves HF token from settings
-    // updateParam("diarize_model", "pyannote");
-    // updateParam("hf_token", undefined);
+    updateParam("diarize_model", "pyannote");
+    updateParam("hf_token", undefined);
 };
 
 const DEFAULT_PARAMS: WhisperXParams = {
@@ -174,8 +168,8 @@ const DEFAULT_PARAMS: WhisperXParams = {
     interpolate_method: "nearest",
     no_align: false,
     return_char_alignments: false,
-    vad_preprocess: false,
-    whisper_full_audio: true,
+    vad_preprocess: true,
+    whisper_full_audio: false,
     vad_method: "silero",
     vad_onset: 0.5,
     vad_offset: 0.363,
@@ -191,10 +185,10 @@ const DEFAULT_PARAMS: WhisperXParams = {
     suppress_numerals: false,
     condition_on_previous_text: false,
     fp16: true,
-    temperature_increment_on_fallback: 0,
+    temperature_increment_on_fallback: 0.2,
     compression_ratio_threshold: 2.4,
     logprob_threshold: -0.5,
-    no_speech_threshold: 0.5,
+    no_speech_threshold: 0.6,
     highlight_words: false,
     segment_resolution: "sentence",
     print_progress: false,
@@ -711,7 +705,7 @@ function WhisperConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         <SelectContent className={selectContentClassName}>
                                             <SelectItem value="local" className={selectItemClassName}>NVIDIA Sortformer</SelectItem>
                                             <SelectItem value="sherpa-onnx" className={selectItemClassName}>sherpa-onnx</SelectItem>
-                                            {/* <SelectItem value="pyannote" className={selectItemClassName}>Pyannote</SelectItem> */}
+                                            <SelectItem value="pyannote" className={selectItemClassName}>Community-1 (local comparison)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </FormField>
@@ -744,6 +738,17 @@ function WhisperConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                     </FormField>
                                 </div>
 
+                                {diarizationMode === "pyannote" && (
+                                    <FormField label="Speaker processing device" description="Independent of the transcription device. Auto uses the available GPU, including Apple Metal.">
+                                        <Select value={params.diarization_device || "auto"} onValueChange={(value) => updateParam("diarization_device", value)}>
+                                            <SelectTrigger className={selectTriggerClassName}><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="auto">Auto</SelectItem><SelectItem value="cpu">CPU</SelectItem>
+                                                <SelectItem value="mps">Apple Metal</SelectItem><SelectItem value="cuda">CUDA</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </FormField>
+                                )}
                                 {diarizationMode === "local" && params.max_speakers && params.max_speakers > 4 && (
                                     <p className="text-xs text-amber-500">
                                         Sortformer supports up to 4 speakers. For more, switch to sherpa-onnx (no token needed) or Pyannote.
@@ -756,7 +761,7 @@ function WhisperConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         ? "NVIDIA Sortformer runs locally without a Hugging Face token. Supports up to 4 speakers."
                                         : diarizationMode === "sherpa-onnx"
                                         ? "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers. Models download automatically on first use."
-                                        : "Uses your Hugging Face token from Settings \u2192 Transcription. Supports up to 20 speakers. Falls back to Sortformer if not configured."}
+                                        : "Community-1 runs locally. First use requires model access through Hugging Face; cached models work offline. A failed run is reported without changing engines."}
                                 </p>
                             </div>
                         )}
@@ -992,7 +997,7 @@ function ParakeetConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         <SelectContent className={selectContentClassName}>
                                             <SelectItem value="local" className={selectItemClassName}>NVIDIA Sortformer</SelectItem>
                                             <SelectItem value="sherpa-onnx" className={selectItemClassName}>sherpa-onnx</SelectItem>
-                                            {/* <SelectItem value="pyannote" className={selectItemClassName}>Pyannote</SelectItem> */}
+                                            <SelectItem value="pyannote" className={selectItemClassName}>Community-1 (local comparison)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </FormField>
@@ -1025,6 +1030,17 @@ function ParakeetConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                     </FormField>
                                 </div>
 
+                                {diarizationMode === "pyannote" && (
+                                    <FormField label="Speaker processing device" description="Independent of the transcription device. Auto uses the available GPU, including Apple Metal.">
+                                        <Select value={params.diarization_device || "auto"} onValueChange={(value) => updateParam("diarization_device", value)}>
+                                            <SelectTrigger className={selectTriggerClassName}><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="auto">Auto</SelectItem><SelectItem value="cpu">CPU</SelectItem>
+                                                <SelectItem value="mps">Apple Metal</SelectItem><SelectItem value="cuda">CUDA</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </FormField>
+                                )}
                                 {diarizationMode === "local" && params.max_speakers && params.max_speakers > 4 && (
                                     <p className="text-xs text-amber-500">
                                         Sortformer supports up to 4 speakers. For more, switch to sherpa-onnx (no token needed) or Pyannote.
@@ -1037,7 +1053,7 @@ function ParakeetConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         ? "NVIDIA Sortformer runs locally without a Hugging Face token. Supports up to 4 speakers."
                                         : diarizationMode === "sherpa-onnx"
                                         ? "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers. Models download automatically on first use."
-                                        : "Uses your Hugging Face token from Settings \u2192 Transcription. Supports up to 20 speakers. Falls back to Sortformer if not configured."}
+                                        : "Community-1 runs locally. First use requires model access through Hugging Face; cached models work offline. A failed run is reported without changing engines."}
                                 </p>
                             </div>
                         )}
@@ -1101,7 +1117,7 @@ function CanaryConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         <SelectContent className={selectContentClassName}>
                                             <SelectItem value="local" className={selectItemClassName}>NVIDIA Sortformer</SelectItem>
                                             <SelectItem value="sherpa-onnx" className={selectItemClassName}>sherpa-onnx</SelectItem>
-                                            {/* <SelectItem value="pyannote" className={selectItemClassName}>Pyannote</SelectItem> */}
+                                            <SelectItem value="pyannote" className={selectItemClassName}>Community-1 (local comparison)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </FormField>
@@ -1134,6 +1150,17 @@ function CanaryConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                     </FormField>
                                 </div>
 
+                                {diarizationMode === "pyannote" && (
+                                    <FormField label="Speaker processing device" description="Independent of the transcription device. Auto uses the available GPU, including Apple Metal.">
+                                        <Select value={params.diarization_device || "auto"} onValueChange={(value) => updateParam("diarization_device", value)}>
+                                            <SelectTrigger className={selectTriggerClassName}><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="auto">Auto</SelectItem><SelectItem value="cpu">CPU</SelectItem>
+                                                <SelectItem value="mps">Apple Metal</SelectItem><SelectItem value="cuda">CUDA</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </FormField>
+                                )}
                                 {diarizationMode === "local" && params.max_speakers && params.max_speakers > 4 && (
                                     <p className="text-xs text-amber-500">
                                         Sortformer supports up to 4 speakers. For more, switch to sherpa-onnx (no token needed) or Pyannote.
@@ -1146,7 +1173,7 @@ function CanaryConfig({ params, updateParam, isMultiTrack }: ConfigProps) {
                                         ? "NVIDIA Sortformer runs locally without a Hugging Face token. Supports up to 4 speakers."
                                         : diarizationMode === "sherpa-onnx"
                                         ? "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers. Models download automatically on first use."
-                                        : "Uses your Hugging Face token from Settings \u2192 Transcription. Supports up to 20 speakers. Falls back to Sortformer if not configured."}
+                                        : "Community-1 runs locally. First use requires model access through Hugging Face; cached models work offline. A failed run is reported without changing engines."}
                                 </p>
                             </div>
                         )}
@@ -1339,7 +1366,7 @@ function MLXOrCppConfig({ params, updateParam, isMultiTrack, family }: ConfigPro
                                         <SelectContent className={selectContentClassName}>
                                             <SelectItem value="local" className={selectItemClassName}>NVIDIA Sortformer</SelectItem>
                                             <SelectItem value="sherpa-onnx" className={selectItemClassName}>sherpa-onnx</SelectItem>
-                                            {/* <SelectItem value="pyannote" className={selectItemClassName}>Pyannote</SelectItem> */}
+                                            <SelectItem value="pyannote" className={selectItemClassName}>Community-1 (local comparison)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </FormField>
@@ -1372,6 +1399,17 @@ function MLXOrCppConfig({ params, updateParam, isMultiTrack, family }: ConfigPro
                                     </FormField>
                                 </div>
 
+                                {diarizationMode === "pyannote" && (
+                                    <FormField label="Speaker processing device" description="Independent of the transcription device. Auto uses the available GPU, including Apple Metal.">
+                                        <Select value={params.diarization_device || "auto"} onValueChange={(value) => updateParam("diarization_device", value)}>
+                                            <SelectTrigger className={selectTriggerClassName}><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="auto">Auto</SelectItem><SelectItem value="cpu">CPU</SelectItem>
+                                                <SelectItem value="mps">Apple Metal</SelectItem><SelectItem value="cuda">CUDA</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </FormField>
+                                )}
                                 {diarizationMode === "local" && params.max_speakers && params.max_speakers > 4 && (
                                     <p className="text-xs text-amber-500">
                                         Sortformer supports up to 4 speakers. For more, switch to sherpa-onnx (no token needed) or Pyannote.
@@ -1384,7 +1422,7 @@ function MLXOrCppConfig({ params, updateParam, isMultiTrack, family }: ConfigPro
                                         ? "NVIDIA Sortformer runs locally without a Hugging Face token. Supports up to 4 speakers."
                                         : diarizationMode === "sherpa-onnx"
                                         ? "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers. Models download automatically on first use."
-                                        : "Uses your Hugging Face token from Settings \u2192 Transcription. Supports up to 20 speakers. Falls back to Sortformer if not configured."}
+                                        : "Community-1 runs locally. First use requires model access through Hugging Face; cached models work offline. A failed run is reported without changing engines."}
                                 </p>
                             </div>
                         )}

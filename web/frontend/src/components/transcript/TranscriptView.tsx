@@ -2,7 +2,7 @@ import { forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'r
 import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex } from '@/features/transcription/hooks/useKaraokeHighlight';
 import { cn } from '@/lib/utils';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { speakerIndexToLabel } from '@/lib/speaker-utils';
+import { formatSpeakerLabel } from '@/lib/speaker-utils';
 import type { Note } from '@/types/note';
 
 function formatSegmentTime(value: unknown): string {
@@ -44,6 +44,7 @@ interface WordSegment {
 }
 
 interface Transcript {
+    metadata?: Record<string, string>;
     text: string;
     segments?: Array<{
         start: number;
@@ -84,35 +85,9 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     onSeek,
     className
 }, ref) => {
-    const defaultSpeakerLabels = useMemo(() => {
-        const orderedSpeakers: string[] = [];
-
-        transcript?.segments?.forEach(segment => {
-            if (!segment.speaker) return;
-            if (!orderedSpeakers.includes(segment.speaker)) {
-                orderedSpeakers.push(segment.speaker);
-            }
-        });
-
-        if (orderedSpeakers.length === 0) {
-            transcript?.word_segments?.forEach(word => {
-                if (!word.speaker) return;
-                if (!orderedSpeakers.includes(word.speaker)) {
-                    orderedSpeakers.push(word.speaker);
-                }
-            });
-        }
-
-        const labels: Record<string, string> = {};
-        orderedSpeakers.forEach((speaker, index) => {
-            labels[speaker] = speakerIndexToLabel(index);
-        });
-
-        return labels;
-    }, [transcript?.segments, transcript?.word_segments]);
-
     const getDisplaySpeakerName = (originalSpeaker: string, persistedName?: string): string => {
-        return speakerMappings[originalSpeaker] || persistedName || defaultSpeakerLabels[originalSpeaker] || originalSpeaker;
+        if (!originalSpeaker && transcript?.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') return 'Speaker unclear';
+        return speakerMappings[originalSpeaker] || persistedName || formatSpeakerLabel(originalSpeaker);
     };
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -169,11 +144,11 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // 1. Precompute per-segment text and offsets
     const expandedData = useMemo(() => {
-        if (!transcript?.segments || !transcript.word_segments) return [];
+        if (!transcript?.segments) return [];
 
         return transcript.segments.map((segment) => {
             // Filter words belonging to this segment
-            const segmentWords = transcript.word_segments!.filter(
+            const segmentWords = (transcript.word_segments ?? []).filter(
                 word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
             );
 
@@ -295,7 +270,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     // Render plain text with word-level highlighting (no speaker info)
     const renderPlainView = () => {
         if (!transcript.word_segments || transcript.word_segments.length === 0) {
-            return <p className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
+            return <p data-transcript-text className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
         }
 
         return (
@@ -349,12 +324,12 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
                                 {formatSegmentTime(segment.start)}
                             </span>
-                            {segment.speaker && (
+                            {(segment.speaker || (transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested')) && (
                                 <span
                                     className="font-medium text-carbon-700 dark:text-carbon-300 truncate max-w-full"
-                                    title={getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
+                                    title={getDisplaySpeakerName(segment.speaker || '', segment.speaker_name)}
                                 >
-                                    {getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
+                                    {getDisplaySpeakerName(segment.speaker || '', segment.speaker_name)}
                                 </span>
                             )}
                         </div>
@@ -406,7 +381,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             const identityKey = displaySpeaker.toLocaleLowerCase();
             const lastGroup = groups[groups.length - 1];
 
-            if (lastGroup && lastGroup.identityKey === identityKey) {
+            if (speaker && lastGroup && lastGroup.identityKey === identityKey) {
                 lastGroup.texts.push(segment.text.trim());
                 lastGroup.segmentIndices.push(i);
             } else {
@@ -422,7 +397,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         });
 
         return groups;
-    }, [defaultSpeakerLabels, speakerMappings, transcript?.segments]);
+    }, [speakerMappings, transcript?.segments, transcript?.metadata]);
 
     const renderCompactedView = () => {
         if (!transcript?.segments || compactedGroups.length === 0) {
@@ -433,7 +408,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             <div className="space-y-6">
                 {compactedGroups.map((group, gi) => (
                     <div key={gi} className="space-y-1">
-                        {group.speaker && (
+                        {group.displaySpeaker && (
                             <div className="flex items-center gap-2 text-sm font-medium text-carbon-600 dark:text-carbon-400 select-none">
                                 <span>{group.displaySpeaker}</span>
                                 <span className="font-mono text-[10px] text-carbon-400 dark:text-carbon-500">

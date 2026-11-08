@@ -64,4 +64,15 @@ def test_recluster_fails_closed_for_weakly_separated_voices():
     result = MODULE.recluster(turns, turns, embeddings)
 
     assert result["status"] == "uncertain"
-    assert result["segments"] == []
+    assert len(result["segments"]) == len(turns)
+    assert all(s["speaker"] == "" for s in result["segments"])
+
+
+def test_distinct_brief_speaker_is_not_erased_by_duration_share():
+    turns = [{"start": i * 20., "end": (i + 1) * 20., "speaker": "head0"} for i in range(16)]
+    turns += [{"start": 330. + i*4, "end": 334. + i*4, "speaker": "head1"} for i in range(3)]
+    vectors = np.array([[1., 0.]]*16 + [[0., 1.]]*3)
+    result = MODULE.recluster(turns, turns, vectors)
+    assert result["identity_count"] == 2
+    assert len(result["segments"]) == len(turns)
+    assert len({t["speaker"] for t in result["segments"]}) == 2
