@@ -1239,13 +1239,22 @@ func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *in
 
 	// Also assign speakers to words if available
 	if len(transcript.WordSegments) > 0 {
+		retainedSpeech := retainedSpeechRegions(transcript.Metadata["vad_retained_speech_regions"])
+		assignmentSpeech := retainedSpeechRegions(transcript.Metadata["vad_assignment_speech_regions"])
+		if len(assignmentSpeech) == 0 {
+			assignmentSpeech = retainedSpeech
+		}
+		if len(retainedSpeech) > 0 {
+			mergedTranscript.Metadata["word_assignment_clock"] = "vad_speech_union_v1"
+			mergedTranscript.Metadata["word_timing_review_reason"] = "VAD-spanning word times retained; removed silence excluded from speaker support"
+		}
 		mergedTranscript.WordSegments = make([]interfaces.TranscriptWord, len(transcript.WordSegments))
 		copy(mergedTranscript.WordSegments, transcript.WordSegments)
 
 		for i := range mergedTranscript.WordSegments {
 			word := &mergedTranscript.WordSegments[i]
 			word.Speaker = nil
-			bestSpeaker := u.findBestSpeakerForSegment(word.Start, word.End, assignmentTurns)
+			bestSpeaker := u.findWordSpeakerWithSpeechClock(*word, assignmentTurns, diarization.RegularSegments, assignmentSpeech, retainedSpeech)
 			if bestSpeaker != "" {
 				word.Speaker = &bestSpeaker
 			}

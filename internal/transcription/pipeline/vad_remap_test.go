@@ -198,8 +198,8 @@ func TestRemapTranscriptResult_Segments(t *testing.T) {
 		Text:     "Hello world",
 		Language: "en",
 		Segments: []interfaces.TranscriptSegment{
-			{Start: 0.0, End: 2.0, Text: "Hello"},    // maps to [2.0, 4.0]
-			{Start: 3.5, End: 5.0, Text: "world"},    // maps to [8.5, 10.0]
+			{Start: 0.0, End: 2.0, Text: "Hello"}, // maps to [2.0, 4.0]
+			{Start: 3.5, End: 5.0, Text: "world"}, // maps to [8.5, 10.0]
 		},
 	}
 
@@ -364,5 +364,17 @@ func assertFloat(t *testing.T, name string, got, want float64) {
 	t.Helper()
 	if math.Abs(got-want) > 1e-4 {
 		t.Errorf("%s = %f, want %f", name, got, want)
+	}
+}
+
+func TestRemapPreservesSeparateSpeechEvidenceWithoutMutatingSource(t *testing.T) {
+	source := &interfaces.TranscriptResult{Metadata: map[string]string{"keep": "yes"}}
+	manifest := VadManifest{Regions: []SpeechRegion{{Start: 1, End: 3}}, SpeechRegions: []SpeechRegion{{Start: 1.3, End: 2.7}}}
+	mapped := RemapTranscriptResult(source, manifest)
+	if source.Metadata["vad_retained_speech_regions"] != "" || len(source.Metadata) != 1 {
+		t.Fatal("source metadata mutated")
+	}
+	if mapped.Metadata["vad_retained_speech_regions"] == "" || mapped.Metadata["vad_assignment_speech_regions"] == "" {
+		t.Fatal("lost VAD evidence")
 	}
 }

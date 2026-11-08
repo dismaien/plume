@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"quill/internal/transcription"
 	"quill/internal/transcription/interfaces"
+	"quill/internal/transcription/pipeline"
 )
 
 func main() {
@@ -21,6 +22,7 @@ func main() {
 	proposals := flag.String("word-proposals", "", "Optional frozen independent-model word proposals; no inference")
 	nativeRuntime := flag.String("native-runtime", "", "Optional configured local runtime for the real application refinement stage")
 	audio := flag.String("audio", "", "Full original-clock WAV for native-runtime preflight")
+	vadEvidence := flag.String("vad-evidence", "", "Retained VAD manifest for original-clock words; no timestamp edits")
 	flag.Parse()
 	if *asr == "" || *diar == "" || *output == "" {
 		flag.Usage()
@@ -38,6 +40,11 @@ func main() {
 		}
 	}
 	read(*asr, &t)
+	if *vadEvidence != "" {
+		var manifest pipeline.VadManifest
+		read(*vadEvidence, &manifest)
+		t = *pipeline.AttachVadSpeechEvidence(&t, manifest)
+	}
 	read(*diar, &d)
 	if d.ModelUsed == "" {
 		var p struct {
