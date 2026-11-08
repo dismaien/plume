@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import threading
 import time
+from types import SimpleNamespace
 import pytest
 
 
@@ -45,6 +46,15 @@ def test_model_comparison_waits_for_the_exact_verified_install(tmp_path):
     ):
         receipt.write_text(json.dumps({'status':status,'source_commit':commit,'backend_sha256':sha}))
         assert module.installation_verified(plan)==expected
+
+
+def test_community_baseline_cannot_load_a_model_while_foreground_work_runs(tmp_path):
+    database=tmp_path/'live.db'
+    with sqlite3.connect(database) as db:
+        db.execute('create table transcription_jobs(status text)')
+        db.execute("insert into transcription_jobs values('pending')")
+    with pytest.raises(RuntimeError,match='queue is active'):
+        load('stage_idle_community').run(SimpleNamespace(db=database))
 
 
 def test_new_foreground_job_stops_only_the_owned_comparison_process(tmp_path,monkeypatch):

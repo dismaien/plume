@@ -75,3 +75,8 @@ commit and backend hash when experiments must follow a verified desktop update.
 New foreground work preempts only the comparison's own process group. An
 explicit MPS failure is retained; a CPU attempt must be separately named.
 These experimental runners never promote models or accepted transcripts.
+`stage_idle_community.py` supplies the automatic-count production Community-1
+baseline through the same guarded runner; its `--model` value is the existing
+Hugging Face cache root. It records the production MPS per-operation fallback
+policy explicitly. Use a separate plan directory for independent validation
+cases so their receipts remain separate from tuning results.
