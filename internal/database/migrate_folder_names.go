@@ -1,236 +1,206 @@
 package database
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
+	"gorm.io/gorm"
 	"quill/internal/models"
 	"quill/pkg/logger"
 	"quill/pkg/slug"
-
-	"gorm.io/gorm"
 )
 
-// shortIDSuffix matches "-{8 hex chars}" at the end of a folder name.
 var shortIDSuffix = regexp.MustCompile(`-[0-9a-f]{8}$`)
-
-// legacyContactSeparator matches "--{uuid-like}" in contact folder names.
 var legacyContactSeparator = regexp.MustCompile(`--[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]+$`)
 
-// MigrateHumanReadableFolderNames renames legacy machine-readable bundle and
-// contact folders to human-readable names. This is idempotent — folders that
-// have already been migrated are skipped.
-//
-// Bundle folders: "talk-with-ian-c2880060" → "Talk with Ian"
-// Contact folders: "john-smith--c1a2b3c4-d5e6-47f8" → "John Smith"
+// MigrateHumanReadableFolderNames migrates only legacy folders owned by database
+// records. Never enumerate the archive or open metadata files during startup:
+// opening an iCloud/File Provider directory can block indefinitely, even when
+// stat succeeds. Unregistered folders belong to the user and are left alone.
 func MigrateHumanReadableFolderNames(db *gorm.DB) error {
 	var vaults []models.Vault
 	if err := db.Find(&vaults).Error; err != nil {
-		return fmt.Errorf("migrate-folder-names: list vaults: %w", err)
+		return err
 	}
-
-	for _, v := range vaults {
-		if strings.TrimSpace(v.Path) == "" {
+	for _, vault := range vaults {
+		if strings.TrimSpace(vault.Path) == "" {
 			continue
 		}
-		if _, err := os.Stat(v.Path); os.IsNotExist(err) {
-			continue
+		var jobs []models.TranscriptionJob
+		if err := db.Select("id", "title", "audio_path", "artifact_dir", "transcript_json_path", "transcript_markdown_path").Where("vault_id = ?", vault.ID).Find(&jobs).Error; err != nil {
+			return err
 		}
-
-		migrateBundleFolders(db, v.Path)
-		migrateContactFolders(db, v.Path)
+		bundles := map[string]string{}
+		for _, job := range jobs {
+			paths := []string{job.AudioPath}
+			for _, p := range []*string{job.ArtifactDir, job.TranscriptJSONPath, job.TranscriptMarkdownPath} {
+				if p != nil {
+					paths = append(paths, *p)
+				}
+			}
+			for _, p := range paths {
+				name := ownedFolder(vault.Path, "Transcripts", p)
+				if !shortIDSuffix.MatchString(name) {
+					continue
+				}
+				title := humanizeSlug(shortIDSuffix.ReplaceAllString(name, ""))
+				if job.Title != nil && strings.TrimSpace(*job.Title) != "" {
+					title = strings.TrimSpace(*job.Title)
+				}
+				bundles[name] = title
+			}
+		}
+		names := make([]string, 0, len(bundles))
+		for name := range bundles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			oldRel := filepath.Join("Transcripts", name)
+			newRel, err := renameOwnedFolder(vault.Path, oldRel, bundles[name])
+			if err != nil {
+				logger.Warn("migrate-folder-names: bundle deferred", "error", err)
+				continue
+			}
+			if newRel == "" {
+				continue
+			}
+			err = db.Transaction(func(tx *gorm.DB) error {
+				for _, job := range jobs {
+					updates := map[string]interface{}{}
+					addMigratedPath(updates, "audio_path", job.AudioPath, vault.Path, oldRel, newRel)
+					for col, p := range map[string]*string{"artifact_dir": job.ArtifactDir, "transcript_json_path": job.TranscriptJSONPath, "transcript_markdown_path": job.TranscriptMarkdownPath} {
+						if p != nil {
+							addMigratedPath(updates, col, *p, vault.Path, oldRel, newRel)
+						}
+					}
+					if len(updates) > 0 {
+						if err := tx.Model(&models.TranscriptionJob{}).Where("id = ? AND vault_id = ?", job.ID, vault.ID).Updates(updates).Error; err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return rollbackFolderRename(vault.Path, oldRel, newRel, err)
+			}
+		}
+		var contacts []models.Contact
+		if err := db.Select("id", "name", "note_path", "voice_snippet_path", "signature_embedding_path").Where("vault_id = ?", vault.ID).Find(&contacts).Error; err != nil {
+			return err
+		}
+		for _, contact := range contacts {
+			name := ownedFolder(vault.Path, filepath.Join("Contacts", "People"), contact.NotePath)
+			if !legacyContactSeparator.MatchString(name) {
+				continue
+			}
+			oldRel := filepath.Join("Contacts", "People", name)
+			title := contact.Name
+			if strings.TrimSpace(title) == "" {
+				title = humanizeSlug(legacyContactSeparator.ReplaceAllString(name, ""))
+			}
+			newRel, err := renameOwnedFolder(vault.Path, oldRel, title)
+			if err != nil {
+				logger.Warn("migrate-folder-names: contact deferred", "error", err)
+				continue
+			}
+			if newRel == "" {
+				continue
+			}
+			updates := map[string]interface{}{}
+			addMigratedPath(updates, "note_path", contact.NotePath, vault.Path, oldRel, newRel)
+			for col, p := range map[string]*string{"voice_snippet_path": contact.VoiceSnippetPath, "signature_embedding_path": contact.SignatureEmbeddingPath} {
+				if p != nil {
+					addMigratedPath(updates, col, *p, vault.Path, oldRel, newRel)
+				}
+			}
+			if err := db.Model(&models.Contact{}).Where("id = ? AND vault_id = ?", contact.ID, vault.ID).Updates(updates).Error; err != nil {
+				return rollbackFolderRename(vault.Path, oldRel, newRel, err)
+			}
+		}
 	}
 	return nil
 }
 
-// migrateBundleFolders renames transcript bundle folders from
-// "{slug}-{shortid}" to a human-readable title.
-func migrateBundleFolders(db *gorm.DB, vaultPath string) {
-	transcriptsDir := filepath.Join(vaultPath, "Transcripts")
-	if _, err := os.Stat(transcriptsDir); os.IsNotExist(err) {
-		return
+// Restore the original folder if its database path update cannot commit.
+func rollbackFolderRename(vault, oldRel, newRel string, cause error) error {
+	if err := os.Rename(filepath.Join(vault, newRel), filepath.Join(vault, oldRel)); err != nil {
+		return fmt.Errorf("folder path update failed: %v; restoring original folder also failed: %w", cause, err)
 	}
+	return cause
+}
 
-	entries, err := os.ReadDir(transcriptsDir)
+// ownedFolder accepts only a direct child of the expected vault subtree.
+func ownedFolder(vault, subtree, path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		var err error
+		path, err = filepath.Rel(vault, path)
+		if err != nil {
+			return ""
+		}
+	}
+	relative, err := filepath.Rel(subtree, filepath.Clean(path))
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return strings.Split(relative, string(filepath.Separator))[0]
+}
+
+func renameOwnedFolder(vault, oldRel, title string) (string, error) {
+	source := filepath.Join(vault, oldRel)
+	info, err := os.Lstat(source)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
 	if err != nil {
-		logger.Warn("migrate-folder-names: read transcripts dir", "error", err)
-		return
+		return "", err
 	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		dirName := entry.Name()
-
-		// Only process folders matching the old "{slug}-{8-hex}" pattern.
-		if !shortIDSuffix.MatchString(dirName) {
-			continue
-		}
-
-		folderAbs := filepath.Join(transcriptsDir, dirName)
-
-		// Try to read the job title from metadata.json or the DB.
-		title := resolveBundleTitle(db, folderAbs, dirName)
-		if title == "" {
-			continue
-		}
-
-		safeName := slug.SafeFilename(title, "Transcript")
-		newFolderAbs := filepath.Join(transcriptsDir, slug.UniqueName(transcriptsDir, safeName))
-
-		if filepath.Clean(folderAbs) == filepath.Clean(newFolderAbs) {
-			continue
-		}
-
-		if err := os.Rename(folderAbs, newFolderAbs); err != nil {
-			logger.Warn("migrate-folder-names: rename bundle",
-				"from", dirName, "to", filepath.Base(newFolderAbs), "error", err)
-			continue
-		}
-
-		// Update DB paths that reference the old directory.
-		oldRel := filepath.ToSlash(filepath.Join("Transcripts", dirName))
-		newRel := filepath.ToSlash(filepath.Join("Transcripts", filepath.Base(newFolderAbs)))
-		updateJobPaths(db, oldRel, newRel)
-
-		logger.Info("migrate-folder-names: renamed bundle",
-			"from", dirName, "to", filepath.Base(newFolderAbs))
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", nil
 	}
+	base := slug.SafeFilename(title, "Transcript")
+	parent := filepath.Dir(source)
+	// Probe candidate names, not the parent directory. os.ReadDir is the operation
+	// that hung the packaged app before its HTTP server could start.
+	for suffix := 1; suffix < 10000; suffix++ {
+		name := base
+		if suffix > 1 {
+			name = fmt.Sprintf("%s %d", base, suffix)
+		}
+		target := filepath.Join(parent, name)
+		if target == source {
+			return "", nil
+		}
+		if _, err = os.Lstat(target); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		if err = os.Rename(source, target); err != nil {
+			return "", err
+		}
+		return filepath.Join(filepath.Dir(oldRel), name), nil
+	}
+	return "", fmt.Errorf("no available migration target")
 }
 
-// resolveBundleTitle tries to find the job title for a bundle folder.
-func resolveBundleTitle(db *gorm.DB, folderAbs, dirName string) string {
-	// Try metadata.json first.
-	metaPath := filepath.Join(folderAbs, "metadata.json")
-	if data, err := os.ReadFile(metaPath); err == nil {
-		type metaPayload struct {
-			Title string `json:"title"`
-		}
-		var m metaPayload
-		if jsonErr := json.Unmarshal(data, &m); jsonErr == nil && strings.TrimSpace(m.Title) != "" {
-			return strings.TrimSpace(m.Title)
-		}
+func addMigratedPath(updates map[string]interface{}, column, path, vault, oldRel, newRel string) {
+	oldPrefix, newPrefix := oldRel, newRel
+	if filepath.IsAbs(path) {
+		oldPrefix = filepath.Join(vault, oldRel)
+		newPrefix = filepath.Join(vault, newRel)
 	}
-
-	// Fallback: query DB for a job whose artifact_dir matches.
-	var job models.TranscriptionJob
-	// Match by the folder name fragment in artifact_dir or audio_path.
-	err := db.Where("artifact_dir LIKE ? OR audio_path LIKE ?",
-		"%"+dirName+"%", "%"+dirName+"%").
-		First(&job).Error
-	if err == nil && job.Title != nil && strings.TrimSpace(*job.Title) != "" {
-		return strings.TrimSpace(*job.Title)
-	}
-
-	// Last resort: humanize the slug portion (strip the shortID suffix).
-	slugPart := shortIDSuffix.ReplaceAllString(dirName, "")
-	return humanizeSlug(slugPart)
-}
-
-// migrateContactFolders renames contact folders from "{slug}--{uid}" to
-// human-readable names.
-func migrateContactFolders(db *gorm.DB, vaultPath string) {
-	peopleDir := filepath.Join(vaultPath, "Contacts", "People")
-	if _, err := os.Stat(peopleDir); os.IsNotExist(err) {
-		return
-	}
-
-	entries, err := os.ReadDir(peopleDir)
-	if err != nil {
-		logger.Warn("migrate-folder-names: read contacts dir", "error", err)
-		return
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		dirName := entry.Name()
-
-		// Only process folders matching the old "{slug}--{uid}" pattern.
-		if !strings.Contains(dirName, "--") {
-			continue
-		}
-
-		folderAbs := filepath.Join(peopleDir, dirName)
-
-		// Read contact name from frontmatter.
-		contactName := resolveContactName(db, folderAbs, dirName)
-		if contactName == "" {
-			continue
-		}
-
-		safeName := slug.SafeFilename(contactName, "Contact")
-		newFolderAbs := filepath.Join(peopleDir, slug.UniqueName(peopleDir, safeName))
-
-		if filepath.Clean(folderAbs) == filepath.Clean(newFolderAbs) {
-			continue
-		}
-
-		if err := os.Rename(folderAbs, newFolderAbs); err != nil {
-			logger.Warn("migrate-folder-names: rename contact",
-				"from", dirName, "to", filepath.Base(newFolderAbs), "error", err)
-			continue
-		}
-
-		// Update DB paths for this contact.
-		oldRel := filepath.ToSlash(filepath.Join("Contacts", "People", dirName))
-		newRel := filepath.ToSlash(filepath.Join("Contacts", "People", filepath.Base(newFolderAbs)))
-		updateContactPaths(db, oldRel, newRel)
-
-		logger.Info("migrate-folder-names: renamed contact",
-			"from", dirName, "to", filepath.Base(newFolderAbs))
-	}
-}
-
-// resolveContactName reads the contact name from frontmatter or the DB.
-func resolveContactName(db *gorm.DB, folderAbs, dirName string) string {
-	notePath := filepath.Join(folderAbs, "contact.md")
-	if data, err := os.ReadFile(notePath); err == nil {
-		name := extractFrontmatterValue(string(data), "name")
-		if name != "" {
-			return name
-		}
-	}
-
-	// Fallback: query DB.
-	var contact models.Contact
-	if err := db.Where("note_path LIKE ?", "%"+dirName+"%").First(&contact).Error; err == nil {
-		if strings.TrimSpace(contact.Name) != "" {
-			return contact.Name
-		}
-	}
-
-	// Last resort: humanize the slug portion.
-	idx := strings.LastIndex(dirName, "--")
-	if idx > 0 {
-		return humanizeSlug(dirName[:idx])
-	}
-	return ""
-}
-
-// updateJobPaths updates all TranscriptionJob path columns that reference
-// the old relative folder.
-func updateJobPaths(db *gorm.DB, oldRel, newRel string) {
-	for _, col := range []string{"audio_path", "artifact_dir", "transcript_json_path", "transcript_markdown_path"} {
-		db.Model(&models.TranscriptionJob{}).
-			Where(col+" LIKE ?", "%"+oldRel+"%").
-			Update(col, gorm.Expr("REPLACE("+col+", ?, ?)", oldRel, newRel))
-	}
-}
-
-// updateContactPaths updates all Contact path columns that reference
-// the old relative folder.
-func updateContactPaths(db *gorm.DB, oldRel, newRel string) {
-	for _, col := range []string{"note_path", "voice_snippet_path", "signature_embedding_path"} {
-		db.Model(&models.Contact{}).
-			Where(col+" LIKE ?", "%"+oldRel+"%").
-			Update(col, gorm.Expr("REPLACE("+col+", ?, ?)", oldRel, newRel))
+	clean := filepath.Clean(path)
+	if clean == oldPrefix || strings.HasPrefix(clean, oldPrefix+string(filepath.Separator)) {
+		updates[column] = newPrefix + strings.TrimPrefix(clean, oldPrefix)
 	}
 }
 
