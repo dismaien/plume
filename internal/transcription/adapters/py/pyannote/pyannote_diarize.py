@@ -50,16 +50,21 @@ def speaker_inventory(regular_segments, exclusive_segments):
 
 def diarize_audio(audio_path, output_file, hf_token='',
                   model='pyannote/speaker-diarization-community-1',
-                  min_speakers=None, max_speakers=None, output_format='json', device='auto'):
+                  min_speakers=None, max_speakers=None, output_format='json', device='auto',
+                  cpu_threads=None, embedding_exclude_overlap=None):
     import torch
     from pyannote.audio import Pipeline
     started = time.monotonic()
     actual_device = select_device(device, torch)
-    torch.set_num_threads(min(6, os.cpu_count() or 1))
+    if cpu_threads is not None and not 1 <= cpu_threads <= 6:
+        raise ValueError('cpu_threads must be between one and six')
+    torch.set_num_threads(cpu_threads if cpu_threads is not None else min(6, os.cpu_count() or 1))
     # HF_HUB_OFFLINE=1 works without a token when the model is already cached.
     pipeline = Pipeline.from_pretrained(model, token=hf_token or None)
     if pipeline is None:
         raise RuntimeError('Community-1 unavailable. Cache the model after accepting its terms or configure HF_TOKEN.')
+    if embedding_exclude_overlap is not None:
+        pipeline.embedding_exclude_overlap = bool(embedding_exclude_overlap)
     pipeline.to(torch.device(actual_device))
     audio = load_audio_waveform(audio_path)
     params = {k: v for k, v in {'min_speakers': min_speakers, 'max_speakers': max_speakers}.items() if v is not None}
@@ -73,6 +78,8 @@ def diarize_audio(audio_path, output_file, hf_token='',
         'diarization_engine': model, 'diarization_device': actual_device,
         'pyannote_audio_version': importlib.metadata.version('pyannote.audio'),
         'torch_version': torch.__version__, 'speaker_identity_status': ('solo' if len(speakers)==1 else 'accepted') if speakers else 'uncertain',
+        'torch_cpu_threads': str(torch.get_num_threads()),
+        'embedding_exclude_overlap': str(pipeline.embedding_exclude_overlap).lower(),
         'speaker_identity_reason': '' if speakers else 'no_speech_tracks_not_verified_silence',
         'confidence_kind': 'unavailable', 'assignment_timeline': 'exclusive',
         'speaker_count_source': 'regular_and_exclusive_tracks',

@@ -15,7 +15,7 @@ from stage_diar_nemotron3 import check_idle
 
 
 def run(args):
-    check_idle(args.db)
+    check_idle(args.db,getattr(args,'device',None))
     if args.out.exists():raise FileExistsError('Retain the existing immutable candidate')
     os.environ.update(HF_HOME=str(args.model),HUGGINGFACE_HUB_CACHE=str(args.model/'hub'),
                       HF_HUB_CACHE=str(args.model/'hub'),HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',
@@ -26,10 +26,12 @@ def run(args):
     script=Path(__file__).resolve().parents[2]/'internal/transcription/adapters/py/pyannote/pyannote_diarize.py'
     spec=importlib.util.spec_from_file_location('community_production',script)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    check_idle(args.db)
-    payload=module.diarize_audio(str(args.audio),str(args.out),hf_token='',device=args.device)
+    check_idle(args.db,args.device)
+    payload=module.diarize_audio(str(args.audio),str(args.out),hf_token='',device=args.device,
+        cpu_threads=1 if os.environ.get('PLUME_EVAL_CPU_ASR_PERMIT') else None,
+        embedding_exclude_overlap=False if os.environ.get('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS')=='1' else None)
     payload['metadata'].update(evaluation_wrapper_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                               evaluation_role='unchanged automatic-count production Community-1 baseline')
+                               evaluation_role='automatic-count Community-1; explicit overlap-embedding experiment' if os.environ.get('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS')=='1' else 'unchanged automatic-count production Community-1 baseline')
     args.out.write_text(json.dumps(payload,indent=2,allow_nan=False));args.out.chmod(0o600)
 
 

@@ -104,6 +104,9 @@ def run(plan_path):
                 env.update(PLUME_EVAL_CPU_ASR_PERMIT=plan['cpu_asr_permit'],OMP_NUM_THREADS='1',
                            OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
             else:env.pop('PLUME_EVAL_CPU_ASR_PERMIT',None)
+            if plan.get('include_overlap_embeddings'):
+                env['PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS']='1'
+            else:env.pop('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS',None)
             start=time.monotonic();status='running'
             with (attempt/'process.log').open('w') as log:
                 process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
@@ -116,7 +119,8 @@ def run(plan_path):
                         status='failed';stop_owned_process(process);break
                     time.sleep(2)
             receipt={'status':status,'exit_code':process.returncode,'seconds':time.monotonic()-start,
-                     'attempt':str(attempt),'experiment':experiment,'command':command,'accepted':False}
+                     'attempt':str(attempt),'experiment':experiment,'command':command,'accepted':False,
+                     'plan_sha256':digest(plan_path)}
             if status=='running' and process.returncode==0 and candidate.exists():
                 try:
                     result=score(reference,candidate)
