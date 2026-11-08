@@ -384,7 +384,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             const identityKey = displaySpeaker.toLocaleLowerCase();
             const lastGroup = groups[groups.length - 1];
 
-            if (lastGroup && lastGroup.identityKey === identityKey) {
+            if (speaker && lastGroup && lastGroup.identityKey === identityKey) {
                 lastGroup.texts.push(segment.text.trim());
                 lastGroup.segmentIndices.push(i);
             } else {
