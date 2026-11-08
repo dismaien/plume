@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -262,9 +263,34 @@ func (r *jobRepository) ListByUser(ctx context.Context, userID uint, offset, lim
 }
 
 func (r *jobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string) error {
-	return r.db.WithContext(ctx).Model(&models.TranscriptionJob{}).
-		Where("id = ?", jobID).
-		Update("transcript", transcript).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.TranscriptionJob
+		if err := tx.First(&job, "id = ?", jobID).Error; err != nil {
+			return err
+		}
+		if job.Transcript != nil && strings.TrimSpace(*job.Transcript) != "" {
+			mappings := []models.SpeakerMapping{}
+			if err := tx.Where("transcription_job_id = ?", jobID).Order("id").Find(&mappings).Error; err != nil {
+				return err
+			}
+			raw, err := json.Marshal(mappings)
+			if err != nil {
+				return err
+			}
+			snapshot := string(raw)
+			before := models.TranscriptRevision{TranscriptionJobID: jobID, Kind: "before_rerun", Transcript: *job.Transcript, SpeakerMappings: &snapshot, DiarizationRequested: &job.Diarization}
+			if err := tx.Create(&before).Error; err != nil {
+				return err
+			}
+			candidate := models.TranscriptRevision{TranscriptionJobID: jobID, Kind: "candidate", Transcript: transcript, BaseTranscript: *job.Transcript, SpeakerMappings: &snapshot, DiarizationRequested: &job.Parameters.Diarize}
+			if err := tx.Create(&candidate).Error; err != nil {
+				return err
+			}
+			return tx.Model(&job).Update("candidate_transcript_revision_id", candidate.ID).Error
+		}
+		updates := map[string]interface{}{"transcript": transcript}
+		return tx.Model(&job).Updates(updates).Error
+	})
 }
 
 func (r *jobRepository) CreateExecution(ctx context.Context, execution *models.TranscriptionJobExecution) error {

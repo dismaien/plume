@@ -260,7 +260,7 @@ func TestResolveThreshold(t *testing.T) {
 		{
 			name:     "default_when_empty",
 			params:   map[string]interface{}{},
-			expected: 0.50,
+			expected: 0.80,
 		},
 		{
 			name:     "custom_threshold",
@@ -275,7 +275,7 @@ func TestResolveThreshold(t *testing.T) {
 		{
 			name:     "default_when_threshold_zero",
 			params:   map[string]interface{}{"threshold": 0.0},
-			expected: 0.50, // 0 is treated as unset, falls back to default
+			expected: 0.80, // 0 is treated as unset, falls back to default
 		},
 		{
 			name:     "threshold_still_used_with_max_speakers",
@@ -422,13 +422,13 @@ func TestDiarizationConfigDefaults(t *testing.T) {
 		}
 	})
 
-	t.Run("default_threshold_is_0_50", func(t *testing.T) {
-		if defaultThreshold != 0.50 {
-			t.Errorf("defaultThreshold = %f, want 0.50", defaultThreshold)
+	t.Run("default_threshold_is_0_80", func(t *testing.T) {
+		if defaultThreshold != 0.80 {
+			t.Errorf("defaultThreshold = %f, want 0.80", defaultThreshold)
 		}
 	})
 
-	t.Run("schema_threshold_default_is_0_50", func(t *testing.T) {
+	t.Run("schema_threshold_default_is_0_80", func(t *testing.T) {
 		adapter := NewSherpaOnnxAdapter("/tmp/models")
 		schema := adapter.GetParameterSchema()
 		for _, p := range schema {
@@ -438,8 +438,8 @@ func TestDiarizationConfigDefaults(t *testing.T) {
 					t.Errorf("threshold schema default is not float64: %T", p.Default)
 					return
 				}
-				if val < 0.49 || val > 0.51 {
-					t.Errorf("threshold schema default = %v, want ~0.50", val)
+				if val < 0.79 || val > 0.81 {
+					t.Errorf("threshold schema default = %v, want ~0.80", val)
 				}
 				return
 			}

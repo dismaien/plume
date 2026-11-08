@@ -56,6 +56,7 @@ export interface AudioFile {
     recorded_at?: string;
     audio_path: string;
     diarization?: boolean;
+    candidate_transcript_revision_id?: number;
     is_multi_track?: boolean;
     multi_track_files?: MultiTrackFile[];
     merged_audio_path?: string;
@@ -86,6 +87,7 @@ export interface TranscriptSegment {
 }
 
 export interface Transcript {
+    metadata?: Record<string, string>;
     text: string;
     segments?: TranscriptSegment[];
     word_segments?: WordSegment[];
@@ -127,18 +129,19 @@ export function useTranscript(audioId: string, enabled: boolean) {
             const data = await response.json();
 
             // Handle graceful empty responses (available=false)
-            if (data.available === false || !data.transcript) {
+            if (data.available === false || data.transcript == null) {
                 return null; // Return null to indicate no transcript
             }
 
             // Normalize transcript structure
             if (typeof data.transcript === "string") {
                 return { text: data.transcript } as Transcript;
-            } else if (data.transcript.text) {
+            } else if (typeof data.transcript.text === "string") {
                 return {
                     text: data.transcript.text,
                     segments: data.transcript.segments,
                     word_segments: data.transcript.word_segments,
+                    metadata: data.transcript.metadata,
                 } as Transcript;
             } else if (data.transcript.segments) {
                 const fullText = data.transcript.segments
@@ -149,6 +152,7 @@ export function useTranscript(audioId: string, enabled: boolean) {
                     text: fullText,
                     segments: data.transcript.segments,
                     word_segments: data.transcript.word_segments,
+                    metadata: data.transcript.metadata,
                 } as Transcript;
             }
 

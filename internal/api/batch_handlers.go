@@ -229,6 +229,7 @@ func (h *Handler) BatchStartTranscriptions(c *gin.Context) {
 		return
 	}
 	req.Params.DiarizeModel = normalizedDiarizeModel
+	h.resolveDiarizationToken(&req.Params)
 	// h.fallbackDiarizationModelIfTokenMissing(&req.Params, "batch_start_transcriptions", h.config.HFToken) // pyannote disabled
 
 	ctx := c.Request.Context()
@@ -257,24 +258,38 @@ func (h *Handler) startJob(ctx context.Context, jobID string, params models.Whis
 		return fmt.Errorf("Cannot start transcription: job is currently processing or pending")
 	}
 
-	// Update job with parameters
+	previous := *job
+	// Keep the accepted result and mappings visible while the candidate runs.
 	job.Parameters = params
-	job.Diarization = params.Diarize
+	if job.Transcript == nil || strings.TrimSpace(*job.Transcript) == "" {
+		job.Diarization = params.Diarize
+	}
 	job.Status = models.StatusPending
-	job.Transcript = nil
 	// Summaries may contain human edits; preserve them across retranscription.
 	job.ErrorMessage = nil
 
-	if err := h.jobRepo.Update(ctx, job); err != nil {
+	if err := h.transitionTranscriptionRequest(ctx, job, previous.Status); err != nil {
 		return fmt.Errorf("Failed to update job: %s", err.Error())
 	}
 
 	// Enqueue (taskQueue may be nil in test)
 	if h.taskQueue != nil {
 		if err := h.taskQueue.EnqueueJob(jobID); err != nil {
+			if rollbackErr := h.transitionTranscriptionRequest(ctx, &previous, models.StatusPending); rollbackErr != nil {
+				return fmt.Errorf("enqueue failed: %v; restoring job state failed: %w", err, rollbackErr)
+			}
 			return fmt.Errorf("Failed to enqueue job: %s", err.Error())
 		}
 	}
 
 	return nil
+}
+
+func (h *Handler) transitionTranscriptionRequest(ctx context.Context, job *models.TranscriptionJob, expected models.JobStatus) error {
+	if repo, ok := h.jobRepo.(interface {
+		TransitionTranscriptionRequest(context.Context, *models.TranscriptionJob, models.JobStatus) error
+	}); ok {
+		return repo.TransitionTranscriptionRequest(ctx, job, expected)
+	}
+	return h.jobRepo.Update(ctx, job)
 }

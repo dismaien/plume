@@ -152,7 +152,7 @@ func main() {
 	}
 
 	unifiedProcessor.GetUnifiedService().SetPostMaterializeHook(func(job *models.TranscriptionJob) {
-		api.AutoPublishToObsidian(job)
+		// Publication is handled only by the gated completion hook.
 		if ftsManager != nil && job != nil {
 			title := ""
 			if job.Title != nil {
@@ -283,6 +283,13 @@ func main() {
 		handler.SetFTSManager(ftsManager)
 	}
 	taskQueue.SetOnJobCompleted(func(jobID string) {
+		job, err := jobRepo.FindByID(context.Background(), jobID)
+		if err != nil || job.CandidateTranscriptRevisionID != nil {
+			return
+		}
+		if !api.TranscriptAllowsAutomaticFollowups(job) {
+			return
+		}
 		// Step 1: Identify speakers first so title and summary can use real names.
 		labelCtx, labelCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer labelCancel()
@@ -402,8 +409,8 @@ func registerAdapters(cfg *config.Config) {
 	// Shared environment path for NVIDIA models (NeMo-based)
 	nvidiaEnvPath := filepath.Join(cfg.WhisperXEnv, "parakeet")
 
-	// // Dedicated environment path for PyAnnote — commented out, pyannote disabled
-	// pyannoteEnvPath := filepath.Join(cfg.WhisperXEnv, "pyannote")
+	// Dedicated environment for Community-1.
+	pyannoteEnvPath := filepath.Join(cfg.WhisperXEnv, "pyannote")
 
 	// Dedicated environment path for Voxtral (Mistral AI model)
 	voxtralEnvPath := filepath.Join(cfg.WhisperXEnv, "voxtral")
@@ -429,8 +436,8 @@ func registerAdapters(cfg *config.Config) {
 		adapters.NewOpenAIAdapter(cfg.OpenAIAPIKey))
 
 	// Register diarization adapters
-	// registry.RegisterDiarizationAdapter("pyannote",
-	// 	adapters.NewPyAnnoteAdapter(pyannoteEnvPath)) // Dedicated environment — commented out, pyannote disabled
+	registry.RegisterDiarizationAdapter("pyannote",
+		adapters.NewPyAnnoteAdapter(pyannoteEnvPath))
 	registry.RegisterDiarizationAdapter("sortformer",
 		adapters.NewSortformerAdapter(nvidiaEnvPath)) // Shares with Parakeet
 

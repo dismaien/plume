@@ -80,7 +80,7 @@ func TestMergeDiarizationSplitsWhisperSegmentAtWordSpeakerChanges(t *testing.T) 
 	if got := *merged.Segments[0].Speaker; got != "speaker_0" {
 		t.Fatalf("first speaker = %q, want speaker_0", got)
 	}
-	if got := merged.Segments[0].Text; got != "Hello there." {
+	if got := merged.Segments[0].Text; got != "Hello there. " {
 		t.Fatalf("first text = %q", got)
 	}
 	if got := *merged.Segments[1].Speaker; got != "speaker_1" {

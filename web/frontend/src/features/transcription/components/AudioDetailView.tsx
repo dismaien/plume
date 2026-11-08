@@ -326,13 +326,14 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         if (!audioId || transcriptModeUserSelectedRef.current) return;
 
-        setTranscriptModeState(detectedSpeakerCount > 1 ? "compacted" : "plain");
-    }, [audioId, detectedSpeakerCount]);
+        setTranscriptModeState(detectedSpeakerCount > 1 || ["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") ? "compacted" : "plain");
+    }, [audioId, detectedSpeakerCount, transcript?.metadata?.diarization_status]);
 
     useEffect(() => {
         if (!audioId) return;
         if (!autoSummaryEnabled || llmReady !== true) return;
-        if (audioFile?.status !== "completed") return;
+        if (audioFile?.status !== "completed" || audioFile?.candidate_transcript_revision_id) return;
+        if (["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") || transcript?.metadata?.text_status === "needs_review") return;
         if (!transcript?.text?.trim()) return;
         if (existingSummaryLoading) return;
         if (existingSummary?.content?.trim()) return;
@@ -359,7 +360,8 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         if (!audioId) return;
         if (!autoTitleEnabled || llmReady !== true) return;
-        if (audioFile?.status !== "completed") return;
+        if (audioFile?.status !== "completed" || audioFile?.candidate_transcript_revision_id) return;
+        if (["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") || transcript?.metadata?.text_status === "needs_review") return;
         if (!transcript?.text?.trim()) return;
         if (autoTitleTriggeredRef.current === audioId) return;
 
@@ -758,7 +760,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     >
                                                         <Layers className="mr-2 h-4 w-4 opacity-70" /> Compacted View
                                                     </DropdownMenuItem>
-                                                    {transcript?.word_segments && transcript.word_segments.length > 0 ? (
+                                                    {transcript?.segments?.some(segment => Number.isFinite(segment.start) && Number.isFinite(segment.end)) ? (
                                                         <DropdownMenuItem
                                                             onClick={() => setTranscriptModeFromUser('timeline')}
                                                             className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'timeline' && "text-[var(--brand-solid)]")}

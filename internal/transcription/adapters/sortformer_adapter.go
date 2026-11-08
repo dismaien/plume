@@ -374,10 +374,19 @@ func (s *SortformerAdapter) Diarize(ctx context.Context, input interfaces.AudioI
 	}
 
 	result.Metadata = s.CreateDefaultMetadata(params)
-	result, err = s.reclusterSpeakerIdentities(ctx, audioInput, result, params, tempDir, procCtx)
+	result.ModelUsed = "diar_streaming_sortformer_4spk-v2.1"
+	refined, err := s.reclusterSpeakerIdentities(ctx, audioInput, result, params, tempDir, procCtx)
 	if err != nil {
-		return nil, fmt.Errorf("speaker identity reclustering failed closed: %w", err)
+		for i := range result.Segments {
+			result.Segments[i].Speaker = ""
+			result.Segments[i].Confidence = 0
+		}
+		result.SpeakerCount = 0
+		result.Speakers = nil
+		result.Metadata["speaker_identity_status"] = "failed"
+		return result, fmt.Errorf("speaker identity refinement failed; raw evidence retained: %w", err)
 	}
+	result = refined
 
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = "diar_streaming_sortformer_4spk-v2.1"
@@ -437,14 +446,17 @@ func (s *SortformerAdapter) buildSortformerArgs(input interfaces.AudioInput, par
 }
 
 type speakerReclusterOutput struct {
-	Status         string  `json:"status"`
-	Reason         string  `json:"reason"`
-	Silhouette     float64 `json:"silhouette"`
-	IdentityCount  int     `json:"identity_count"`
-	SourceTurns    int     `json:"source_turns"`
-	EmbeddedTurns  int     `json:"embedded_turns"`
-	UnlabeledTurns int     `json:"unlabeled_turns"`
-	Segments       []struct {
+	Model           string            `json:"model"`
+	RuntimeVersions map[string]string `json:"runtime_versions"`
+	ScriptSHA256    string            `json:"script_sha256"`
+	Status          string            `json:"status"`
+	Reason          string            `json:"reason"`
+	Silhouette      float64           `json:"silhouette"`
+	IdentityCount   int               `json:"identity_count"`
+	SourceTurns     int               `json:"source_turns"`
+	EmbeddedTurns   int               `json:"embedded_turns"`
+	UnlabeledTurns  int               `json:"unlabeled_turns"`
+	Segments        []struct {
 		Start      float64 `json:"start"`
 		End        float64 `json:"end"`
 		Speaker    string  `json:"speaker"`
@@ -454,7 +466,7 @@ type speakerReclusterOutput struct {
 
 // reclusterSpeakerIdentities converts Sortformer's activity heads into stable
 // voice identities. The four model heads are deliberately not published as
-// people. Weak separation returns no speaker labels rather than mixed labels.
+// people. Unresolved turns retain boundaries without claiming a person identity.
 func (s *SortformerAdapter) reclusterSpeakerIdentities(
 	ctx context.Context,
 	input interfaces.AudioInput,
@@ -472,6 +484,19 @@ func (s *SortformerAdapter) reclusterSpeakerIdentities(
 	if err != nil {
 		return nil, fmt.Errorf("encode raw Sortformer turns: %w", err)
 	}
+	// Persist the raw timeline before refinement so a crash cannot erase evidence.
+	artifactDir := filepath.Join(procCtx.OutputDirectory, "diarization", fmt.Sprint(time.Now().UnixNano()))
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "raw.json"), data, 0o600); err != nil {
+		return nil, err
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	result.Metadata["diarization_artifact_dir"] = artifactDir
+	result.Metadata["speaker_identity_confidence_kind"] = "embedding_margin_heuristic_uncalibrated"
 	if err := os.WriteFile(inputPath, data, 0o600); err != nil {
 		return nil, fmt.Errorf("write raw Sortformer turns: %w", err)
 	}
@@ -516,6 +541,10 @@ func (s *SortformerAdapter) reclusterSpeakerIdentities(
 	if result.Metadata == nil {
 		result.Metadata = map[string]string{}
 	}
+	result.Metadata["speaker_identity_refinement_model"] = output.Model
+	versions, _ := json.Marshal(output.RuntimeVersions)
+	result.Metadata["speaker_identity_runtime_versions"] = string(versions)
+	result.Metadata["speaker_identity_script_sha256"] = output.ScriptSHA256
 	result.Metadata["speaker_identity_status"] = output.Status
 	result.Metadata["speaker_identity_reason"] = output.Reason
 	result.Metadata["speaker_identity_silhouette"] = fmt.Sprintf("%.4f", output.Silhouette)
@@ -523,16 +552,33 @@ func (s *SortformerAdapter) reclusterSpeakerIdentities(
 	result.Metadata["speaker_identity_embedded_turns"] = strconv.Itoa(output.EmbeddedTurns)
 	result.Metadata["speaker_identity_unlabeled_turns"] = strconv.Itoa(output.UnlabeledTurns)
 
+	if err := os.WriteFile(filepath.Join(artifactDir, "refined.json"), outputData, 0o600); err != nil {
+		return nil, err
+	}
+	applySpeakerReclusterOutput(result, output)
+
+	logger.Info("Voice identity reclustering completed",
+		"status", output.Status,
+		"reason", output.Reason,
+		"silhouette", output.Silhouette,
+		"speakers", result.SpeakerCount,
+		"segments", len(result.Segments))
+	return result, nil
+}
+
+func applySpeakerReclusterOutput(result *interfaces.DiarizationResult, output speakerReclusterOutput) {
 	segments := make([]interfaces.DiarizationSegment, 0, len(output.Segments))
 	speakerSet := make(map[string]struct{})
 	for _, segment := range output.Segments {
-		if strings.TrimSpace(segment.Speaker) == "" || segment.End <= segment.Start {
+		if segment.End <= segment.Start {
 			continue
 		}
 		segments = append(segments, interfaces.DiarizationSegment{
 			Start: segment.Start, End: segment.End, Speaker: segment.Speaker, Confidence: segment.Confidence,
 		})
-		speakerSet[segment.Speaker] = struct{}{}
+		if strings.TrimSpace(segment.Speaker) != "" {
+			speakerSet[segment.Speaker] = struct{}{}
+		}
 	}
 	speakers := make([]string, 0, len(speakerSet))
 	for speaker := range speakerSet {
@@ -543,13 +589,6 @@ func (s *SortformerAdapter) reclusterSpeakerIdentities(
 	result.Speakers = speakers
 	result.SpeakerCount = len(speakers)
 
-	logger.Info("Voice identity reclustering completed",
-		"status", output.Status,
-		"reason", output.Reason,
-		"silhouette", output.Silhouette,
-		"speakers", len(speakers),
-		"segments", len(segments))
-	return result, nil
 }
 
 func explicitIntParameter(params map[string]interface{}, name string) (int, bool) {

@@ -37,9 +37,9 @@ type ParameterSchema struct {
 
 // ValidationRule defines parameter validation logic
 type ValidationRule struct {
-	Pattern     string `json:"pattern,omitempty"`     // Regex pattern for strings
-	MinLength   *int   `json:"min_length,omitempty"`  // For strings and arrays
-	MaxLength   *int   `json:"max_length,omitempty"`  // For strings and arrays
+	Pattern     string `json:"pattern,omitempty"`      // Regex pattern for strings
+	MinLength   *int   `json:"min_length,omitempty"`   // For strings and arrays
+	MaxLength   *int   `json:"max_length,omitempty"`   // For strings and arrays
 	CustomCheck string `json:"custom_check,omitempty"` // Custom validation function name
 }
 
@@ -75,32 +75,34 @@ type TranscriptWord struct {
 
 // TranscriptResult represents the output of transcription
 type TranscriptResult struct {
-	Text         string             `json:"text"`
-	Language     string             `json:"language"`
-	Segments     []TranscriptSegment `json:"segments"`
-	WordSegments []TranscriptWord   `json:"word_segments,omitempty"`
-	Confidence   float64            `json:"confidence"`
-	ProcessingTime time.Duration    `json:"processing_time"`
-	ModelUsed    string             `json:"model_used"`
-	Metadata     map[string]string  `json:"metadata"`
+	Diarization    *DiarizationResult  `json:"diarization_result,omitempty"`
+	Text           string              `json:"text"`
+	Language       string              `json:"language"`
+	Segments       []TranscriptSegment `json:"segments"`
+	WordSegments   []TranscriptWord    `json:"word_segments,omitempty"`
+	Confidence     float64             `json:"confidence"`
+	ProcessingTime time.Duration       `json:"processing_time"`
+	ModelUsed      string              `json:"model_used"`
+	Metadata       map[string]string   `json:"metadata"`
 }
 
 // DiarizationSegment represents speaker diarization information
 type DiarizationSegment struct {
-	Start    float64 `json:"start"`
-	End      float64 `json:"end"`
-	Speaker  string  `json:"speaker"`
+	Start      float64 `json:"start"`
+	End        float64 `json:"end"`
+	Speaker    string  `json:"speaker"`
 	Confidence float64 `json:"confidence"`
 }
 
 // DiarizationResult represents the output of speaker diarization
 type DiarizationResult struct {
-	Segments       []DiarizationSegment `json:"segments"`
-	SpeakerCount   int                  `json:"speaker_count"`
-	Speakers       []string             `json:"speakers"`
-	ProcessingTime time.Duration        `json:"processing_time"`
-	ModelUsed      string               `json:"model_used"`
-	Metadata       map[string]string    `json:"metadata"`
+	RegularSegments []DiarizationSegment `json:"regular_segments,omitempty"`
+	Segments        []DiarizationSegment `json:"segments"`
+	SpeakerCount    int                  `json:"speaker_count"`
+	Speakers        []string             `json:"speakers"`
+	ProcessingTime  time.Duration        `json:"processing_time"`
+	ModelUsed       string               `json:"model_used"`
+	Metadata        map[string]string    `json:"metadata"`
 }
 
 // ProcessingContext contains context information for processing
@@ -172,15 +174,15 @@ type CompositeAdapter interface {
 
 // ModelRequirements specifies what capabilities are needed for a job
 type ModelRequirements struct {
-	Language         string            `json:"language"`
-	Features         []string          `json:"features"`         // "timestamps", "diarization", "translation"
-	Quality          string            `json:"quality"`          // "fast", "good", "best"
-	MaxMemoryMB      int               `json:"max_memory_mb"`
-	RequireGPU       *bool             `json:"require_gpu,omitempty"`
-	PreferredFamily  *string           `json:"preferred_family,omitempty"`
-	MinConfidence    float64           `json:"min_confidence"`
-	MaxProcessingTime *time.Duration   `json:"max_processing_time,omitempty"`
-	Constraints      map[string]string `json:"constraints"`
+	Language          string            `json:"language"`
+	Features          []string          `json:"features"` // "timestamps", "diarization", "translation"
+	Quality           string            `json:"quality"`  // "fast", "good", "best"
+	MaxMemoryMB       int               `json:"max_memory_mb"`
+	RequireGPU        *bool             `json:"require_gpu,omitempty"`
+	PreferredFamily   *string           `json:"preferred_family,omitempty"`
+	MinConfidence     float64           `json:"min_confidence"`
+	MaxProcessingTime *time.Duration    `json:"max_processing_time,omitempty"`
+	Constraints       map[string]string `json:"constraints"`
 }
 
 // AdapterFactory creates model adapters

@@ -2,12 +2,12 @@
 name = "pyannote-diarization"
 version = "0.1.0"
 description = "Audio diarization using PyAnnote"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
 dependencies = [
-    "torch>=2.1.0",
-    "torchaudio>=2.1.0",
-    "huggingface-hub>=0.28.1",
-    "pyannote.audio>=3.1"
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "huggingface-hub==0.35.3",
+    "pyannote.audio==4.0.4",
 ]
 
 [project.optional-dependencies]

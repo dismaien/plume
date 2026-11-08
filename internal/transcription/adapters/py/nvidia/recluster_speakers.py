@@ -3,20 +3,21 @@
 
 Sortformer's four output heads are activity tracks, not stable speaker
 identities. This pass embeds each sufficiently long turn with TitaNet and
-clusters the embeddings globally. Weakly separated results fail closed instead
-of exposing extra or mixed speaker labels.
+clusters the embeddings globally. Unresolved turns retain their timing with an empty speaker ID. Raw activity
+heads are never published as people.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
+from pathlib import Path
 import json
 import math
 import wave
 
 import numpy as np
-import torch
-from nemo.collections.asr.models import EncDecSpeakerLabelModel
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist, squareform
 from sklearn.metrics import silhouette_score
@@ -38,6 +39,8 @@ def load_wav(path: str) -> tuple[np.ndarray, int]:
 
 
 def embed_turns(audio_path: str, turns: list[dict]) -> tuple[list[dict], np.ndarray]:
+    import torch
+    from nemo.collections.asr.models import EncDecSpeakerLabelModel
     model = EncDecSpeakerLabelModel.from_pretrained(model_name="titanet_large", map_location="cpu")
     model.eval()
     audio, sample_rate = load_wav(audio_path)
@@ -78,7 +81,7 @@ def choose_clusters(
         return None, {"reason": "too_few_embedded_turns"}
 
     normalized = embeddings / np.clip(np.linalg.norm(embeddings, axis=1, keepdims=True), 1e-9, None)
-    distances = pdist(normalized, metric="cosine")
+    distances = np.maximum(0.0, pdist(normalized, metric="cosine"))
     if not np.isfinite(distances).all() or np.max(distances, initial=0.0) <= 1e-9:
         return None, {"reason": "no_voice_separation"}
 
@@ -123,17 +126,16 @@ def recluster(
     )
     labels, diagnostics = choose_clusters(embeddings, durations, max_identities)
     diagnostics.pop("normalized_embeddings", None)
-    if labels is None:
-        return {"status": "uncertain", "segments": [], **diagnostics}
+    def unresolved(reason):
+        return {"status": "uncertain", "reason": reason,
+                "segments": [{**t, "speaker": "", "confidence": 0.0} for t in all_turns],
+                "identity_count": 0, "unlabeled_turns": len(all_turns), **diagnostics}
 
-    silhouette = float(diagnostics["silhouette"])
-    if silhouette < min_silhouette:
-        return {
-            "status": "uncertain",
-            "reason": "weak_voice_separation",
-            "segments": [],
-            **diagnostics,
-        }
+    if labels is None:
+        return unresolved(diagnostics.get("reason", "no_valid_cluster_solution"))
+
+    # Silhouette is retained as a diagnostic, not a universal acceptance gate.
+    # A small but distinct speaker must not disappear based on speech share.
 
     normalized = embeddings / np.clip(np.linalg.norm(embeddings, axis=1, keepdims=True), 1e-9, None)
     total_speech = float(durations.sum())
@@ -141,16 +143,7 @@ def recluster(
     for label, duration in zip(labels, durations):
         seconds_by_raw_cluster[int(label)] = seconds_by_raw_cluster.get(int(label), 0.0) + float(duration)
 
-    min_identity_seconds = max(20.0, 0.03 * total_speech)
-    identity_labels = [
-        label
-        for label, seconds in sorted(seconds_by_raw_cluster.items(), key=lambda item: -item[1])
-        if seconds >= min_identity_seconds
-    ]
-    if max_identities:
-        identity_labels = identity_labels[:max_identities]
-    if not identity_labels:
-        identity_labels = [max(seconds_by_raw_cluster, key=seconds_by_raw_cluster.get)]
+    identity_labels = sorted(seconds_by_raw_cluster, key=seconds_by_raw_cluster.get, reverse=True)
 
     centroids: dict[int, np.ndarray] = {}
     for label in identity_labels:
@@ -168,9 +161,9 @@ def recluster(
         duration = float(turn["end"]) - float(turn["start"])
         if not uncertain:
             assigned.append({**turn, "identity": identity, "confidence": min(1.0, max(0.0, margin / 0.25))})
-        head = str(turn.get("speaker", ""))
-        raw_head_votes.setdefault(head, {}).setdefault(identity, 0.0)
-        raw_head_votes[head][identity] += duration
+            head = str(turn.get("speaker", ""))
+            raw_head_votes.setdefault(head, {}).setdefault(identity, 0.0)
+            raw_head_votes[head][identity] += duration
 
     # A short turn cannot produce a reliable embedding. Carry it only when the
     # corresponding raw head is already at least 90% pure against an accepted
@@ -188,16 +181,6 @@ def recluster(
         purity = seconds / total
         if purity >= 0.90:
             assigned.append({**turn, "identity": identity, "confidence": purity})
-
-    if len(centroids) <= 1:
-        return {
-            "status": "solo",
-            "reason": "one_voice_identity",
-            "segments": [],
-            "identity_count": 1,
-            "min_identity_seconds": min_identity_seconds,
-            **diagnostics,
-        }
 
     first_start = {
         identity: min(float(turn["start"]) for turn in assigned if turn["identity"] == identity)
@@ -218,12 +201,18 @@ def recluster(
             "confidence": float(turn.get("confidence", 1.0)),
         })
 
+    assigned_keys = {(float(t["start"]), float(t["end"]), str(t.get("speaker", ""))) for t in assigned}
+    for turn in all_turns:
+        key = (float(turn["start"]), float(turn["end"]), str(turn.get("speaker", "")))
+        if key not in assigned_keys:
+            output.append({**turn, "speaker": "", "confidence": 0.0})
+    output.sort(key=lambda t: (float(t["start"]), float(t["end"])))
+    unresolved_count = sum(not t["speaker"] for t in output)
     return {
-        "status": "accepted",
+        "status": "uncertain" if unresolved_count else "accepted",
         "segments": output,
         "identity_count": len(stable_order),
-        "min_identity_seconds": min_identity_seconds,
-        "unlabeled_turns": len(all_turns) - len(output),
+        "unlabeled_turns": unresolved_count,
         **diagnostics,
     }
 
@@ -250,7 +239,13 @@ def main() -> None:
         max_identities=args.max_identities,
         min_silhouette=args.min_silhouette,
     )
+    versions={}
+    for package in ('torch','nemo_toolkit','numpy','scikit-learn'):
+        try: versions[package]=importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError: pass
     result.update({
+        "runtime_versions": versions,
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "model": "nemo/titanet_large",
         "source_turns": len(turns),
         "embedded_turns": len(embedded_turns),

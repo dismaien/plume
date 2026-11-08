@@ -42,6 +42,8 @@ export function useTranscriptDownload() {
 
                 if (segment.speaker) {
                     text = `${getDisplaySpeakerName(segment.speaker, speakerMappings)}: ${text}`;
+                } else if (transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') {
+                    text = `Speaker unclear: ${text}`;
                 }
 
                 srtContent += `${counter}\n${startTime} --> ${endTime}\n${text}\n\n`;
@@ -76,6 +78,8 @@ export function useTranscriptDownload() {
 
                 if (options.includeSpeakerLabels && segment.speaker) {
                     content += `${getDisplaySpeakerName(segment.speaker, speakerMappings)}: `;
+                } else if (options.includeSpeakerLabels && transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') {
+                    content += 'Speaker unclear: ';
                 }
 
                 content += segment.text.trim();
@@ -133,6 +137,7 @@ export function useTranscriptDownload() {
             };
         }
 
+        jsonData.metadata = transcript.metadata;
         downloadFile(JSON.stringify(jsonData, null, 2), `${filenameBase}.json`, 'application/json');
     };
 

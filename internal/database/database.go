@@ -95,6 +95,31 @@ func Initialize(dbPath string) error {
 		fmt.Println("Skipping automatic schema migration for this startup")
 	}
 
+	// Add a nullable pointer without rebuilding the large archive jobs table.
+	if !DB.Migrator().HasColumn(&models.TranscriptionJob{}, "CandidateTranscriptRevisionID") {
+		if err := DB.Migrator().AddColumn(&models.TranscriptionJob{}, "CandidateTranscriptRevisionID"); err != nil {
+			return err
+		}
+	}
+	for _, entry := range []struct {
+		model  interface{}
+		column string
+	}{
+		{&models.TranscriptionJob{}, "diarization_device"},
+		{&models.TranscriptionJobExecution{}, "actual_diarization_device"},
+		{&models.TranscriptionProfile{}, "diarization_device"},
+	} {
+		if !DB.Migrator().HasColumn(entry.model, entry.column) {
+			if err := DB.Migrator().AddColumn(entry.model, "DiarizationDevice"); err != nil {
+				return err
+			}
+		}
+	}
+	// This additive table is required even on an existing desktop recovery install.
+	if err := DB.AutoMigrate(&models.TranscriptRevision{}); err != nil {
+		return fmt.Errorf("failed to migrate transcript history: %w", err)
+	}
+
 	skipStartupBackfills := strings.EqualFold(os.Getenv("QUILL_SKIP_STARTUP_BACKFILLS"), "true")
 	if !skipStartupBackfills {
 		if err := contacts.BackfillContactsFileFirst(context.Background(), DB); err != nil {

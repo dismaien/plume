@@ -26,7 +26,15 @@ cp -r web/frontend/dist internal/web/
 
 echo "Building backend binary for Electron packaging..."
 mkdir -p dist/desktop-backend
-go build -o dist/desktop-backend/quill cmd/server/main.go
+PLUME_BUILD_COMMIT="$(git rev-parse --verify HEAD)"
+PLUME_BUILD_DATE="$(git show -s --format=%cI HEAD)"
+PLUME_BUILD_VERSION="$(node -p "require('./desktop/electron/package.json').version")"
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  PLUME_BUILD_COMMIT="${PLUME_BUILD_COMMIT}-dirty"
+fi
+go build -trimpath -buildvcs=true \
+  -ldflags "-X main.version=${PLUME_BUILD_VERSION} -X main.commit=${PLUME_BUILD_COMMIT} -X main.date=${PLUME_BUILD_DATE}" \
+  -o dist/desktop-backend/quill ./cmd/server
 chmod +x dist/desktop-backend/quill
 
 # Patch sherpa-onnx rpath so the binary finds dylibs in the bundled tools/lib

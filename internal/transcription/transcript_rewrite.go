@@ -141,6 +141,7 @@ type transcriptSegmentForRewrite struct {
 // transcriptPayloadForRewrite is the top-level JSON structure used when
 // regenerating the markdown file.
 type transcriptPayloadForRewrite struct {
+	Metadata map[string]string             `json:"metadata"`
 	Text     string                        `json:"text"`
 	Segments []transcriptSegmentForRewrite `json:"segments,omitempty"`
 }
@@ -166,7 +167,8 @@ func RewriteTranscriptMarkdown(mdPath string, jsonPath string, job *models.Trans
 	// Convert to the markdownTranscriptPayload used by renderMarkdownTranscript,
 	// applying display-name resolution.
 	mdPayload := &markdownTranscriptPayload{
-		Text: payload.Text,
+		Text:     payload.Text,
+		Metadata: payload.Metadata,
 	}
 	for _, seg := range payload.Segments {
 		displayName := resolveDisplayName(seg.Speaker, seg.SpeakerName, mappings)

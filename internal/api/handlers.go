@@ -955,7 +955,7 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		getFormValueWithDefault(c, "diarize_model", transcription.DiarizeSortformer),
 	)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		_ = h.fileService.RemoveFile(filePath)
 		return
 	}
@@ -1044,7 +1044,7 @@ func (h *Handler) GetTranscript(c *gin.Context) {
 	}
 
 	// Return empty transcript gracefully for non-completed jobs
-	if job.Status != models.StatusCompleted {
+	if job.Status != models.StatusCompleted && job.Transcript == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"job_id":     job.ID,
 			"title":      job.Title,
@@ -1078,6 +1078,8 @@ func (h *Handler) GetTranscript(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse transcript"})
 		return
 	}
+
+	annotateLegacyTranscript(transcript, job.Diarization)
 
 	c.JSON(http.StatusOK, gin.H{
 		"job_id":     job.ID,
@@ -1350,31 +1352,13 @@ func (h *Handler) StartTranscription(c *gin.Context) {
 		return
 	}
 
-	// Update job with parameters
-	job.Parameters = *requestParams
-	job.Diarization = requestParams.Diarize
-	job.Status = models.StatusPending
-
-	// Clear previous results for re-transcription
-	job.Transcript = nil
-	// Summaries may contain human edits; preserve them across retranscription.
-	job.ErrorMessage = nil
-
-	// Clear stale speaker mappings so re-transcription starts fresh
-	if err := h.speakerMappingRepo.DeleteByJobID(c.Request.Context(), jobID); err != nil {
-		logger.Warn("failed to clear speaker mappings for re-transcription", "job_id", jobID, "error", err)
-	}
-
-	// Save updated job
-	if err := h.jobRepo.Update(c.Request.Context(), job); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job"})
+	if err := h.startJob(c.Request.Context(), jobID, *requestParams); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Enqueue job for transcription
-	if err := h.taskQueue.EnqueueJob(jobID); err != nil {
-		logger.Error("Failed to enqueue job", "job_id", jobID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue job"})
+	job, err = h.jobRepo.FindByID(c.Request.Context(), jobID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load queued job"})
 		return
 	}
 
@@ -1476,10 +1460,11 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 
 	normalizedDiarizeModel, validDiarizeModel := normalizeDiarizeModel(requestParams.DiarizeModel)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		return nil, fmt.Errorf("invalid diarize_model")
 	}
 	requestParams.DiarizeModel = normalizedDiarizeModel
+	h.resolveDiarizationToken(&requestParams)
 	// h.fallbackDiarizationModelIfTokenMissing(&requestParams, fmt.Sprintf("start_transcription job=%s", jobID), h.config.HFToken) // pyannote disabled
 
 	// Validate multi-track compatibility
@@ -3371,8 +3356,8 @@ func normalizeDiarizeModel(rawModel string) (string, bool) {
 	switch model {
 	case "", transcription.DiarizeSortformer:
 		return transcription.DiarizeSortformer, true
-	// case transcription.ModelPyannote, transcription.ModelDiarization31, transcription.ModelDiarizationCommunity1:
-	// 	return transcription.ModelPyannote, true
+	case transcription.ModelPyannote, transcription.ModelDiarizationCommunity1:
+		return transcription.ModelPyannote, true
 	case transcription.DiarizeSherpaOnnx:
 		return transcription.DiarizeSherpaOnnx, true
 	default:
@@ -3764,7 +3749,7 @@ func (h *Handler) SubmitQuickTranscription(c *gin.Context) {
 
 	normalizedDiarizeModel, validDiarizeModel := normalizeDiarizeModel(params.DiarizeModel)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		return
 	}
 	params.DiarizeModel = normalizedDiarizeModel

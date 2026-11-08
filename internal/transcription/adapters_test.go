@@ -589,10 +589,10 @@ func TestTranscriptionIncludesDiarization(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:    "WhisperX with PyAnnote diarization includes diarization",
-			modelID: ModelWhisperX,
-			params:  models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
-			expected: true,
+			name:     "WhisperX with PyAnnote uses separate diarization",
+			modelID:  ModelWhisperX,
+			params:   models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
+			expected: false,
 		},
 		{
 			name:    "WhisperX with Sortformer does NOT include diarization",
@@ -674,11 +674,11 @@ func TestParallelizationDecision(t *testing.T) {
 			expectParallel:     true,
 		},
 		{
-			name:               "WhisperX + PyAnnote → sequential (built-in diarization)",
+			name:               "WhisperX + PyAnnote → parallel separate pipeline",
 			transcriptionModel: ModelWhisperX,
 			diarizationModel:   ModelPyannote,
 			params:             models.WhisperXParams{Diarize: true, DiarizeModel: ModelPyannote},
-			expectParallel:     false,
+			expectParallel:     true,
 		},
 		{
 			name:               "WhisperX no diarization → sequential",
@@ -744,12 +744,12 @@ func TestConvertToWhisperXParamsWithSortformerDiarization(t *testing.T) {
 	pyannoteParams.DiarizeModel = ModelPyannote
 	paramMap = service.convertToWhisperXParams(pyannoteParams)
 
-	if diarize, ok := paramMap["diarize"].(bool); !ok || !diarize {
-		t.Fatalf("expected diarize=true for pyannote path, got %v", paramMap["diarize"])
+	if diarize, ok := paramMap["diarize"].(bool); !ok || diarize {
+		t.Fatalf("expected separate diarize=false for pyannote path, got %v", paramMap["diarize"])
 	}
 
-	if gotModel, ok := paramMap["diarize_model"].(string); !ok || gotModel != ModelPyannote {
-		t.Fatalf("expected diarize_model=%q for pyannote path, got %v", ModelPyannote, paramMap["diarize_model"])
+	if _, exists := paramMap["diarize_model"]; exists {
+		t.Fatalf("expected separate pyannote model omitted, got %v", paramMap["diarize_model"])
 	}
 }
 

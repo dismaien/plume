@@ -44,6 +44,7 @@ interface WordSegment {
 }
 
 interface Transcript {
+    metadata?: Record<string, string>;
     text: string;
     segments?: Array<{
         start: number;
@@ -112,6 +113,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     }, [transcript?.segments, transcript?.word_segments]);
 
     const getDisplaySpeakerName = (originalSpeaker: string, persistedName?: string): string => {
+        if (!originalSpeaker && transcript?.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') return 'Speaker unclear';
         return speakerMappings[originalSpeaker] || persistedName || defaultSpeakerLabels[originalSpeaker] || originalSpeaker;
     };
 
@@ -349,12 +351,12 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
                                 {formatSegmentTime(segment.start)}
                             </span>
-                            {segment.speaker && (
+                            {(segment.speaker || (transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested')) && (
                                 <span
                                     className="font-medium text-carbon-700 dark:text-carbon-300 truncate max-w-full"
-                                    title={getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
+                                    title={getDisplaySpeakerName(segment.speaker || '', segment.speaker_name)}
                                 >
-                                    {getDisplaySpeakerName(segment.speaker, segment.speaker_name)}
+                                    {getDisplaySpeakerName(segment.speaker || '', segment.speaker_name)}
                                 </span>
                             )}
                         </div>
@@ -406,7 +408,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             const identityKey = displaySpeaker.toLocaleLowerCase();
             const lastGroup = groups[groups.length - 1];
 
-            if (lastGroup && lastGroup.identityKey === identityKey) {
+            if (speaker && lastGroup && lastGroup.identityKey === identityKey) {
                 lastGroup.texts.push(segment.text.trim());
                 lastGroup.segmentIndices.push(i);
             } else {
@@ -422,7 +424,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         });
 
         return groups;
-    }, [defaultSpeakerLabels, speakerMappings, transcript?.segments]);
+    }, [defaultSpeakerLabels, speakerMappings, transcript?.segments, transcript?.metadata]);
 
     const renderCompactedView = () => {
         if (!transcript?.segments || compactedGroups.length === 0) {
@@ -433,7 +435,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             <div className="space-y-6">
                 {compactedGroups.map((group, gi) => (
                     <div key={gi} className="space-y-1">
-                        {group.speaker && (
+                        {group.displaySpeaker && (
                             <div className="flex items-center gap-2 text-sm font-medium text-carbon-600 dark:text-carbon-400 select-none">
                                 <span>{group.displaySpeaker}</span>
                                 <span className="font-mono text-[10px] text-carbon-400 dark:text-carbon-500">
