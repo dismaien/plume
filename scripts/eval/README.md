@@ -75,6 +75,19 @@ commit and backend hash when experiments must follow a verified desktop update.
 New foreground work preempts only the comparison's own process group. An
 explicit MPS failure is retained; a CPU attempt must be separately named.
 These experimental runners never promote models or accepted transcripts.
+Nemotron runs retain compressed native frame logits for
+`rethreshold_activity.py --candidate result.json --threshold 0.4 --out derived.json`.
+The decoder matches the official processor, retains brief overlapping activity,
+and verifies immutable artifact hashes. Choose any setting on tuning clips and
+freeze it before independent validation; do not search held-out thresholds.
+
+Idle-only execution remains the default. An explicit expiring `cpu_asr_permit`
+may permit a one-CPU-thread MPS Nemotron experiment beside the final CPU ASR job
+after its GPU diarization completed. It pins that job's completed artifact and
+live CPU process. New queued work, a running GPU diarizer or an expired/changed
+permit revokes the slot and stops the owned benchmark. This does not authorize
+an app restart while a recording is processing; runtime under concurrent load
+is not a controlled speed comparison.
 `stage_idle_community.py` supplies the automatic-count production Community-1
 baseline through the same guarded runner; its `--model` value is the existing
 Hugging Face cache root. It records the production MPS per-operation fallback

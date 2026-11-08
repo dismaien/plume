@@ -10,15 +10,15 @@ import json
 import math
 import os
 from pathlib import Path
-import sqlite3
 import time
 import wave
 
+from activity_timeline import save_activity
+from scheduling import execution_slot
 
-def check_idle(database):
-    with sqlite3.connect(database.resolve().as_uri()+'?mode=ro', uri=True) as db:
-        active = db.execute("select count(*) from transcription_jobs where status in ('pending','processing')").fetchone()[0]
-    if active:
+
+def check_idle(database, device=None):
+    if not execution_slot(database,device,os.environ.get('PLUME_EVAL_CPU_ASR_PERMIT')):
         raise RuntimeError('Foreground Plume queue is active; do not load a benchmark model')
 
 
@@ -35,13 +35,16 @@ def canonical_segments(segments, duration):
 
 
 def run(args):
-    check_idle(args.db)
+    check_idle(args.db,getattr(args,'device',None))
+    if args.out.exists() or args.out.with_suffix('.activity.npz').exists():
+        raise FileExistsError('Retain existing immutable inference artifacts')
+    args.out.parent.mkdir(parents=True,exist_ok=True)
     import numpy as np
     import torch
     import transformers
     from transformers import AutoModelForAudioFrameClassification, AutoProcessor
     started = time.monotonic()
-    torch.set_num_threads(4)
+    torch.set_num_threads(1 if os.environ.get('PLUME_EVAL_CPU_ASR_PERMIT') else 4)
     torch.manual_seed(0)
     np.random.seed(0)
     if args.device == 'mps' and not torch.backends.mps.is_available():
@@ -55,25 +58,32 @@ def run(args):
         with (args.model/filename).open('rb') as stream:
             if hashlib.file_digest(stream,'sha256').hexdigest()!=expected:
                 raise ValueError('Cached model artifact hash mismatch')
-    check_idle(args.db)
+    check_idle(args.db,args.device)
     processor = AutoProcessor.from_pretrained(str(args.model), local_files_only=True, trust_remote_code=False)
     model = AutoModelForAudioFrameClassification.from_pretrained(str(args.model), local_files_only=True, trust_remote_code=False)
     model.to(torch.device(args.device)); model.eval()
     inputs = processor(audio,sampling_rate=16000).to(model.device,dtype=model.dtype)
     with torch.inference_mode():
         logits = model(**inputs).logits
+    activity=save_activity(args.out.with_suffix('.activity.npz'),logits[0].detach().float().cpu().numpy(),
+                           inputs.attention_mask[0].detach().cpu().numpy(),
+                           processor.feature_extractor.hop_length/processor.feature_extractor.sampling_rate,
+                           len(audio)/16000)
     turns = canonical_segments(processor.extract_speaker_dict(logits,inputs.attention_mask,threshold=.5)[0], len(audio)/16000)
     speakers=sorted({turn['speaker'] for turn in turns})
     payload=dict(model=provenance['model'],model_used=provenance['model'],segments=turns,regular_segments=turns,
+                 source_sha256=hashlib.sha256(args.audio.read_bytes()).hexdigest(),activity_artifact=activity,
                  speakers=speakers,speaker_count=len(speakers),metadata={
                      'model_revision':provenance['revision'],'device':args.device,
                      'torch_version':torch.__version__,'transformers_version':transformers.__version__,
+                     'torch_cpu_threads':str(torch.get_num_threads()),
                      'frame_activity_threshold':'.5','random_seed':'0',
                      'speaker_identity_status':'accepted' if speakers else 'uncertain',
                      'confidence_kind':'unavailable; frame activity is not person-identity confidence',
                      'assignment_timeline':'regular_native_tracks','processing_seconds':str(time.monotonic()-started),
                      'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                      'experimental':'true; not a production adapter or engine default',
+                     'scheduling':'bounded_gpu_beside_cpu_asr' if os.environ.get('PLUME_EVAL_CPU_ASR_PERMIT') else 'idle_queue',
                  })
     args.out.parent.mkdir(parents=True,exist_ok=True)
     with args.out.open('x') as stream:

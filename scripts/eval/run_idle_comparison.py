@@ -16,11 +16,18 @@ import subprocess
 import time
 
 from score_reference import digest, score
+from scheduling import execution_slot
 
 
 def idle(database):
     with sqlite3.connect(Path(database).resolve().as_uri()+'?mode=ro',uri=True) as db:
         return db.execute("select count(*) from transcription_jobs where status in ('pending','processing')").fetchone()[0]==0
+
+
+def slot_available(plan):
+    if not plan.get('cpu_asr_permit'):return idle(plan['database'])
+    if any(case['device']!='mps' for case in plan['experiments']):return False
+    return execution_slot(plan['database'],'mps',plan['cpu_asr_permit'])
 
 
 def stop_owned_process(process):
@@ -53,7 +60,7 @@ def save_state(path,state):
 
 def run(plan_path):
     plan_path=plan_path.resolve();plan=json.loads(plan_path.read_text());root=plan_path.parent
-    if shutil.disk_usage(root).free < 12*1024**3 or not idle(plan['database']):
+    if shutil.disk_usage(root).free < 12*1024**3 or not slot_available(plan):
         return {'status':'waiting_for_foreground_queue_or_disk'}
     if not installation_verified(plan):
         return {'status':'waiting_for_verified_installation'}
@@ -75,7 +82,7 @@ def run(plan_path):
                     save_state(state_path,state)
                 else:return {'status':'previous_comparison_process_still_running','pid':previous['pid']}
                 return previous
-            if not idle(plan['database']):return {'status':'waiting_for_foreground_queue'}
+            if not slot_available(plan):return {'status':'waiting_for_foreground_queue'}
             if not installation_verified(plan):return {'status':'waiting_for_verified_installation'}
             if digest(experiment['audio'])!=experiment['audio_sha256']:
                 raise ValueError('Comparison source changed')
@@ -93,13 +100,17 @@ def run(plan_path):
                      PYANNOTE_METRICS_ENABLED='0',PYTORCH_ENABLE_MPS_FALLBACK='0',OMP_NUM_THREADS='4')
             for key in list(env):
                 if key in ('HF_TOKEN','HUGGING_FACE_HUB_TOKEN') or key.endswith('API_KEY'):env.pop(key)
+            if plan.get('cpu_asr_permit'):
+                env.update(PLUME_EVAL_CPU_ASR_PERMIT=plan['cpu_asr_permit'],OMP_NUM_THREADS='1',
+                           OPENBLAS_NUM_THREADS='1',MKL_NUM_THREADS='1')
+            else:env.pop('PLUME_EVAL_CPU_ASR_PERMIT',None)
             start=time.monotonic();status='running'
             with (attempt/'process.log').open('w') as log:
                 process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,env=env,start_new_session=True)
                 state['results'][name]={'status':'running','pid':process.pid,'attempt':str(attempt),'experiment':experiment}
                 save_state(state_path,state)
                 while process.poll() is None:
-                    if not idle(plan['database']) or shutil.disk_usage(root).free < 12*1024**3:
+                    if not slot_available(plan) or shutil.disk_usage(root).free < 12*1024**3:
                         status='paused_for_foreground_queue_or_disk';stop_owned_process(process);break
                     if time.monotonic()-start>plan.get('timeout_seconds',900):
                         status='failed';stop_owned_process(process);break
