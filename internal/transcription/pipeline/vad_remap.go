@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"quill/internal/transcription/interfaces"
 )
 
@@ -18,6 +19,7 @@ func (r SpeechRegion) Duration() float64 {
 // VadManifest describes the speech regions detected by VAD, used to remap
 // timestamps from stripped (silence-removed) audio back to the original.
 type VadManifest struct {
+	SpeechRegions    []SpeechRegion `json:"speech_regions,omitempty"` // unpadded acoustic evidence, separate from retained context
 	Regions          []SpeechRegion `json:"regions"`
 	OriginalDuration float64        `json:"original_duration"` // seconds
 }
@@ -67,6 +69,29 @@ func remapTimestamp(strippedTime float64, manifest VadManifest) float64 {
 	return manifest.Regions[len(manifest.Regions)-1].End
 }
 
+// AttachVadSpeechEvidence retains the original-clock speech mask. Without this
+// mask, silence reinserted between concatenated VAD regions is incorrectly
+// counted as unsupported speech when assigning a word to a person.
+func AttachVadSpeechEvidence(result *interfaces.TranscriptResult, manifest VadManifest) *interfaces.TranscriptResult {
+	if result == nil {
+		return nil
+	}
+	copyResult := *result
+	copyResult.Metadata = map[string]string{}
+	for k, v := range result.Metadata {
+		copyResult.Metadata[k] = v
+	}
+	for key, regions := range map[string][]SpeechRegion{"vad_retained_speech_regions": manifest.Regions, "vad_assignment_speech_regions": manifest.SpeechRegions} {
+		if len(regions) > 0 {
+			if data, err := json.Marshal(regions); err == nil {
+				copyResult.Metadata[key] = string(data)
+			}
+		}
+	}
+
+	return &copyResult
+}
+
 // RemapTranscriptResult creates a new TranscriptResult with all timestamps
 // remapped from stripped audio coordinates back to the original timeline.
 //
@@ -111,5 +136,5 @@ func RemapTranscriptResult(result *interfaces.TranscriptResult, manifest VadMani
 		}
 	}
 
-	return remapped
+	return AttachVadSpeechEvidence(remapped, manifest)
 }

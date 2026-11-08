@@ -448,7 +448,15 @@ func (s *BundleSyncService) updateFromMetadata(ctx context.Context, job *models.
 				ReviewStatus:       m.ReviewStatus,
 			})
 		}
-		_ = s.speakerMappingRepo.UpdateMappings(ctx, meta.ID, mappings)
+		existingMappings, err := s.speakerMappingRepo.ListByJob(ctx, meta.ID)
+		if err != nil {
+			return fmt.Errorf("reading existing speaker mappings: %w", err)
+		}
+		mappings = preserveLegacyMappingEvidence(existingMappings, mappings)
+		if err := s.speakerMappingRepo.UpdateMappings(ctx, meta.ID, mappings); err != nil {
+			return fmt.Errorf("updating speaker mappings: %w", err)
+		}
+
 	}
 
 	// Replace summaries
@@ -566,4 +574,26 @@ func (s *BundleSyncService) isSelfWrite(metadataPath string, mtimeNS int64) bool
 		delete(s.selfWrite, normalized)
 	}
 	return false
+}
+
+// Legacy sidecars contain only labels/names. They cannot explicitly clear
+// contact links or human-review provenance for the same saved identity.
+// Modern entries and actual name changes remain authoritative.
+func preserveLegacyMappingEvidence(existing, incoming []models.SpeakerMapping) []models.SpeakerMapping {
+	old := map[string]models.SpeakerMapping{}
+	for _, m := range existing {
+		old[m.OriginalSpeaker] = m
+	}
+	for i, m := range incoming {
+		prior, ok := old[m.OriginalSpeaker]
+		if !ok || prior.CustomName != m.CustomName || m.MatchSource != "" || m.ContactID != nil || m.MatchTier != "" || m.ReviewStatus != "" || m.ConfidenceScore != 0 {
+			continue
+		}
+		incoming[i].ContactID = prior.ContactID
+		incoming[i].MatchSource = prior.MatchSource
+		incoming[i].MatchTier = prior.MatchTier
+		incoming[i].ReviewStatus = prior.ReviewStatus
+		incoming[i].ConfidenceScore = prior.ConfidenceScore
+	}
+	return incoming
 }
