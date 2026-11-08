@@ -1,0 +1,389 @@
+{
+  "status": "rejected_experiments_current_primary_unchanged",
+  "audio_sha256": "dd4d1dba5fb4f076776f49f07ad7a81c4bfb6b5d8d0ceb786e87493d41881ba4",
+  "reference": "Published AMI IS1009a manual annotations v1.6.2; 120\u2013180s; same 60s tuning excerpt as ami-smoke-20261107.json",
+  "limitations": [
+    "Single public tuning excerpt; nested in the opening benchmark. Not held-out or personal memo accuracy.",
+    "Decoder settings, implementations and devices differ; timings are not a controlled speed ranking.",
+    "All decoded text is scored, including words without alignment. Speaker refinement changes no text.",
+    "Raw audio, transcripts, attempts, logs, model weights and dependency installs stay private and outside tracked source."
+  ],
+  "full_recording_asr": [
+    {
+      "engine": "faster-whisper/WhisperX large-v3 CPU int8",
+      "full_text_wer": {
+        "error_rate": 0.16363636363636364,
+        "errors": 18,
+        "length": 110,
+        "insertions": 3,
+        "deletions": 10,
+        "substitutions": 5,
+        "reference_self_overlap": null,
+        "hypothesis_self_overlap": null
+      },
+      "cpwer": {
+        "error_rate": 0.16363636363636364,
+        "errors": 18,
+        "length": 110,
+        "insertions": 1,
+        "deletions": 11,
+        "substitutions": 6,
+        "reference_self_overlap": {
+          "overlap_rate": 0.0,
+          "overlap_time": 0,
+          "total_time": 86.77000000000001
+        },
+        "hypothesis_self_overlap": {
+          "overlap_rate": 0.0025728436354282304,
+          "overlap_time": 0.1200000000000081,
+          "total_time": 46.641
+        },
+        "missed_speaker": 1,
+        "falarm_speaker": 0,
+        "scored_speaker": 2,
+        "assignment": [
+          [
+            "FIE088",
+            "speaker_00"
+          ],
+          [
+            "FIO089",
+            null
+          ]
+        ]
+      },
+      "refinement_proposals": 0,
+      "decision": "retain existing production ASR"
+    },
+    {
+      "engine": "mlx-whisper 0.4.3 large-v3-turbo MPS",
+      "revision": "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb",
+      "settings": {
+        "language": "en",
+        "temperature": 0,
+        "condition_on_previous_text": false,
+        "no_speech_threshold": 0.5,
+        "logprob_threshold": -0.5,
+        "word_timestamps": true,
+        "decoding": "greedy"
+      },
+      "runtime_seconds": 4.1881435830000555,
+      "full_text_wer": {
+        "error_rate": 0.3181818181818182,
+        "errors": 35,
+        "length": 110,
+        "insertions": 15,
+        "deletions": 13,
+        "substitutions": 7,
+        "reference_self_overlap": null,
+        "hypothesis_self_overlap": null
+      },
+      "cpwer": {
+        "error_rate": 0.2,
+        "errors": 22,
+        "length": 110,
+        "insertions": 1,
+        "deletions": 14,
+        "substitutions": 7,
+        "reference_self_overlap": {
+          "overlap_rate": 0.0,
+          "overlap_time": 0,
+          "total_time": 86.77000000000001
+        },
+        "hypothesis_self_overlap": {
+          "overlap_rate": 0.0,
+          "overlap_time": 0,
+          "total_time": 46.74
+        },
+        "missed_speaker": 1,
+        "falarm_speaker": 0,
+        "scored_speaker": 2,
+        "assignment": [
+          [
+            "FIE088",
+            "speaker_00"
+          ],
+          [
+            "FIO089",
+            null
+          ]
+        ]
+      },
+      "refinement_proposals": 0,
+      "decision": "reject: complete-text WER regressed from 16.36% to 31.82%; timed-word-only score is optimistic"
+    }
+  ],
+  "crop_diagnostics": {
+    "status": "rejected_no_production_change",
+    "kind": "actual local ASR crop diagnostics; one public tuning clip; not full recording WER",
+    "selection": "three Native .4 rare-track turns; no reference labels/times supplied to inference; wide context +/-1.5s, tight +/-0.15s",
+    "normalization": "same unicode NFKC casefold punctuation removal as production scorer",
+    "limits": [
+      "Selected windows have partial boundary words; these are crop diagnostics, not whole-recording accuracy.",
+      "Tight windows have a different reference word denominator, so their WER is not a like-for-like ranking against wide windows.",
+      "Both separator streams are scored including duplicates and hallucinations; no oracle stream selection or edited hypothesis.",
+      "The two quiet backchannel words remain absent in all three experiments; one already decoded reply survives.",
+      "No live transcript, speaker name, default model or installed runtime was changed."
+    ],
+    "experiments": [
+      {
+        "experiment": "wide_original_audio",
+        "candidate_sha256": "9d461dc4674694b9c8fdcb2fe7f7aeb506e39f9373eef2f8934aa2611391b5b4",
+        "runtime_seconds": 23.8554869590007,
+        "selected_window_wer": {
+          "errors": 4,
+          "length": 25,
+          "insertions": 0,
+          "deletions": 4,
+          "substitutions": 0,
+          "error_rate": 0.16
+        },
+        "rows": [
+          {
+            "native_turn": {
+              "start": 11.1,
+              "end": 11.54,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              9.6,
+              13.04
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.16666666666666666,
+              "errors": 2,
+              "length": 12,
+              "insertions": 0,
+              "deletions": 2,
+              "substitutions": 0,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 25.52,
+              "end": 25.81,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              24.02,
+              27.31
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.16666666666666666,
+              "errors": 1,
+              "length": 6,
+              "insertions": 0,
+              "deletions": 1,
+              "substitutions": 0,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 39.48,
+              "end": 39.97,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              37.98,
+              41.47
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.14285714285714285,
+              "errors": 1,
+              "length": 7,
+              "insertions": 0,
+              "deletions": 1,
+              "substitutions": 0,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          }
+        ]
+      },
+      {
+        "experiment": "tight_original_audio",
+        "candidate_sha256": "a47da08c68f14178ba9b8c207a99b0f82eb41083be5c043a64e3dbfa54ec6630",
+        "runtime_seconds": 21.152241709001828,
+        "selected_window_wer": {
+          "errors": 6,
+          "length": 7,
+          "insertions": 0,
+          "deletions": 3,
+          "substitutions": 3,
+          "error_rate": 0.8571428571428571
+        },
+        "rows": [
+          {
+            "native_turn": {
+              "start": 11.1,
+              "end": 11.54,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              10.95,
+              11.69
+            ],
+            "normalized_word_errors": {
+              "error_rate": 1.0,
+              "errors": 4,
+              "length": 4,
+              "insertions": 0,
+              "deletions": 2,
+              "substitutions": 2,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 25.52,
+              "end": 25.81,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              25.37,
+              25.959999999999997
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.5,
+              "errors": 1,
+              "length": 2,
+              "insertions": 0,
+              "deletions": 1,
+              "substitutions": 0,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 39.48,
+              "end": 39.97,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              39.33,
+              40.12
+            ],
+            "normalized_word_errors": {
+              "error_rate": 1.0,
+              "errors": 1,
+              "length": 1,
+              "insertions": 0,
+              "deletions": 0,
+              "substitutions": 1,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          }
+        ]
+      },
+      {
+        "experiment": "wide_sepformer_both_streams",
+        "candidate_sha256": "85c66739f7c53d257d11fd2c7d72ce2730b003c876a43f52d6ccfcbbcf40177a",
+        "runtime_seconds": 41.4180946250126,
+        "selected_window_wer": {
+          "errors": 20,
+          "length": 25,
+          "insertions": 15,
+          "deletions": 1,
+          "substitutions": 4,
+          "error_rate": 0.8
+        },
+        "rows": [
+          {
+            "native_turn": {
+              "start": 11.1,
+              "end": 11.54,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              9.6,
+              13.04
+            ],
+            "normalized_word_errors": {
+              "error_rate": 1.1666666666666667,
+              "errors": 14,
+              "length": 12,
+              "insertions": 12,
+              "deletions": 0,
+              "substitutions": 2,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 25.52,
+              "end": 25.81,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              24.02,
+              27.31
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.6666666666666666,
+              "errors": 4,
+              "length": 6,
+              "insertions": 3,
+              "deletions": 1,
+              "substitutions": 0,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          },
+          {
+            "native_turn": {
+              "start": 39.48,
+              "end": 39.97,
+              "speaker": "speaker_1"
+            },
+            "window": [
+              37.98,
+              41.47
+            ],
+            "normalized_word_errors": {
+              "error_rate": 0.2857142857142857,
+              "errors": 2,
+              "length": 7,
+              "insertions": 0,
+              "deletions": 0,
+              "substitutions": 2,
+              "reference_self_overlap": null,
+              "hypothesis_self_overlap": null
+            }
+          }
+        ]
+      }
+    ],
+    "separator_model": {
+      "repository": "speechbrain/sepformer-whamr16k",
+      "revision": "21a5b500c6f52fddc387c5d9e5fb13ffd6f039c5",
+      "source": "official public SpeechBrain model; no credentials or audio upload",
+      "files": {
+        "hyperparams.yaml": {
+          "bytes": 1522,
+          "sha256": "eeef8d1450e1e06417eda07aa87ded71c6d9f3394852a92805e6aaf5229a50c6"
+        },
+        "encoder.ckpt": {
+          "bytes": 17272,
+          "sha256": "31d23d395a408b887b8f6ac01e477f00bcba27f95785426359fb52d52f1dc6ed"
+        },
+        "decoder.ckpt": {
+          "bytes": 17272,
+          "sha256": "2d959cb46de5b15f008bf5476cf7c19bc680b310c7e10883e3eddfdbde533cb8"
+        },
+        "masknet.ckpt": {
+          "bytes": 113112646,
+          "sha256": "e5fb8c690668e5d1bbbc9a8256974577093a09cd08e845e9f30024fdd33472ce"
+        }
+      }
+    }
+  },
+  "production_changes": "None from these ASR experiments. The previously secured known-label refinement remains the only selected accuracy change."
+}
