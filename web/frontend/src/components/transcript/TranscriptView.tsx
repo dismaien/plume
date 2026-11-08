@@ -171,11 +171,11 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // 1. Precompute per-segment text and offsets
     const expandedData = useMemo(() => {
-        if (!transcript?.segments || !transcript.word_segments) return [];
+        if (!transcript?.segments) return [];
 
         return transcript.segments.map((segment) => {
             // Filter words belonging to this segment
-            const segmentWords = transcript.word_segments!.filter(
+            const segmentWords = (transcript.word_segments ?? []).filter(
                 word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
             );
 
@@ -297,7 +297,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     // Render plain text with word-level highlighting (no speaker info)
     const renderPlainView = () => {
         if (!transcript.word_segments || transcript.word_segments.length === 0) {
-            return <p className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
+            return <p data-transcript-text className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
         }
 
         return (
