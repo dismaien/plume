@@ -37,6 +37,7 @@ type GeneratedArchiveTitleInput struct {
 	OriginalFilename string
 	Transcript       string
 	Speakers         []string
+	NarratorCount    int
 	DurationMillis   int64
 }
 
@@ -134,6 +135,13 @@ func sourceTitleLabel(currentTitle string, originalFilename string, subject stri
 }
 
 func isLikelyDreamArchiveRecording(input GeneratedArchiveTitleInput) bool {
+	// Dream diaries in this archive are solo narration. Dialogue inside the
+	// dream is quoted content, not evidence of another recorder. Conversely,
+	// stable multi-person acoustic evidence means the recording is a
+	// conversation about a dream, not a dream diary.
+	if input.NarratorCount > 1 {
+		return false
+	}
 	currentTitle := strings.TrimSpace(input.CurrentTitle)
 	if archiveDreamMarkerPattern.MatchString(currentTitle) {
 		return true

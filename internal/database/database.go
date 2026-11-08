@@ -336,7 +336,7 @@ func seedDefaultSummaryTemplate(db *gorm.DB) error {
 	}
 	if count > 0 {
 		return db.Model(&models.SummaryTemplate{}).
-			Where("name = ? AND prompt = ?", "Meeting Notes", legacyMeetingNotesPrompt).
+			Where("name = ? AND prompt IN ?", "Meeting Notes", []string{legacyMeetingNotesPrompt, previousDefaultMeetingNotesPrompt}).
 			Updates(map[string]interface{}{
 				"description":          "Detailed, speaker-attributed notes for meetings and personal conversations.",
 				"prompt":               defaultMeetingNotesPrompt,
@@ -380,7 +380,7 @@ Guidelines:
 - Do not invent or infer information not present in the transcript.
 - Omit any section that has no relevant content rather than writing "None" or "N/A".`
 
-const defaultMeetingNotesPrompt = `Analyze the complete transcript and produce specific, speaker-attributed notes in Markdown. This may be a work meeting, a personal conversation, or a reflective discussion; use the structure that fits the actual material instead of forcing a corporate-meeting interpretation.
+const previousDefaultMeetingNotesPrompt = `Analyze the complete transcript and produce specific, speaker-attributed notes in Markdown. This may be a work meeting, a personal conversation, or a reflective discussion; use the structure that fits the actual material instead of forcing a corporate-meeting interpretation.
 
 ## Summary
 Write a substantive overview of the central situation, what mattered to each person, and how the conversation developed. Name the people involved. Include important tensions, changes in position, or outcomes rather than listing broad subject areas.
@@ -409,6 +409,14 @@ Guidelines:
 - Represent different viewpoints separately before synthesizing them.
 - Prefer concrete claims and examples over generic phrases such as "the participants discussed" or "various challenges".
 - Omit empty sections entirely rather than writing placeholders.`
+
+const defaultMeetingNotesPrompt = previousDefaultMeetingNotesPrompt + `
+
+Recording-type rules:
+- Identify the dominant throughline from recurrence, duration, consequence, and the participants' emphasis. Do not make a brief tangent, incidental example, quoted phrase, or isolated opening/closing fragment the summary's main subject.
+- A personal dream diary is solo first-person narration. Dialogue quoted from inside the dream belongs to the narrator and must not create speaker perspectives, agreements, decisions, or action items.
+- A multi-person conversation that mentions or interprets dreams remains a conversation, not a dream diary.
+- For a true dream diary, center the summary on the dream's main sequence, setting, figures, emotional movement, and defining images. Keep waking reflection clearly separate from dream events.`
 
 // Close closes the database connection gracefully
 func Close() error {

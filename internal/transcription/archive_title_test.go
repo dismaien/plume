@@ -104,11 +104,27 @@ func TestFormatGeneratedArchiveTitleDetectsDreamFromTranscript(t *testing.T) {
 		OriginalFilename: "20260809 081311-EF53EB7E.qta",
 		Transcript:       "I had a dream about walking through wooden rooms and hidden passages.",
 		Speakers:         []string{"Leona"},
+		NarratorCount:    1,
 		DurationMillis:   352_000,
 	})
 	want := "260809 08:13 (dream) Wooden Walkways and Hidden Rooms [Leona] {05:52}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGeneratedArchiveTitleRejectsDreamMarkerForConversation(t *testing.T) {
+	recordedAt := time.Date(2026, time.November, 5, 18, 23, 0, 0, time.UTC)
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		RecordedAt:     &recordedAt,
+		Subject:        "College Applications and Product Security",
+		CurrentTitle:   "261105 18:23 (dream) College Application Essays {39:40}",
+		Transcript:     "I had a dream once. What do you think? I disagree.",
+		NarratorCount:  3,
+		DurationMillis: 2_380_000,
+	})
+	if strings.Contains(got, "(dream)") {
+		t.Fatalf("multi-person conversation retained false dream marker: %q", got)
 	}
 }
 

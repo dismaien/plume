@@ -1,6 +1,25 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestBuildTranscriptTitleSourceExtractsPlainTextFromJSON(t *testing.T) {
+	raw := `{"text":"The central issue is trust and communication.","segments":[{"text":"irrelevant metadata"}]}`
+	got := buildTranscriptTitleSource(raw)
+	if got != "The central issue is trust and communication." {
+		t.Fatalf("buildTranscriptTitleSource() = %q", got)
+	}
+}
+
+func TestBuildTranscriptTitleSourceSamplesMiddleOfLongRecording(t *testing.T) {
+	raw := `{"text":"` + strings.Repeat("beginning ", 400) + "CENTRAL-MIDDLE-THEME " + strings.Repeat("ending ", 500) + `"}`
+	got := buildTranscriptTitleSource(raw)
+	if !strings.Contains(got, "[MIDDLE]") || !strings.Contains(got, "CENTRAL-MIDDLE-THEME") {
+		t.Fatalf("middle sample missing from title source")
+	}
+}
 
 func TestNormalizeGeneratedTranscriptTitle(t *testing.T) {
 	got := normalizeGeneratedTranscriptTitle("  `Dreams\nand Wooden Walkways.`  ")

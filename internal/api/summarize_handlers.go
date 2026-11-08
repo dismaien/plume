@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -366,31 +367,13 @@ func extractTranscriptText(transcript *string) string {
 	}
 	raw := *transcript
 
-	// Try to parse as JSON and extract .text field
-	// The transcript is often stored as {"text": "...", "segments": [...]}
+	// The transcript is often stored as {"text": "...", "segments": [...]}.
+	// Use the JSON decoder so escaped quotes, line breaks, and Unicode reach the
+	// summarizer exactly as they appeared in the accepted transcript.
 	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
-		// Simple extraction: find "text" field value
-		idx := strings.Index(raw, `"text"`)
-		if idx >= 0 {
-			rest := raw[idx+len(`"text"`):]
-			// Skip whitespace and colon
-			rest = strings.TrimLeft(rest, " \t\n\r:")
-			if strings.HasPrefix(rest, `"`) {
-				// Find the closing quote (handle escaped quotes)
-				rest = rest[1:] // skip opening quote
-				var result strings.Builder
-				for i := 0; i < len(rest); i++ {
-					if rest[i] == '\\' && i+1 < len(rest) {
-						result.WriteByte(rest[i+1])
-						i++
-						continue
-					}
-					if rest[i] == '"' {
-						return result.String()
-					}
-					result.WriteByte(rest[i])
-				}
-			}
+		var payload regenPayload
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil && strings.TrimSpace(payload.Text) != "" {
+			return payload.Text
 		}
 	}
 

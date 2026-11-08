@@ -265,8 +265,17 @@ func resolveJobAudioPath(job *models.TranscriptionJob, vaultPath string) (string
 	}
 
 	allowedRoots := []string{vaultPath}
-	if uploadDir := strings.TrimSpace(config.Load().UploadDir); uploadDir != "" {
+	cfg := config.Load()
+	if uploadDir := strings.TrimSpace(cfg.UploadDir); uploadDir != "" {
 		allowedRoots = append(allowedRoots, uploadDir)
+	}
+	// Imported Apple Voice Memos intentionally remain in the immutable archive
+	// instead of being copied into the vault. Their provenance is explicit, so
+	// permit that one configured source root for speaker-embedding extraction.
+	if isImportedAppleVoiceMemo(job) {
+		if archiveRoot := strings.TrimSpace(cfg.VoiceMemoArchiveRoot); archiveRoot != "" {
+			allowedRoots = append(allowedRoots, archiveRoot)
+		}
 	}
 
 	for _, candidate := range candidates {

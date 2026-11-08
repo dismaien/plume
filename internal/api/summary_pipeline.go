@@ -24,7 +24,10 @@ func directSummaryMessages(transcript, instructions string, includeSpeakerInfo b
 		{
 			Role: "system",
 			Content: "You produce faithful, specific transcript analysis. " + speakerGuidance +
-				" Distinguish explicit statements from cautious inference, preserve disagreement and emotional nuance, and never invent decisions, tasks, owners, or facts.",
+				" First identify the recording type and dominant throughline across the complete material. " +
+				"Do not promote a brief tangent, quoted phrase, or incidental example into the main subject. " +
+				"A dream diary is solo narration even when the narrator quotes dream characters; never turn those quotations into participants or dialogue analysis. " +
+				"Distinguish explicit statements from cautious inference, preserve disagreement and emotional nuance, and never invent decisions, tasks, owners, or facts.",
 		},
 		{
 			Role: "user",
@@ -88,7 +91,9 @@ func prepareSummaryMessages(
 		{
 			Role: "system",
 			Content: "You are writing the final analysis of a long transcript from section-by-section evidence. " + speakerGuidance +
-				" Synthesize across the full conversation, preserve contradictions and changes over time, and never invent decisions, action items, owners, or facts.",
+				" Identify the dominant throughline by recurrence, duration, consequence, and the speakers' own emphasis rather than by vivid wording alone. " +
+				"Treat brief tangents and quoted material as supporting context. A dream diary remains one narrator even when dream characters are quoted. " +
+				"Synthesize across the full recording, preserve contradictions and changes over time, and never invent decisions, action items, owners, or facts.",
 		},
 		{
 			Role: "user",
@@ -110,6 +115,8 @@ func evidenceExtractionMessages(chunk, instructions string, includeSpeakerInfo b
 			Role: "system",
 			Content: "Extract a dense evidence ledger from one section of a longer transcript. Do not write the final summary. " + speakerGuidance +
 				" Preserve concrete examples, motivations, tensions, emotional shifts, disagreements, agreements, explicit decisions, explicit commitments, and unresolved questions. " +
+				"Mark brief tangents and quoted or hypothetical material as such so they cannot become the final summary's main subject. " +
+				"If this is dream narration, keep quoted dream characters under the narrator rather than treating them as recorded participants. " +
 				"Do not invent action items or infer an owner. Avoid vague phrases such as 'various topics were discussed'. Keep the ledger under 350 words.",
 		},
 		{

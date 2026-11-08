@@ -90,3 +90,23 @@ func TestSpeakerTitleName_DropsGenericLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleSpeakerEvidenceCountsUnresolvedAcousticSpeakers(t *testing.T) {
+	raw := `{"segments":[{"speaker":"speaker_00"},{"speaker":"speaker_01"},{"speaker":"speaker_02"}]}`
+	got := TitleSpeakerEvidenceFromTranscript(raw, nil)
+	if got.AcousticSpeakerCount != 3 || got.EffectiveNarratorCount != 3 || got.UnresolvedSpeakerCount != 3 {
+		t.Fatalf("unexpected evidence: %#v", got)
+	}
+}
+
+func TestTitleSpeakerEvidenceCollapsesConfirmedVoiceSplits(t *testing.T) {
+	raw := `{"segments":[{"speaker":"speaker_00"},{"speaker":"speaker_01"}]}`
+	mappings := []models.SpeakerMapping{
+		{OriginalSpeaker: "speaker_00", CustomName: "Leona", MatchTier: "auto"},
+		{OriginalSpeaker: "speaker_01", CustomName: "Leona", MatchTier: "auto"},
+	}
+	got := TitleSpeakerEvidenceFromTranscript(raw, mappings)
+	if got.AcousticSpeakerCount != 2 || got.EffectiveNarratorCount != 1 || got.UnresolvedSpeakerCount != 0 {
+		t.Fatalf("unexpected evidence: %#v", got)
+	}
+}

@@ -51,6 +51,9 @@ func TestPrepareSummaryMessagesUsesDirectPromptForShortTranscript(t *testing.T) 
 	if len(messages) != 2 || !strings.Contains(messages[0].Content, "exact names") {
 		t.Fatalf("speaker guidance missing from direct prompt: %#v", messages)
 	}
+	if !strings.Contains(messages[0].Content, "dream diary is solo narration") || !strings.Contains(messages[0].Content, "incidental example") {
+		t.Fatalf("recording-type and dominant-theme guidance missing: %#v", messages)
+	}
 }
 
 func TestPrepareSummaryMessagesSectionsLongTranscriptAndPreservesSpeakerGuidance(t *testing.T) {

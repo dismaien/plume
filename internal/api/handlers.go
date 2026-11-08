@@ -1981,16 +1981,23 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		return "", "", fmt.Errorf("transcript content is required")
 	}
 
-	subject, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
-	if err != nil {
-		return "", "", err
-	}
-
 	var currentTitle string
 	if job.Title != nil {
 		currentTitle = strings.TrimSpace(*job.Title)
 	}
 	mappings, _ := h.speakerMappingRepo.ListByJob(ctx, job.ID)
+	speakerEvidence := transcription.TitleSpeakerEvidenceFromTranscript(*job.Transcript, mappings)
+	subject, err := h.generateTranscriptTitleFromLLM(
+		ctx,
+		svc,
+		selectedModel,
+		buildTranscriptTitleSource(*job.Transcript),
+		speakerEvidence,
+	)
+	if err != nil {
+		return "", "", err
+	}
+
 	speakers := transcription.SpeakerTitleNamesFromTranscript(*job.Transcript, mappings)
 	durationMillis := preferredRecordingDurationMillis(
 		durationMillisFromAudio(ctx, job.AudioPath),
@@ -2005,6 +2012,7 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		OriginalFilename: job.OriginalFilename,
 		Transcript:       *job.Transcript,
 		Speakers:         speakers,
+		NarratorCount:    speakerEvidence.EffectiveNarratorCount,
 		DurationMillis:   durationMillis,
 	})
 
@@ -2300,12 +2308,14 @@ func looksLikeTimestamp(s string) bool {
 // generateTranscriptTitleFromLLM generates a title optimised for audio transcripts
 // (conversations, phone calls, voice memos, interviews, podcasts, etc.) rather than
 // the chat-session prompt used by generateTitleFromLLM.
-func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string) (string, error) {
-	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations — phone calls, voice memos, casual chats, interviews, brainstorms, podcasts, and similar recordings. They are NOT corporate meeting minutes.
+func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string, evidence transcription.TitleSpeakerEvidence) (string, error) {
+	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations, phone calls, voice memos, personal reflections, interviews, dreams, brainstorms, podcasts, and similar recordings. They are not corporate meeting minutes.
 
 Generate a short subject title (4-8 words) that captures the main idea of the recording.
 
 Rules:
+- Identify the recording's dominant throughline across the complete transcript before choosing words. Do not title it after an incidental example, brief tangent, quoted phrase, or isolated opening/closing fragment
+- When several topics appear, name the central situation, relationship dynamic, or purpose that best explains the recording as a whole
 - Use Title Case (Every Important Word Capitalized)
 - Lead with the topic or subject, not a verb
 - Do not include speaker names unless they are essential to the subject; speaker brackets are added separately
@@ -2316,7 +2326,10 @@ Rules:
 - Never use generic labels like "Brief Note", "Personal Issue", "Conversation", "Chat", "Discussion", "Audio Recording"
 - Never return raw file names such as "20260724 183644-60C99703"
 - Never return hallucinated filler such as "Thank You"
-- If this is primarily a personal dream account, begin the subject with "Dream: "; Plume converts that into its visible (dream) type marker
+- A dream diary is a solo first-person account of the narrator's own remembered dream. Quoted dialogue and dream characters remain part of that one narration
+- A conversation that merely mentions, interprets, or discusses dreams is not a dream diary
+- If recording evidence reports more than one narrator, never begin the subject with "Dream: "
+- For a genuine dream diary, begin the subject with "Dream: " and title its central scene, event, transformation, or image rather than using a generic label such as "Dream Analysis"
 
 Examples:
 - "Jake's Birthday Party Planning"
@@ -2330,11 +2343,19 @@ Examples:
 
 Return ONLY the title, nothing else.`
 
+	evidenceBlock := fmt.Sprintf(
+		"Recording evidence: acoustic_speakers=%d; effective_narrators=%d; unresolved_speakers=%d; confirmed_names=%s.",
+		evidence.AcousticSpeakerCount,
+		evidence.EffectiveNarratorCount,
+		evidence.UnresolvedSpeakerCount,
+		strings.Join(evidence.ConfirmedNames, ", "),
+	)
+
 	var lastRejected string
 	for attempt := 0; attempt < 2; attempt++ {
-		userContent := transcript
+		userContent := evidenceBlock + "\n\n--- TRANSCRIPT ---\n" + transcript + "\n--- END TRANSCRIPT ---"
 		if attempt > 0 {
-			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, or filename-like. Generate a specific subject title from this transcript instead.\n\n%s", lastRejected, transcript)
+			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, filename-like, or not representative of the recording. Generate a specific title for the dominant throughline instead.\n\n%s\n\n--- TRANSCRIPT ---\n%s\n--- END TRANSCRIPT ---", lastRejected, evidenceBlock, transcript)
 		}
 
 		chatMsgs := []llm.ChatMessage{
@@ -2368,15 +2389,27 @@ func buildTranscriptTitleSource(transcript string) string {
 		return trimmed
 	}
 
-	// Keep title generation prompt compact for smaller context-window models.
-	const sectionChars = 3000
-	if len(trimmed) <= sectionChars*2 {
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if strings.HasPrefix(trimmed, "{") && json.Unmarshal([]byte(trimmed), &payload) == nil && strings.TrimSpace(payload.Text) != "" {
+		trimmed = strings.Join(strings.Fields(payload.Text), " ")
+	}
+
+	// Keep the prompt compact for local models while sampling the beginning,
+	// middle, and end. Head/tail-only sampling overweights greetings and
+	// wrap-up tangents in long personal recordings.
+	const sectionChars = 2400
+	runes := []rune(trimmed)
+	if len(runes) <= sectionChars*3 {
 		return trimmed
 	}
 
-	head := strings.TrimSpace(trimmed[:sectionChars])
-	tail := strings.TrimSpace(trimmed[len(trimmed)-sectionChars:])
-	return head + "\n...\n" + tail
+	head := strings.TrimSpace(string(runes[:sectionChars]))
+	midStart := len(runes)/2 - sectionChars/2
+	middle := strings.TrimSpace(string(runes[midStart : midStart+sectionChars]))
+	tail := strings.TrimSpace(string(runes[len(runes)-sectionChars:]))
+	return "[BEGINNING]\n" + head + "\n\n[MIDDLE]\n" + middle + "\n\n[END]\n" + tail
 }
 
 func normalizeGeneratedTranscriptTitle(title string) string {
