@@ -24,10 +24,26 @@ def idle(database):
 
 
 def stop_owned_process(process):
-    os.killpg(process.pid,signal.SIGTERM)
+    try:os.killpg(process.pid,signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
     try:process.wait(timeout=10)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=10)
+        try:os.killpg(process.pid,signal.SIGKILL)
+        except ProcessLookupError:pass
+        process.wait(timeout=10)
+
+
+def installation_verified(plan):
+    requirement=plan.get('requires_verified_install')
+    if not requirement:return True
+    path=Path(requirement['receipt'])
+    if not path.exists():return False
+    receipt=json.loads(path.read_text())
+    return (receipt.get('status')=='verified'
+            and receipt.get('source_commit')==requirement['source_commit']
+            and receipt.get('backend_sha256')==requirement['backend_sha256'])
 
 
 def save_state(path,state):
@@ -39,6 +55,8 @@ def run(plan_path):
     plan_path=plan_path.resolve();plan=json.loads(plan_path.read_text());root=plan_path.parent
     if shutil.disk_usage(root).free < 12*1024**3 or not idle(plan['database']):
         return {'status':'waiting_for_foreground_queue_or_disk'}
+    if not installation_verified(plan):
+        return {'status':'waiting_for_verified_installation'}
     with (root/'comparison.lock').open('a+') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return {'status':'another_comparison_running'}
@@ -58,6 +76,7 @@ def run(plan_path):
                 else:return {'status':'previous_comparison_process_still_running','pid':previous['pid']}
                 return previous
             if not idle(plan['database']):return {'status':'waiting_for_foreground_queue'}
+            if not installation_verified(plan):return {'status':'waiting_for_verified_installation'}
             if digest(experiment['audio'])!=experiment['audio_sha256']:
                 raise ValueError('Comparison source changed')
             reference=Path(experiment['reference'])

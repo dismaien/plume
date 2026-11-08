@@ -12,7 +12,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 
-from score_reference import digest, score
+from score_reference import digest, score, is_known_speaker
 
 MANUAL_SHA256 = 'b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d'
 MANUAL_URL = 'https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip'
@@ -27,15 +27,15 @@ def fixed_word_attribution(reference, hypothesis):
     ):
         raise ValueError('Oracle assembler changed the fixed words or their timing')
     people = sorted({w['speaker'] for w in reference})
-    labels = sorted({w['speaker'] for w in hypothesis if w.get('speaker')})
+    labels = sorted({w['speaker'] for w in hypothesis if is_known_speaker(w.get('speaker'))})
     matrix = np.zeros((len(people), len(labels)), dtype=int)
     for expected, actual in zip(reference, hypothesis):
-        if actual.get('speaker'):
+        if is_known_speaker(actual.get('speaker')):
             matrix[people.index(expected['speaker']), labels.index(actual['speaker'])] += 1
     rows, columns = linear_sum_assignment(matrix, maximize=True)
     mapping = {labels[c]: people[r] for r, c in zip(rows, columns)}
-    correct = sum(bool(h.get('speaker')) and mapping.get(h['speaker']) == r['speaker'] for r, h in zip(reference, hypothesis))
-    unknown = sum(not h.get('speaker') for h in hypothesis)
+    correct = sum(is_known_speaker(h.get('speaker')) and mapping.get(h['speaker']) == r['speaker'] for r, h in zip(reference, hypothesis))
+    unknown = sum(not is_known_speaker(h.get('speaker')) for h in hypothesis)
     return dict(reference_words=len(reference), correctly_attributed=correct,
                 wrong_person=len(reference)-correct-unknown, unattributed=unknown,
                 known_label_precision=correct/(len(reference)-unknown) if len(reference)>unknown else None,

@@ -23,6 +23,10 @@ def digest(path):
     return h.hexdigest()
 
 
+def is_known_speaker(label):
+    return label is not None and str(label).strip().lower() not in ('', 'unknown', 'speaker unclear')
+
+
 def read_rttm(path, uri):
     from pyannote.core import Annotation, Segment
     annotation = Annotation(uri=uri)
@@ -49,9 +53,45 @@ def candidate_annotation(payload, uri):
         if not math.isfinite(start+end) or start < 0 or end <= start:
             raise ValueError('Invalid candidate interval')
         speaker = turn.get('speaker')
-        if speaker and str(speaker).lower() not in ('unknown', 'speaker unclear'):
+        if is_known_speaker(speaker):
             annotation[Segment(start, end), i] = str(speaker)
     return annotation
+
+
+def activity_scores(reference, hypothesis, mapping, region):
+    """Time-weighted attribution using the full-UEM mapping, never remapped per region.
+
+    Hypothesis speaker-time includes unmatched identities and false alarms.
+    Recall alone can be inflated by publishing every voice for the whole file.
+    These diagnostics complement DER; they do not replace it.
+    """
+    from pyannote.core import Timeline
+    ref, hyp = reference.crop(region), hypothesis.crop(region)
+    people = {}
+    correct_total = 0.0
+    for person in ref.labels():
+        expected = ref.label_timeline(person).support()
+        predicted = Timeline()
+        for identity, target in mapping.items():
+            if target == person:
+                predicted.update(hyp.label_timeline(identity))
+        predicted = predicted.support()
+        correct = expected.crop(predicted).support().duration()
+        expected_seconds, predicted_seconds = expected.duration(), predicted.duration()
+        people[str(person)] = dict(reference_seconds=expected_seconds,
+                                  hypothesis_seconds=predicted_seconds,
+                                  correct_seconds=correct,
+                                  recall=correct/expected_seconds if expected_seconds else None,
+                                  precision=correct/predicted_seconds if predicted_seconds else None)
+        correct_total += correct
+    expected_total = sum(ref.label_timeline(label).support().duration() for label in ref.labels())
+    predicted_total = sum(hyp.label_timeline(label).support().duration() for label in hyp.labels())
+    return dict(reference_speaker_seconds=expected_total,
+                hypothesis_speaker_seconds=predicted_total,
+                correct_speaker_seconds=correct_total,
+                recall=correct_total/expected_total if expected_total else None,
+                precision=correct_total/predicted_total if predicted_total else None,
+                per_speaker=people)
 
 
 def diarization_scores(reference, hypothesis, uem):
@@ -80,6 +120,12 @@ def diarization_scores(reference, hypothesis, uem):
     # actual missed reference turns for inspection, including overlapping turns.
     missed_turns = []
     brief_seconds, brief_matched = 0.0, 0.0
+    # Decide whether a turn is brief before clipping it to the UEM: a tiny
+    # evaluation window must not turn a long utterance into a brief reply.
+    brief_region = reference.empty()
+    for turn, track, label in reference.itertracks(yield_label=True):
+        if turn.duration < 1:
+            brief_region[turn, track] = label
     for turn, _, label in ref.itertracks(yield_label=True):
         matched = Timeline()
         for h, r in mapping.items():
@@ -89,9 +135,6 @@ def diarization_scores(reference, hypothesis, uem):
                         matched.add(actual & turn)
         correct = matched.support().duration()
         duration = turn.duration
-        if duration < 1:
-            brief_seconds += duration
-            brief_matched += correct
         if correct < duration - 1e-6:
             overlap = any(other != label and turn.intersects(segment)
                           for segment, _, other in ref.itertracks(yield_label=True))
@@ -101,11 +144,23 @@ def diarization_scores(reference, hypothesis, uem):
                                      overlapping_reference_speech=overlap))
     total = sum(ref.label_duration(label) for label in ref.labels())
     attributed = sum(ref.label_timeline(label).crop(hyp.get_timeline().support()).support().duration() for label in ref.labels())
+    overlap = ref.get_overlap().support()
+    brief = activity_scores(brief_region.crop(uem), hyp, mapping, uem)
+    brief_seconds = brief['reference_speaker_seconds']
+    brief_matched = brief['correct_speaker_seconds']
     results.update(per_speaker_recall=recall, reference_speakers=len(ref.labels()),
                    hypothesis_speakers=len(hyp.labels()), false_solo=len(ref.labels())>1 and len(hyp.labels())==1,
                    unattributed_reference_fraction=1-attributed/total if total else None,
                    brief_turn_reference_seconds=brief_seconds,
                    brief_turn_recall=brief_matched/brief_seconds if brief_seconds else None,
+                   brief_turn_definition='original RTTM turn <1s before UEM clipping',
+                   missed_speakers=[person for person, value in recall.items() if value == 0],
+                   worst_speaker_recall=min(recall.values()) if recall else None,
+                   activity_by_region={
+                       'overlap': activity_scores(ref, hyp, mapping, overlap),
+                       'non_overlap': activity_scores(ref, hyp, mapping, overlap.gaps(support=uem)),
+                   },
+                   regional_mapping_policy='one full-UEM optimal mapping reused across regions; speaker-time weighting',
                    missed_reference_turns=sorted(missed_turns, key=lambda t: -t['missed_seconds'])[:20])
     return results
 
@@ -122,7 +177,7 @@ def word_scores(reference, hypothesis, uri, uem):
         return SegLST([dict(session_id=uri,speaker=str(w['speaker']),start_time=float(w['start']),
                             end_time=float(w['end']),words=w['word']) for w in words])
     # Unknown words retain their text in WER, but cannot earn speaker-attribution credit.
-    known=[w for w in hyp if w.get('speaker') and w['speaker'].lower() not in ('unknown','speaker unclear')]
+    known=[w for w in hyp if is_known_speaker(w.get('speaker'))]
     def normalized(words):
         output=[]
         for word in words:
@@ -178,6 +233,8 @@ def score(manifest_path, candidate_path):
     diar=payload.get('diarization_result') or payload
     result={'recording_id':uri,'split':manifest['split'],'reference_reviewer':manifest['reviewer'],
             'source_sha256':manifest['source_sha256'],'candidate_sha256':digest(candidate_path),
+            'scorer_sha256':digest(__file__),
+            'reference_sha256':{key:digest(root/manifest[key]) for key in ('rttm','uem','words') if manifest.get(key)},
             'candidate_metadata':diar.get('metadata',{}),'collar_unit':'seconds, pyannote.metrics convention',
             'overlap_included':True,'diarization':diarization_scores(reference,candidate_annotation(diar,uri),uem),
             'scorer_versions':{p:importlib.metadata.version(p) for p in ('pyannote.metrics','meeteval')}}

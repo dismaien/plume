@@ -35,6 +35,15 @@ two-speaker excerpt is contained in the opening excerpt: do not double-count
 it in aggregate metrics. These are tuning smoke checks from one public meeting,
 not held-out proof of quality on personal recordings or unseen model test data.
 
+The scorer also reports overlap/non-overlap speaker-time precision and recall,
+worst-person recall and completely missed people. All regions reuse one global
+identity permutation; re-mapping each region could hide speaker swaps. A brief
+turn is an original RTTM turn under one second, measured before UEM clipping.
+An excellent overall DER can still mean zero recall for a person who only says
+a few words. Publishing every person everywhere increases false speaker-time,
+so recall must be read alongside precision and DER. Literal unknown labels earn
+no identity credit in either the timeline or fixed-word checker.
+
 `score_oracle_words.py` additionally compares assignment policies using the
 hash-pinned AMI manual word/timing archive. It removes all reference speaker
 labels before running each assembler. This isolates speaker attribution: its
@@ -57,3 +66,12 @@ provenance; Codex does not claim to have listened and annotated them.
 `harness.py`, `stage_recluster.py` and `stage_assemble_score.py` preserve older
 diagnostic experiments. Their heuristic coverage and speaker statistics are not
 the canonical production assembler or human-reference accuracy scores.
+
+`stage_diar_nemotron3.py` uses an independently cached native Transformers model
+as a local challenger. `run_idle_comparison.py --plan /private/plan.json` runs
+source-hashed cases with bounded immutable attempts and offline inference.
+Set `requires_verified_install` in the plan to the installation receipt, source
+commit and backend hash when experiments must follow a verified desktop update.
+New foreground work preempts only the comparison's own process group. An
+explicit MPS failure is retained; a CPU attempt must be separately named.
+These experimental runners never promote models or accepted transcripts.

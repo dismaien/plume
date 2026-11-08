@@ -29,3 +29,10 @@ def test_all_unknown_is_no_correct_attribution():
     result = module.fixed_word_attribution(words(['a','b']), words([None,None]))
     assert result['correctly_attributed'] == 0 and result['unattributed'] == 2
     assert result['known_label_precision'] is None
+
+
+@pytest.mark.parametrize('unknown',['unknown','Speaker unclear',' UNKNOWN ','   '])
+def test_literal_unknown_labels_cannot_be_permuted_into_real_people(unknown):
+    result=module.fixed_word_attribution(words(['a','b']),words([unknown,unknown]))
+    assert result['correctly_attributed']==0 and result['unattributed']==2
+    assert result['known_label_precision'] is None
