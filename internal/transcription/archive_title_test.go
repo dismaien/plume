@@ -1,6 +1,7 @@
 package transcription
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,6 +20,15 @@ func TestFormatGeneratedArchiveTitlePreservesSourceLabel(t *testing.T) {
 	want := "260812 10:44 (dream) Sapphire Ring and Family [Leona] {03:58}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestKnownAppleLocationsSurviveAsLocationSuffixes(t *testing.T) {
+	for _, location := range []string{"Cascade Dr 6", "Bridgeway", "Sushi Ran", "Hillside Ct 3"} {
+		title := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{CreatedAt: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), Subject: "A Descriptive Subject", CurrentTitle: location + " [Leona]", DurationMillis: 60000})
+		if !strings.Contains(title, "@"+location+" {01:00}") {
+			t.Fatal("location was lost", title)
+		}
 	}
 }
 

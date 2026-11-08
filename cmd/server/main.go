@@ -290,14 +290,16 @@ func main() {
 		if err != nil || job.CandidateTranscriptRevisionID != nil {
 			return
 		}
-		if !api.TranscriptAllowsAutomaticFollowups(job) {
+		if !api.TranscriptAllowsAutomaticTextFollowups(job) {
 			return
 		}
 		// Step 1: Identify speakers first so title and summary can use real names.
 		labelCtx, labelCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer labelCancel()
-		if err := handler.AutoLabelSpeakersForJob(labelCtx, jobID); err != nil {
-			logger.Warn("Auto speaker identification after transcription completion failed", "job_id", jobID, "error", err)
+		if api.TranscriptAllowsAutomaticFollowups(job) {
+			if err := handler.AutoLabelSpeakersForJob(labelCtx, jobID); err != nil {
+				logger.Warn("Auto speaker identification after transcription completion failed", "job_id", jobID, "error", err)
+			}
 		}
 
 		// Step 2: Generate title (now has real speaker names if identified).
@@ -305,6 +307,9 @@ func main() {
 		defer titleCancel()
 		if err := handler.AutoGenerateTranscriptionTitleForJob(titleCtx, jobID); err != nil {
 			logger.Warn("Auto title generation after transcription completion failed", "job_id", jobID, "error", err)
+		}
+		if !api.TranscriptAllowsAutomaticFollowups(job) {
+			return
 		}
 
 		// Step 3: Generate summary (now has real speaker names if identified).

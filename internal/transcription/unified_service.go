@@ -557,6 +557,21 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 	if transcriptResult != nil {
 		annotateOutcomes(transcriptResult, job.Parameters.Diarize, diarizationResult, diarizationErr)
 		annotateRunConfiguration(transcriptResult, job.Parameters)
+		if job.Parameters.Diarize && diarizationErr == nil {
+			refined, refineErr := u.refineNativeWords(ctx, diarizationInput, transcriptResult, procCtx)
+			if refineErr != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Warn("Supplementary word refinement failed; primary result retained", "job_id", job.ID, "error", refineErr)
+				transcriptResult.Metadata["word_refinement_status"] = "failed_primary_retained"
+				transcriptResult.Metadata["word_refinement_reason"] = refineErr.Error()
+				transcriptResult.Metadata["diarization_status"] = "uncertain"
+				transcriptResult.Metadata["diarization_reason"] = "supplementary_word_refinement_failed"
+			} else {
+				transcriptResult = refined
+			}
+		}
 
 		if err := u.saveTranscriptionResults(job.ID, transcriptResult, audioInput.Duration.Milliseconds()); err != nil {
 			return fmt.Errorf("failed to save transcription results: %w", err)

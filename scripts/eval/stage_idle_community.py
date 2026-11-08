@@ -29,7 +29,7 @@ def run(args):
     check_idle(args.db,args.device)
     payload=module.diarize_audio(str(args.audio),str(args.out),hf_token='',device=args.device,
         cpu_threads=1 if os.environ.get('PLUME_EVAL_CPU_ASR_PERMIT') else None,
-        embedding_exclude_overlap=False if os.environ.get('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS')=='1' else None)
+        embedding_exclude_overlap=False if os.environ.get('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS')=='1' else True)
     payload['metadata'].update(evaluation_wrapper_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                                evaluation_role='automatic-count Community-1; explicit overlap-embedding experiment' if os.environ.get('PLUME_EVAL_INCLUDE_OVERLAP_EMBEDDINGS')=='1' else 'unchanged automatic-count production Community-1 baseline')
     args.out.write_text(json.dumps(payload,indent=2,allow_nan=False));args.out.chmod(0o600)

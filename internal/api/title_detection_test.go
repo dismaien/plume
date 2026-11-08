@@ -78,3 +78,17 @@ func TestIsLikelyDefaultTranscriptionTitle_DetectsOriginalFilenameAfterBundling(
 		t.Fatal("source filename title should remain eligible after audio is moved into a bundle")
 	}
 }
+
+func TestKnownAppleLocationTitlesRemainProvisionalWithImportProvenance(t *testing.T) {
+	for _, title := range []string{"Cascade Dr", "Cascade Dr 6", "Bridgeway", "Sushi Ran", "Hillside Ct 3"} {
+		job := &models.TranscriptionJob{ID: "archive-example", Title: &title, OriginalFilename: "20261107 120000-ABCDEF12.m4a"}
+		if !isLikelyDefaultTranscriptionTitle(job) {
+			t.Fatal("Apple location blocked descriptive title", title)
+		}
+		job.ID = "manual-job"
+		job.OriginalFilename = "voice.m4a"
+		if isLikelyDefaultTranscriptionTitle(job) {
+			t.Fatal("non-imported custom title lost protection", title)
+		}
+	}
+}

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"quill/internal/transcription"
 	"quill/internal/transcription/interfaces"
 )
@@ -16,6 +18,9 @@ func main() {
 	diar := flag.String("diarization", "", "Candidate DiarizationResult JSON")
 	output := flag.String("out", "", "New assembled output JSON")
 	overlapReview := flag.Bool("overlap-review", false, "Experimental conservative overlap policy; not the production default")
+	proposals := flag.String("word-proposals", "", "Optional frozen independent-model word proposals; no inference")
+	nativeRuntime := flag.String("native-runtime", "", "Optional configured local runtime for the real application refinement stage")
+	audio := flag.String("audio", "", "Full original-clock WAV for native-runtime preflight")
 	flag.Parse()
 	if *asr == "" || *diar == "" || *output == "" {
 		flag.Usage()
@@ -44,6 +49,27 @@ func main() {
 	result := transcription.AssembleDiarizedTranscript(&t, &d)
 	if *overlapReview {
 		result = transcription.AssembleWithOverlapReview(&t, &d)
+	}
+	if *proposals != "" {
+		var payload struct {
+			Proposals []transcription.SpeakerWordProposal `json:"proposals"`
+		}
+		read(*proposals, &payload)
+		var err error
+		result, err = transcription.ApplySpeakerWordProposals(result, payload.Proposals)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if *nativeRuntime != "" {
+		if *audio == "" {
+			panic("-audio is required for native runtime inference")
+		}
+		var err error
+		result, err = transcription.RefineWithNativeWordRuntime(context.Background(), interfaces.AudioInput{FilePath: *audio}, result, *nativeRuntime, filepath.Dir(*output))
+		if err != nil {
+			panic(err)
+		}
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {

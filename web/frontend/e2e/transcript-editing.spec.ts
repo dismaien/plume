@@ -277,6 +277,21 @@ test('an overlap-only voice remains reviewable when every word already has a lab
   await expect(page.getByRole('button', { name: 'Review next unclear passage' })).toBeVisible();
 });
 
+test('refined speaker words explain the change and expose a review jump', async ({ page }) => {
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+    available: true, transcript: {
+      text: 'A brief reply.',
+      metadata: { text_status: 'ready', diarization_status: 'uncertain',
+        word_refinement_status: 'applied_needs_review', word_refinement_applied_words: '2',
+        speaker_review_reason: 'refined_speaker_words', speaker_review_start: '1.2' },
+      segments: [{ start: 0, end: 3, text: 'A brief reply.', speaker: 'speaker_01' }],
+    },
+  } }));
+  await page.goto('/audio/1');
+  await expect(page.getByRole('status').filter({ hasText: 'speakers need review' })).toContainText('2 word speaker labels were refined');
+  await expect(page.getByRole('button', { name: 'Review refined speaker labels' })).toBeVisible();
+});
+
 test('rerun candidate is compared anonymously before explicit acceptance', async ({ page }) => {
   const candidate = { text: 'New words.', segments: [{ start: 0, end: 2, text: 'New words.', speaker: 'SPEAKER_00' }] };
   await page.route('**/api/v1/transcription/1/transcript/editor', route => route.fulfill({ json: { version: 'v1', transcript: initial } }));

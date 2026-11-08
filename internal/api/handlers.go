@@ -1705,6 +1705,9 @@ func (h *Handler) AutoGenerateTranscriptionTitleForJob(ctx context.Context, jobI
 		logger.Debug("Auto-title skipped: no transcript content", "job_id", jobID)
 		return nil
 	}
+	if !TranscriptAllowsAutomaticTextFollowups(job) {
+		return nil
+	}
 	if !isLikelyDefaultTranscriptionTitle(job) {
 		titleVal := ""
 		if job.Title != nil {
@@ -2254,7 +2257,6 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 var appleVoiceMemoFallbackTitleRE = regexp.MustCompile(`^\d{6} \d{2}:\d{2} 20\d{6} \d{6}-[0-9A-Fa-f]{8,}$`)
 var appleVoiceMemoSourceFilenameRE = regexp.MustCompile(`^20\d{6} \d{6}(?:-[0-9A-Fa-f]{8,})?\.[^.]+$`)
 var appleVoiceMemoGenericTitleRE = regexp.MustCompile(`(?i)^(?:new recording|neue aufnahme|nueva grabaci[oó]n|recording)(?:\s+\d+)?(?:\s+\[[^\]]+\])?$`)
-var appleVoiceMemoLocationTitleRE = regexp.MustCompile(`(?i)^(?:rua\s+|malplaquetstra(?:ss|ß)e\b)`)
 
 func looksLikeAppleVoiceMemoFallbackTitle(title string) bool {
 	return appleVoiceMemoFallbackTitleRE.MatchString(strings.TrimSpace(title))
@@ -2273,7 +2275,7 @@ func isImportedAppleVoiceMemo(job *models.TranscriptionJob) bool {
 
 func looksLikeProvisionalAppleVoiceMemoTitle(title string) bool {
 	title = strings.TrimSpace(title)
-	return appleVoiceMemoGenericTitleRE.MatchString(title) || appleVoiceMemoLocationTitleRE.MatchString(title)
+	return appleVoiceMemoGenericTitleRE.MatchString(title) || transcription.IsArchiveSourceLocation(title)
 }
 
 // looksLikeTimestamp returns true when the title is purely a date/time stamp

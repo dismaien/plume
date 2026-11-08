@@ -93,3 +93,29 @@ baseline through the same guarded runner; its `--model` value is the existing
 Hugging Face cache root. It records the production MPS per-operation fallback
 policy explicitly. Use a separate plan directory for independent validation
 cases so their receipts remain separate from tuning results.
+
+The application now shares the inference core and frozen
+`known_machine_labels_v1` proposal policy with evaluation. A separately prepared
+local runtime can refine existing machine labels where Community-1's regular
+tracks are ambiguous and Nemotron has a strong activity winner. Explicit unknown
+words stay unknown. Go checks the complete proposal batch against the source,
+preserves exact text/timing and rebuilds displayed speaker boundaries. Changed
+labels require review; automatic identity naming/publication remains gated.
+
+Prepare an already downloaded pinned model with:
+
+```sh
+python3 scripts/prepare-native-word-refinement.py \
+  --root /path/to/whisperx-env/nemotron3 \
+  --model-source /path/to/verified/nemotron-model --enable
+```
+
+The feature is active only with that enabled, revision-matched local profile.
+Disable it by setting `enabled` to false in its `ready.json`. Runtime/model
+failures preserve the primary result and explicitly request speaker review.
+The full application stage is testable without a database using
+`transcription-eval -native-runtime /path/to/nemotron3 -audio full-clock.wav`.
+The production policy was selected on IS1009a; ES2004a became development data
+when an unknown-filling variant failed. Frozen validation on TS3003a abstained,
+so independent accuracy gains remain unproven. Do not call the manual-word
+attribution results new ASR accuracy or claim a global engine winner.

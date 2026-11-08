@@ -20,10 +20,11 @@ var (
 	archiveDreamTranscriptPattern   = regexp.MustCompile(
 		`(?i)\b(?:in|from|about|remember(?:ing)?|recall(?:ing)?|had|having|last image in)\s+(?:a\s+|the\s+|my\s+|this\s+|that\s+)?dream\b|\bi\s+(?:dreamed|dreamt)\b|\bdream\s+i\b`,
 	)
-	archiveDreamSubjectPrefixPattern = regexp.MustCompile(`(?i)^dream(?: account| note| recording)?\s*[:\-]\s*`)
-	archiveDreamSubjectSuffixPattern = regexp.MustCompile(`(?i)\s+dream$`)
-	archiveLocationSourcePattern     = regexp.MustCompile(`(?i)^(?:rua\s+|malplaquetstra(?:ss|ß)e\b)`)
-	archiveSourceSpeakerBlockPattern = regexp.MustCompile(`\s+\[[^\[\]\n]+\]\s*$`)
+	archiveDreamSubjectPrefixPattern  = regexp.MustCompile(`(?i)^dream(?: account| note| recording)?\s*[:\-]\s*`)
+	archiveDreamSubjectSuffixPattern  = regexp.MustCompile(`(?i)\s+dream$`)
+	archiveLocationSourcePattern      = regexp.MustCompile(`(?i)^(?:rua\s+|malplaquetstra(?:ss|ß)e\b)`)
+	archiveKnownLocationSourcePattern = regexp.MustCompile(`(?i)^(?:cascade dr|bridgeway|sushi ran|hillside ct)(?:\s+\d+)?$`)
+	archiveSourceSpeakerBlockPattern  = regexp.MustCompile(`\s+\[[^\[\]\n]+\]\s*$`)
 )
 
 // GeneratedArchiveTitleInput contains the durable metadata surrounding an
@@ -83,11 +84,15 @@ func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 
 func sourceLocationLabel(label string) string {
 	label = strings.TrimSpace(label)
-	if !archiveLocationSourcePattern.MatchString(label) {
+	label = strings.TrimSpace(archiveSourceSpeakerBlockPattern.ReplaceAllString(label, ""))
+	if !archiveLocationSourcePattern.MatchString(label) && !archiveKnownLocationSourcePattern.MatchString(label) {
 		return ""
 	}
 	return strings.TrimSpace(archiveSourceSpeakerBlockPattern.ReplaceAllString(label, ""))
 }
+
+// IsArchiveSourceLocation shares title eligibility with location preservation.
+func IsArchiveSourceLocation(label string) bool { return sourceLocationLabel(label) != "" }
 
 func sourceTitleLabel(currentTitle string, originalFilename string, subject string) string {
 	current := strings.TrimSpace(currentTitle)

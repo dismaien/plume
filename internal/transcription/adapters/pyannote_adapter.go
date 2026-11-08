@@ -19,7 +19,7 @@ import (
 	"quill/pkg/logger"
 )
 
-//go:embed py/pyannote/*
+//go:embed py/pyannote/*.py py/pyannote/*.toml
 var pyannoteScripts embed.FS
 
 const OutputFormatJSON = "json"

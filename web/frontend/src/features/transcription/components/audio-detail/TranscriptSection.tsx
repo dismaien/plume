@@ -269,11 +269,14 @@ export function TranscriptSection({
                     {transcript.metadata?.speaker_review_reason === 'detected_voice_has_no_attributed_words' && (
                         <p>A detected voice has no attributed words. Review the overlapping or brief speech before trusting the speaker labels.</p>
                     )}
+                    {transcript.metadata?.word_refinement_status === 'applied_needs_review' && (
+                        <p>{Number(transcript.metadata.word_refinement_applied_words || 0)} word speaker labels were refined around ambiguous speech. Review these passages.</p>
+                    )}
                     {unclearPassages.length > 0 && (
                         <button type="button" className="mt-2 underline underline-offset-4" onClick={() => {
                             const target = unclearPassages.find(passage => passage.start > currentTime + 0.25) ?? unclearPassages[0];
                             onSeek(Math.max(0, target.start));
-                        }}>Review next unclear passage</button>
+                        }}>{transcript.metadata?.word_refinement_status === 'applied_needs_review' ? 'Review refined speaker labels' : 'Review next unclear passage'}</button>
                     )}
                 </div>
             )}
