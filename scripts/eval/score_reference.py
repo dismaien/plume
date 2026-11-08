@@ -11,6 +11,7 @@ import importlib.metadata
 import json
 import math
 import unicodedata
+import wave
 from pathlib import Path
 
 
@@ -140,6 +141,16 @@ def word_scores(reference, hypothesis, uri, uem):
             'normalization':'unicode_nfkc_casefold_strip_punctuation_v1; same policy for every model'}
 
 
+def full_text_wer(reference_words, text):
+    """Include decoded words that an aligner failed to give timestamps."""
+    import meeteval.wer
+    def normalize(value):
+        return ' '.join(''.join(c for c in unicodedata.normalize('NFKC', token).casefold()
+                                if not unicodedata.category(c).startswith('P')) for token in value.split()).strip()
+    reference = normalize(' '.join(word['word'] for word in reference_words))
+    return dataclasses.asdict(meeteval.wer.siso_word_error_rate(reference, normalize(text)))
+
+
 def score(manifest_path, candidate_path):
     from pyannote.core import Segment, Timeline
     manifest_path, candidate_path=Path(manifest_path),Path(candidate_path)
@@ -173,6 +184,19 @@ def score(manifest_path, candidate_path):
     if manifest.get('words'):
         words=json.loads((root/manifest['words']).read_text())
         result['words']=word_scores(words,payload.get('word_segments',[]),uri,uem)
+        result['words']['full_text_wer_status']='unavailable_for_non_wav_or_partial_uem'
+        # Full text cannot be filtered to a partial UEM without guessing its
+        # missing word times. Score it only when the reference covers the WAV.
+        try:
+            with wave.open(str(audio)) as wav:
+                duration=wav.getnframes()/wav.getframerate()
+            support=uem.support()
+            if support.crop(Segment(0,duration)).duration() >= duration-1e-6 and isinstance(payload.get('text'),str):
+                result['words']['full_text_wer']=full_text_wer(words,payload['text'])
+                result['words']['full_text_wer_status']='scored_all_decoded_text_including_unaligned_words'
+                result['words']['primary_text_metric']='full_text_wer'
+        except (wave.Error, EOFError):
+            pass
     return result
 
 

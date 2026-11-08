@@ -1183,6 +1183,10 @@ func (u *UnifiedTranscriptionService) parametersToMap(params models.WhisperXPara
 
 // mergeDiarizationWithTranscription combines diarization results with transcription
 func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcript *interfaces.TranscriptResult, diarization *interfaces.DiarizationResult) *interfaces.TranscriptResult {
+	return u.mergeDiarizationUsingPolicy(transcript, diarization, false)
+}
+
+func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *interfaces.TranscriptResult, diarization *interfaces.DiarizationResult, overlapReview bool) *interfaces.TranscriptResult {
 	logger.Info("Merging diarization with transcription",
 		"transcript_segments", len(transcript.Segments),
 		"diarization_segments", len(diarization.Segments))
@@ -1201,7 +1205,7 @@ func (u *UnifiedTranscriptionService) mergeDiarizationWithTranscription(transcri
 	mergedTranscript.Diarization = diarization
 	assignmentTurns := diarization.Segments
 	mergedTranscript.Metadata["word_assignment_timeline"] = "primary"
-	if len(diarization.RegularSegments) > 0 {
+	if overlapReview && len(diarization.RegularSegments) > 0 {
 		// An exclusive track picks one voice even when two are audible. Use the
 		// overlap-preserving evidence so temporal ties stay explicitly unclear.
 		assignmentTurns = diarization.RegularSegments

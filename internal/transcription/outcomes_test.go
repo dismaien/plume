@@ -62,7 +62,14 @@ func TestExclusiveTimelineCannotHideWordLevelOverlap(t *testing.T) {
 		Segments:        []interfaces.DiarizationSegment{{Start: 0, End: 3, Speaker: "a"}},
 		RegularSegments: []interfaces.DiarizationSegment{{Start: 0, End: 3, Speaker: "a"}, {Start: 1, End: 2, Speaker: "b"}},
 	}
-	result := AssembleDiarizedTranscript(source, diar)
+	production := AssembleDiarizedTranscript(source, diar)
+	if production.WordSegments[1].Speaker == nil || production.Metadata["word_assignment_timeline"] != "primary" {
+		t.Fatal("experimental overlap policy became the production default")
+	}
+	if production.Metadata["diarization_status"] != "uncertain" || production.Metadata["speaker_review_reason"] != "detected_voice_has_no_attributed_words" || production.Metadata["speaker_review_start"] != "1.000000" {
+		t.Fatal("an overlapping voice silently disappeared from word attribution", production.Metadata)
+	}
+	result := AssembleWithOverlapReview(source, diar)
 	if result.WordSegments[0].Speaker == nil || *result.WordSegments[0].Speaker != "a" || result.WordSegments[2].Speaker == nil {
 		t.Fatal("unambiguous words lost their speaker")
 	}

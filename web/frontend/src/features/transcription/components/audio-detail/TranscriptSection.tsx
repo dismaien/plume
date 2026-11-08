@@ -245,7 +245,9 @@ export function TranscriptSection({
             else runs.push({ start: item.start, end: item.end });
             inRun = true;
         }
-        return runs;
+        const missingVoiceStart = Number(transcript?.metadata?.speaker_review_start ?? NaN);
+        if (Number.isFinite(missingVoiceStart) && missingVoiceStart >= 0) runs.push({ start: missingVoiceStart, end: missingVoiceStart });
+        return runs.sort((a, b) => a.start - b.start);
     }, [transcript]);
     const unlabelledWordCount = transcript?.word_segments?.filter(word => !word.speaker).length ?? 0;
 
@@ -264,6 +266,9 @@ export function TranscriptSection({
                     <p>Text ready · speakers need review. {unlabelledWordCount > 0
                         ? `${unlabelledWordCount} of ${transcript.word_segments!.length} words have no speaker label. `
                         : ''}Unattributed turns are marked “Speaker unclear”.</p>
+                    {transcript.metadata?.speaker_review_reason === 'detected_voice_has_no_attributed_words' && (
+                        <p>A detected voice has no attributed words. Review the overlapping or brief speech before trusting the speaker labels.</p>
+                    )}
                     {unclearPassages.length > 0 && (
                         <button type="button" className="mt-2 underline underline-offset-4" onClick={() => {
                             const target = unclearPassages.find(passage => passage.start > currentTime + 0.25) ?? unclearPassages[0];

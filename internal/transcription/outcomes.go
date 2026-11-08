@@ -12,7 +12,10 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 		result.Metadata = map[string]string{}
 	}
 	m := result.Metadata
-	m["speaker_assignment_policy"] = "overlap_union_majority_v2_regular_tracks"
+	m["speaker_assignment_policy"] = "overlap_union_majority_v1"
+	if m["word_assignment_timeline"] == "regular_overlap_aware" {
+		m["speaker_assignment_policy"] = "overlap_union_majority_v2_regular_tracks_experimental"
+	}
 	m["text_status"] = "ready"
 	if strings.TrimSpace(result.Text) == "" {
 		m["text_status"] = "needs_review"
@@ -54,9 +57,11 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 		}
 	}
 	total, labelled := len(result.WordSegments), 0
+	attributedSpeakers := map[string]bool{}
 	for _, w := range result.WordSegments {
 		if w.Speaker != nil && *w.Speaker != "" {
 			labelled++
+			attributedSpeakers[*w.Speaker] = true
 		}
 	}
 	if total == 0 {
@@ -64,6 +69,7 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 		for _, s := range result.Segments {
 			if s.Speaker != nil && *s.Speaker != "" {
 				labelled++
+				attributedSpeakers[*s.Speaker] = true
 			}
 		}
 	}
@@ -81,6 +87,28 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 		m["diarization_status"] = "uncertain"
 		if total > 0 && labelled < total && m["diarization_reason"] == "" {
 			m["diarization_reason"] = "partial_speaker_attribution"
+		}
+	}
+	if requested && diar != nil {
+		m["speaker_detected_count"] = fmt.Sprint(diar.SpeakerCount)
+		m["speaker_attributed_count"] = fmt.Sprint(len(attributedSpeakers))
+		if total > 0 && diar.SpeakerCount > len(attributedSpeakers) && m["diarization_status"] != "failed" {
+			m["diarization_status"] = "uncertain"
+			m["speaker_review_reason"] = "detected_voice_has_no_attributed_words"
+			if m["diarization_reason"] == "" {
+				m["diarization_reason"] = "detected_speaker_missing_from_word_attribution"
+			}
+			found, start := false, 0.0
+			for _, timeline := range [][]interfaces.DiarizationSegment{diar.Segments, diar.RegularSegments} {
+				for _, turn := range timeline {
+					if turn.Speaker != "" && !attributedSpeakers[turn.Speaker] && (!found || turn.Start < start) {
+						found, start = true, turn.Start
+					}
+				}
+			}
+			if found {
+				m["speaker_review_start"] = fmt.Sprintf("%.6f", start)
+			}
 		}
 	}
 	if diarErr != nil {
@@ -103,6 +131,16 @@ func diarizationMetadataKey(key string) string {
 func AssembleDiarizedTranscript(transcript *interfaces.TranscriptResult, diarization *interfaces.DiarizationResult) *interfaces.TranscriptResult {
 	service := &UnifiedTranscriptionService{}
 	result := service.mergeDiarizationWithTranscription(transcript, diarization)
+	annotateOutcomes(result, true, diarization, nil)
+	return result
+}
+
+// AssembleWithOverlapReview is an experimental, conservative evaluation policy.
+// The public benchmark found a precision/coverage tradeoff, so it is not the
+// production default and cannot silently replace reviewed transcript labels.
+func AssembleWithOverlapReview(transcript *interfaces.TranscriptResult, diarization *interfaces.DiarizationResult) *interfaces.TranscriptResult {
+	service := &UnifiedTranscriptionService{}
+	result := service.mergeDiarizationUsingPolicy(transcript, diarization, true)
 	annotateOutcomes(result, true, diarization, nil)
 	return result
 }

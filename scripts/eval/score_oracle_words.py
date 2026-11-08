@@ -91,8 +91,11 @@ def run(args):
                 continue
             for label, assembler in [('previous', args.previous_assembler), ('overlap-aware', args.assembler)]:
                 output = directory / f'{candidate}-{label}.json'
-                process = subprocess.run([str(assembler.resolve()), '-transcript', str(directory / 'frozen.json'),
-                                          '-diarization', str(diarization), '-out', str(output)],
+                command = [str(assembler.resolve()), '-transcript', str(directory / 'frozen.json'),
+                           '-diarization', str(diarization), '-out', str(output)]
+                if label == 'overlap-aware':
+                    command.append('-overlap-review')
+                process = subprocess.run(command,
                                          capture_output=True, text=True)
                 if process.returncode:
                     raise RuntimeError(f'Production assembler failed: {process.stderr}')

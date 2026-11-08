@@ -35,6 +35,20 @@ two-speaker excerpt is contained in the opening excerpt: do not double-count
 it in aggregate metrics. These are tuning smoke checks from one public meeting,
 not held-out proof of quality on personal recordings or unseen model test data.
 
+`score_oracle_words.py` additionally compares assignment policies using the
+hash-pinned AMI manual word/timing archive. It removes all reference speaker
+labels before running each assembler. This isolates speaker attribution: its
+zero text WER is by construction and is **not** an ASR result. The optional
+`transcription-eval -overlap-review` policy trades label coverage for precision;
+it remains experimental because the initial benchmark worsened cpWER on two
+excerpts. The production default retains the exclusive assignment timeline and
+explicitly flags detected voices that have no attributed words.
+
+When the UEM covers the complete WAV, the scorer also reports `full_text_wer`
+from all decoded text, including words the aligner could not time. Prefer it
+for text accuracy: scoring only timed words can hide unaligned hallucinations.
+Full text is deliberately not scored against a partial UEM.
+
 For personal audio, `prepare_reference.py` creates an unreviewed annotation
 pack. Only mark it human-reviewed after a person has checked every scored
 interval. Published manual annotations retain their original annotator/source

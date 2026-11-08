@@ -263,6 +263,20 @@ test('partial attribution shows its size and a review navigation action', async 
   await expect(page.getByRole('button', { name: 'Review next unclear passage' })).toBeVisible();
 });
 
+test('an overlap-only voice remains reviewable when every word already has a label', async ({ page }) => {
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+    available: true, transcript: {
+      text: 'One labelled passage.',
+      metadata: { text_status: 'ready', diarization_status: 'uncertain',
+        speaker_review_reason: 'detected_voice_has_no_attributed_words', speaker_review_start: '4.2' },
+      segments: [{ start: 0, end: 10, text: 'One labelled passage.', speaker: 'SPEAKER_00' }],
+    },
+  } }));
+  await page.goto('/audio/1');
+  await expect(page.getByText('A detected voice has no attributed words.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review next unclear passage' })).toBeVisible();
+});
+
 test('rerun candidate is compared anonymously before explicit acceptance', async ({ page }) => {
   const candidate = { text: 'New words.', segments: [{ start: 0, end: 2, text: 'New words.', speaker: 'SPEAKER_00' }] };
   await page.route('**/api/v1/transcription/1/transcript/editor', route => route.fulfill({ json: { version: 'v1', transcript: initial } }));

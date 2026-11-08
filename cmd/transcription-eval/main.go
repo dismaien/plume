@@ -15,6 +15,7 @@ func main() {
 	asr := flag.String("transcript", "", "Frozen Plume TranscriptResult JSON")
 	diar := flag.String("diarization", "", "Candidate DiarizationResult JSON")
 	output := flag.String("out", "", "New assembled output JSON")
+	overlapReview := flag.Bool("overlap-review", false, "Experimental conservative overlap policy; not the production default")
 	flag.Parse()
 	if *asr == "" || *diar == "" || *output == "" {
 		flag.Usage()
@@ -41,6 +42,9 @@ func main() {
 		d.ModelUsed = p.Model
 	}
 	result := transcription.AssembleDiarizedTranscript(&t, &d)
+	if *overlapReview {
+		result = transcription.AssembleWithOverlapReview(&t, &d)
+	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		panic(err)
