@@ -42,6 +42,7 @@ interface TranscriptSectionProps {
     downloadFormat: 'txt' | 'json';
     searchOpen: boolean;
     setSearchOpen: (open: boolean) => void;
+    onReviewNavigationRequested?: () => void;
     onSpeakerMappingsSaved?: (mappings: SpeakerMapping[]) => void;
 }
 
@@ -94,6 +95,7 @@ export function TranscriptSection({
     downloadFormat,
     searchOpen,
     setSearchOpen,
+    onReviewNavigationRequested,
     onSpeakerMappingsSaved,
     className
 }: TranscriptSectionProps & { className?: string }) {
@@ -111,7 +113,28 @@ export function TranscriptSection({
     // Refs
     const transcriptRef = useRef<HTMLDivElement>(null);
     const highlightedWordRef = useRef<HTMLSpanElement>(null);
+    const reviewRequestId = useRef(0);
     const [editTarget, setEditTarget] = useState<TranscriptEditTarget | null>(null);
+    const [reviewTarget, setReviewTarget] = useState<{ time: number; requestId: number } | null>(null);
+
+    useEffect(() => {
+        if (!reviewTarget) return;
+
+        let innerFrame = 0;
+        const outerFrame = window.requestAnimationFrame(() => {
+            innerFrame = window.requestAnimationFrame(() => {
+                const target = transcriptRef.current?.querySelector<HTMLElement>('[data-review-target="true"]');
+                if (!target) return;
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.focus({ preventScroll: true });
+            });
+        });
+
+        return () => {
+            window.cancelAnimationFrame(outerFrame);
+            if (innerFrame) window.cancelAnimationFrame(innerFrame);
+        };
+    }, [reviewTarget, transcriptMode]);
 
     // Search
     const [searchQuery, setSearchQuery] = useState("");
@@ -251,6 +274,17 @@ export function TranscriptSection({
     }, [transcript]);
     const unlabelledWordCount = transcript?.word_segments?.filter(word => !word.speaker).length ?? 0;
 
+    const handleReviewNavigation = useCallback(() => {
+        const reviewCursor = Math.max(currentTime, reviewTarget?.time ?? 0);
+        const target = unclearPassages.find(passage => passage.start > reviewCursor + 0.25) ?? unclearPassages[0];
+        if (!target) return;
+
+        reviewRequestId.current += 1;
+        onReviewNavigationRequested?.();
+        setReviewTarget({ time: Math.max(0, target.start), requestId: reviewRequestId.current });
+        onSeek(Math.max(0, target.start));
+    }, [currentTime, onReviewNavigationRequested, onSeek, reviewTarget?.time, unclearPassages]);
+
     if (!transcript) return null;
 
     return (
@@ -273,10 +307,7 @@ export function TranscriptSection({
                         <p>{Number(transcript.metadata.word_refinement_applied_words || 0)} word speaker labels were refined around ambiguous speech. Review these passages.</p>
                     )}
                     {unclearPassages.length > 0 && (
-                        <button type="button" className="mt-2 underline underline-offset-4" onClick={() => {
-                            const target = unclearPassages.find(passage => passage.start > currentTime + 0.25) ?? unclearPassages[0];
-                            onSeek(Math.max(0, target.start));
-                        }}>{transcript.metadata?.word_refinement_status === 'applied_needs_review' ? 'Review refined speaker labels' : 'Review next unclear passage'}</button>
+                        <button type="button" className="mt-2 underline underline-offset-4" onClick={handleReviewNavigation}>{transcript.metadata?.word_refinement_status === 'applied_needs_review' ? 'Review refined speaker labels' : 'Review next unclear passage'}</button>
                     )}
                 </div>
             )}
@@ -329,6 +360,7 @@ export function TranscriptSection({
                             highlightedWordRef={highlightedWordRef}
                             speakerMappings={speakerMappings}
                             autoScrollEnabled={autoScrollEnabled}
+                            reviewTarget={reviewTarget}
                         />
                     </div>
                 </div>

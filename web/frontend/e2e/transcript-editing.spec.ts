@@ -249,18 +249,34 @@ test('partial attribution shows its size and a review navigation action', async 
   await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
     available: true,
     transcript: {
-      text: 'Known quiet reply',
+      text: 'Known quiet bridge reply',
       metadata: { text_status: 'ready', diarization_status: 'uncertain' },
-      segments: [{ start: 0, end: 3, text: 'Known quiet reply', speaker: 'SPEAKER_00' }],
+      segments: [
+        { start: 0, end: 1, text: 'Known', speaker: 'SPEAKER_00' },
+        { start: 1, end: 2, text: 'quiet' },
+        { start: 2, end: 4, text: 'bridge', speaker: 'SPEAKER_00' },
+        { start: 4, end: 5, text: 'reply' },
+      ],
       word_segments: [
         { start: 0, end: 1, word: 'Known', speaker: 'SPEAKER_00' },
-        { start: 1, end: 2, word: 'quiet' }, { start: 2, end: 3, word: 'reply' },
+        { start: 1, end: 2, word: 'quiet' },
+        { start: 2, end: 4, word: 'bridge', speaker: 'SPEAKER_00' },
+        { start: 4, end: 5, word: 'reply' },
       ],
     },
   } }));
   await page.goto('/audio/1');
-  await expect(page.getByRole('status').filter({ hasText: 'speakers need review' })).toContainText('2 of 3 words have no speaker label');
-  await expect(page.getByRole('button', { name: 'Review next unclear passage' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'speakers need review' })).toContainText('2 of 4 words have no speaker label');
+  const reviewButton = page.getByRole('button', { name: 'Review next unclear passage' });
+  await expect(reviewButton).toBeVisible();
+  await reviewButton.click();
+  const target = page.locator('[data-review-target="true"]');
+  await expect(target).toBeVisible();
+  await expect(target).toContainText('quiet');
+  await expect(target).toBeFocused();
+  await reviewButton.click();
+  await expect(target).toContainText('reply');
+  await expect(target).toBeFocused();
 });
 
 test('an overlap-only voice remains reviewable when every word already has a label', async ({ page }) => {

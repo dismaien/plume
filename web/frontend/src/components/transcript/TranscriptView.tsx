@@ -69,6 +69,7 @@ interface TranscriptViewProps {
     speakerMappings: Record<string, string>;
     autoScrollEnabled: boolean;
     onSeek: (time: number) => void;
+    reviewTarget?: { time: number; requestId: number } | null;
     className?: string;
 }
 
@@ -83,6 +84,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     speakerMappings,
     autoScrollEnabled,
     onSeek,
+    reviewTarget,
     className
 }, ref) => {
     const resolveSegmentSpeaker = (originalSpeaker?: string): string => originalSpeaker?.trim() || '';
@@ -175,6 +177,9 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         }
         return 0;
     }, [expandedData, currentTime]);
+
+    const isReviewTarget = (start: number, end: number) =>
+        reviewTarget !== null && reviewTarget !== undefined && reviewTarget.time >= start && reviewTarget.time < end;
 
     // Track previous active segment to only scroll on segment change
     const prevActiveSegmentRef = useRef<number>(-1);
@@ -297,6 +302,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                     WebkitTouchCallout: 'default'
                 }}
                 data-transcript-text
+                data-review-target={reviewTarget ? "true" : undefined}
+                tabIndex={reviewTarget ? -1 : undefined}
             >
                 {/* The hook returns the built text string, so we just render it directly */}
                 {fullText}
@@ -315,11 +322,16 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                 {expandedData.map((segment, i) => (
                     <div
                         key={i}
+                        data-transcript-start={segment.start}
+                        data-transcript-end={segment.end}
+                        data-review-target={isReviewTarget(segment.start, segment.end) ? "true" : undefined}
+                        tabIndex={isReviewTarget(segment.start, segment.end) ? -1 : undefined}
                         className={cn(
                             "group flex flex-col sm:flex-row items-start gap-4 p-3 rounded-lg transition-colors border",
                             i === activeSegmentIndex && isPlaying
                                 ? "bg-carbon-50 dark:bg-carbon-800/40 border-carbon-200 dark:border-carbon-700"
-                                : "hover:bg-carbon-50 dark:hover:bg-carbon-800/50 border-transparent hover:border-carbon-100 dark:hover:border-carbon-800"
+                                : "hover:bg-carbon-50 dark:hover:bg-carbon-800/50 border-transparent hover:border-carbon-100 dark:hover:border-carbon-800",
+                            isReviewTarget(segment.start, segment.end) && "bg-[var(--brand-light)]/20 border-[var(--brand-solid)]/50"
                         )}
                     >
                         {/* Timestamp & Speaker */}
@@ -374,6 +386,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             displaySpeaker: string;
             identityKey: string;
             startTime: number;
+            endTime: number;
             texts: string[];
             segmentIndices: number[];
         }> = [];
@@ -387,12 +400,14 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
             if (speaker && lastGroup && lastGroup.identityKey === identityKey) {
                 lastGroup.texts.push(segment.text.trim());
                 lastGroup.segmentIndices.push(i);
+                lastGroup.endTime = Math.max(lastGroup.endTime, segment.end);
             } else {
                 groups.push({
                     speaker,
                     displaySpeaker,
                     identityKey,
                     startTime: segment.start,
+                    endTime: segment.end,
                     texts: [segment.text.trim()],
                     segmentIndices: [i],
                 });
@@ -410,7 +425,17 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         return (
             <div className="space-y-6">
                 {compactedGroups.map((group, gi) => (
-                    <div key={gi} className="space-y-1">
+                    <div
+                        key={gi}
+                        data-transcript-start={group.startTime}
+                        data-transcript-end={group.endTime}
+                        data-review-target={isReviewTarget(group.startTime, group.endTime) ? "true" : undefined}
+                        tabIndex={isReviewTarget(group.startTime, group.endTime) ? -1 : undefined}
+                        className={cn(
+                            "space-y-1 rounded-lg border border-transparent p-2 transition-colors",
+                            isReviewTarget(group.startTime, group.endTime) && "bg-[var(--brand-light)]/20 border-[var(--brand-solid)]/50"
+                        )}
+                    >
                         {group.displaySpeaker && (
                             <div className="flex items-center gap-2 text-sm font-medium text-carbon-600 dark:text-carbon-400 select-none">
                                 <span>{group.displaySpeaker}</span>

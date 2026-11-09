@@ -865,6 +865,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     isPlaying={isPlaying}
                                     searchOpen={searchOpen}
                                     setSearchOpen={setSearchOpen}
+                                    onReviewNavigationRequested={() => setTranscriptModeFromUser("compacted")}
                                     onSpeakerMappingsSaved={handleSpeakerMappingsSaved}
                                 />
                             </div>
