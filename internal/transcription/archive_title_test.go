@@ -23,6 +23,21 @@ func TestFormatGeneratedArchiveTitlePreservesSourceLabel(t *testing.T) {
 	}
 }
 
+func TestFormatArchiveDurationDoesNotConfuseHoursWithMinutes(t *testing.T) {
+	for _, test := range []struct {
+		millis int64
+		want   string
+	}{
+		{613_000, "10:13"},
+		{3_600_000, "01:00:00"},
+		{36_783_000, "10:13:03"},
+	} {
+		if got := formatArchiveDuration(test.millis); got != test.want {
+			t.Errorf("formatArchiveDuration(%d) = %q, want %q", test.millis, got, test.want)
+		}
+	}
+}
+
 func TestKnownAppleLocationsSurviveAsLocationSuffixes(t *testing.T) {
 	for _, location := range []string{"Cascade Dr 6", "Bridgeway", "Sushi Ran", "Hillside Ct 3"} {
 		title := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{CreatedAt: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), Subject: "A Descriptive Subject", CurrentTitle: location + " [Leona]", DurationMillis: 60000})
@@ -40,7 +55,7 @@ func TestFormatGeneratedArchiveTitleOmitsMachineFilename(t *testing.T) {
 		OriginalFilename: "20260724 183644-60C99703.qta",
 		DurationMillis:   5_072_000,
 	})
-	want := "260724 18:36 Repairing the Garden Fence {01:24}"
+	want := "260724 18:36 Repairing the Garden Fence {01:24:32}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -56,7 +71,7 @@ func TestFormatGeneratedArchiveTitlePreservesExplicitTitle(t *testing.T) {
 		Speakers:         []string{"Leona", "Henri"},
 		DurationMillis:   28_800_000,
 	})
-	want := "260511 08:00 Catching Up With Henri (morning with henri) [Leona, Henri] {08:00}"
+	want := "260511 08:00 Catching Up With Henri (morning with henri) [Leona, Henri] {08:00:00}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}

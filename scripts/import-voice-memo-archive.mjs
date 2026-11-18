@@ -312,7 +312,7 @@ function moveLocationToSuffix(title, location) {
   const escaped = escapeRegExp(location.trim());
   let result = title.replace(new RegExp(`\\s*\\(${escaped}\\)`, "i"), "").trim();
   if (new RegExp(`@${escaped}`, "i").test(result)) return result;
-  const duration = result.match(/\s+(\{\d{2}:\d{2}\})$/);
+  const duration = result.match(/\s+(\{\d{1,2}:\d{2}(?::\d{2})?\})$/);
   if (duration) {
     result = `${result.slice(0, -duration[0].length)} @${location.trim()} ${duration[1]}`;
   } else {

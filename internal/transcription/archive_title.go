@@ -42,7 +42,7 @@ type GeneratedArchiveTitleInput struct {
 }
 
 // FormatGeneratedArchiveTitle builds the canonical, scan-friendly Plume title:
-// YYMMDD HH:MM (dream) Subject (original title) [Speakers] @Location {MM:SS|HH:MM}.
+// YYMMDD HH:MM (dream) Subject (original title) [Speakers] @Location {MM:SS|HH:MM:SS}.
 func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 	recordedAt := input.CreatedAt
 	if input.RecordedAt != nil && !input.RecordedAt.IsZero() {
@@ -186,7 +186,7 @@ func formatArchiveDuration(durationMillis int64) string {
 	// Match the player/list display, which rounds to the nearest whole second.
 	totalSeconds := (durationMillis + 500) / 1000
 	if totalSeconds >= 3600 {
-		return fmt.Sprintf("%02d:%02d", totalSeconds/3600, (totalSeconds%3600)/60)
+		return fmt.Sprintf("%02d:%02d:%02d", totalSeconds/3600, (totalSeconds%3600)/60, totalSeconds%60)
 	}
 	return fmt.Sprintf("%02d:%02d", totalSeconds/60, totalSeconds%60)
 }
