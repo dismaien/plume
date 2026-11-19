@@ -64,7 +64,7 @@ func TestInvalidSpeakerPartsDoNotWriteHistory(t *testing.T) {
 	s, _ := setup(t)
 	base := current(t, s, "one")
 	for _, parts := range [][][]SegmentPart{
-		{}, {{}}, {{{Text: "wrong words", Speaker: "unknown"}}}, {{{Text: " ", Speaker: "SPEAKER_00"}, {Text: "wrong words", Speaker: "SPEAKER_00"}}},
+		{}, {{{Text: "wrong words", Speaker: "unknown"}}},
 	} {
 		_, err := s.Save(context.Background(), "one", Request{ExpectedVersion: base.Version, SegmentParts: parts})
 		if !errors.Is(err, ErrInvalid) {
@@ -78,5 +78,80 @@ func TestInvalidSpeakerPartsDoNotWriteHistory(t *testing.T) {
 	rows, _ := s.History(context.Background(), "one", 0)
 	if len(rows) != 0 {
 		t.Fatal("invalid/no-op history", rows)
+	}
+}
+
+func TestEmptySpeakerSectionIsRemovedWithoutLosingMovedText(t *testing.T) {
+	s, _ := setup(t)
+	raw := `{"text":"One thing that happens","custom":42,"segments":[{"start":0,"end":1,"speaker":"","text":"One thing that","words":[{"word":"One"}]},{"start":1,"end":2,"speaker":"A","speaker_name":"Abraham","text":" happens"}],"word_segments":[{"word":"One"}]}`
+	s.DB.Model(&models.TranscriptionJob{}).Where("id = ?", "one").Update("transcript", raw)
+	base := current(t, s, "one")
+	next, err := s.Save(context.Background(), "one", Request{ExpectedVersion: base.Version, SegmentParts: [][]SegmentPart{
+		{},
+		{{Text: "One thing that happens", Speaker: "A"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Text     string `json:"text"`
+		Custom   int    `json:"custom"`
+		Segments []struct {
+			Text    string  `json:"text"`
+			Speaker string  `json:"speaker"`
+			Start   float64 `json:"start"`
+			End     float64 `json:"end"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(next.Transcript, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "One thing that happens" || got.Custom != 42 || len(got.Segments) != 1 || got.Segments[0].Text != got.Text || got.Segments[0].Speaker != "A" || got.Segments[0].Start != 1 || got.Segments[0].End != 2 {
+		t.Fatal(string(next.Transcript))
+	}
+	rows, err := s.History(context.Background(), "one", 0)
+	if err != nil || len(rows) != 2 {
+		t.Fatal(rows, err)
+	}
+	restored, err := s.Save(context.Background(), "one", Request{ExpectedVersion: next.Version, RestoreID: &rows[1].ID})
+	if err != nil || string(restored.Transcript) != raw {
+		t.Fatal("original was not restorable", err)
+	}
+}
+
+func TestBlankSplitPartIsPruned(t *testing.T) {
+	s, _ := setup(t)
+	base := current(t, s, "one")
+	next, err := s.Save(context.Background(), "one", Request{ExpectedVersion: base.Version, SegmentParts: [][]SegmentPart{{
+		{Text: " ", Speaker: "SPEAKER_00"},
+		{Text: "correct words", Speaker: "SPEAKER_00"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Text     string `json:"text"`
+		Segments []struct {
+			Text string `json:"text"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(next.Transcript, &payload); err != nil || payload.Text != "correct words" || len(payload.Segments) != 1 || payload.Segments[0].Text != "correct words" {
+		t.Fatal(string(next.Transcript), err)
+	}
+}
+
+func TestAllBlankSpeakerPartsLeaveEmptyTranscript(t *testing.T) {
+	s, _ := setup(t)
+	base := current(t, s, "one")
+	next, err := s.Save(context.Background(), "one", Request{ExpectedVersion: base.Version, SegmentParts: [][]SegmentPart{{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Text     string            `json:"text"`
+		Segments []json.RawMessage `json:"segments"`
+	}
+	if err := json.Unmarshal(next.Transcript, &payload); err != nil || payload.Text != "" || len(payload.Segments) != 0 {
+		t.Fatal(string(next.Transcript), err)
 	}
 }

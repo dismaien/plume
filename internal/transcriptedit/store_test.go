@@ -157,6 +157,26 @@ func TestPlainTextAndEmptyCorrection(t *testing.T) {
 	}
 }
 
+func TestSegmentTextsPrunesEmptySection(t *testing.T) {
+	s, _ := setup(t)
+	raw := `{"text":"Hello there","segments":[{"start":0,"end":1,"text":"Hello","speaker":"A"},{"start":1,"end":2,"text":" there","speaker":""}]}`
+	s.DB.Model(&models.TranscriptionJob{}).Where("id = ?", "one").Update("transcript", raw)
+	base := current(t, s, "one")
+	next, err := s.Save(context.Background(), "one", Request{ExpectedVersion: base.Version, SegmentTexts: []string{"Hello there", ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Text     string `json:"text"`
+		Segments []struct {
+			Text string `json:"text"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(next.Transcript, &got); err != nil || got.Text != "Hello there" || len(got.Segments) != 1 || got.Segments[0].Text != "Hello there" {
+		t.Fatal(string(next.Transcript), err)
+	}
+}
+
 func TestSearchPaginationAndStaleManualSave(t *testing.T) {
 	s, _ := setup(t)
 	ctx := context.Background()

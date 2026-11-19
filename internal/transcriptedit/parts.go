@@ -33,7 +33,7 @@ func applyParts(raw string, request Request) (string, error) {
 	texts := []string{}
 	for i, seg := range segments {
 		parts := request.SegmentParts[i]
-		if len(parts) == 0 || len(parts) > 100 {
+		if len(parts) > 100 {
 			return "", ErrInvalid
 		}
 		var oldText, oldSpeaker string
@@ -43,24 +43,29 @@ func applyParts(raw string, request Request) (string, error) {
 			changed = true
 		}
 		total := 0
+		kept := make([]SegmentPart, 0, len(parts))
 		for _, part := range parts {
 			if _, ok := speakers[part.Speaker]; !ok {
 				return "", ErrInvalid
 			}
-			if len(parts) > 1 && strings.TrimSpace(part.Text) == "" {
-				return "", ErrInvalid
+			if strings.TrimSpace(part.Text) == "" {
+				continue
 			}
 			total += utf8.RuneCountInString(part.Text)
+			kept = append(kept, part)
+		}
+		if len(kept) == 0 {
+			changed = true
 		}
 		var start, end float64
-		if len(parts) > 1 {
-			if json.Unmarshal(seg["start"], &start) != nil || json.Unmarshal(seg["end"], &end) != nil || math.IsNaN(start+end) || math.IsInf(start+end, 0) || end < start || total == 0 {
+		if len(kept) > 1 {
+			if json.Unmarshal(seg["start"], &start) != nil || json.Unmarshal(seg["end"], &end) != nil || math.IsNaN(start+end) || math.IsInf(start+end, 0) || end < start {
 				return "", ErrInvalid
 			}
 		}
 		offset := 0
 		sectionText := ""
-		for _, part := range parts {
+		for _, part := range kept {
 			clone := map[string]json.RawMessage{}
 			for key, value := range seg {
 				clone[key] = value
@@ -73,7 +78,7 @@ func applyParts(raw string, request Request) (string, error) {
 					clone["speaker_name"] = name
 				}
 			}
-			if len(parts) > 1 {
+			if len(kept) > 1 {
 				// Text selection has no reliable forced alignment after user corrections.
 				// Preserve the section bounds, and explicitly mark interpolated seek times.
 				clone["start"], _ = json.Marshal(start + (end-start)*float64(offset)/float64(total))
@@ -84,7 +89,9 @@ func applyParts(raw string, request Request) (string, error) {
 			result = append(result, clone)
 			sectionText += part.Text
 		}
-		texts = append(texts, sectionText)
+		if len(kept) > 0 {
+			texts = append(texts, sectionText)
+		}
 	}
 	if !changed {
 		return raw, nil

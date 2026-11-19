@@ -82,7 +82,7 @@ function EditorSession({ audioId, initial, initialMode, initialTarget, speakerMa
     const [base] = useState(initial);
     const original = normalize(base.transcript);
     const segmented = !!original.segments?.length;
-    const [parts, setParts] = useState<Part[][]>(() => segmented ? original.segments!.map(s => [{ text: s.text, speaker: s.speaker || '' }]) : [[{ text: original.text || '', speaker: '' }]]);
+    const [parts, setParts] = useState<Part[][]>(() => segmented ? original.segments!.map(s => s.text.trim() ? [{ text: s.text, speaker: s.speaker || '' }] : []) : [[{ text: original.text || '', speaker: '' }]]);
     const texts = parts.map(section => section.map(p => p.text).join(''));
     const speakers = [...new Set(original.segments?.map(s => s.speaker || '') || [])];
     const speakerName = (key: string) => speakerMappings[key] || original.segments?.find(s => s.speaker === key)?.speaker_name || key || 'Unassigned';
@@ -104,7 +104,10 @@ function EditorSession({ audioId, initial, initialMode, initialTarget, speakerMa
         , 0);
     }, [initialTarget, original.segments]);
     const pageSize = 30;
-    const [page, setPage] = useState(() => Math.floor(targetSection / pageSize));
+    const visibleSections = parts.flatMap((section, index) => section.length > 0 ? [index] : []);
+    const [page, setPage] = useState(() => Math.floor(Math.max(0, visibleSections.indexOf(targetSection)) / pageSize));
+    const lastPage = Math.max(0, Math.ceil(visibleSections.length / pageSize) - 1);
+    const visiblePage = Math.min(page, lastPage);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [discard, setDiscard] = useState(false);
@@ -121,7 +124,7 @@ function EditorSession({ audioId, initial, initialMode, initialTarget, speakerMa
         try {
             const result = await send<Document>('editor', {
                 expected_version: base.version,
-                ...(restoreID !== undefined ? { restore_id: restoreID } : attributionChanged ? { segment_parts: parts } : segmented ? { segment_texts: texts } : { text: texts[0] }),
+                ...(restoreID !== undefined ? { restore_id: restoreID } : segmented ? { segment_parts: parts } : { text: texts[0] }),
             });
             client.setQueryData(['transcript', audioId], normalize(result.transcript));
             for (const queryKey of [['transcript', audioId], ['audio', audioId], ['audioFiles'], ['transcriptHistory', audioId], ['speakerMappings', audioId]]) {
@@ -162,26 +165,28 @@ function EditorSession({ audioId, initial, initialMode, initialTarget, speakerMa
                 {error && <p role="alert" className="text-destructive whitespace-pre-wrap">{error}</p>}
                 {tab === 'edit' ? <>
                     <p className="text-sm text-muted-foreground">Correct text or choose its speaker. For part of a section, highlight the phrase and separate it first. Split times are approximate; word highlighting pauses after corrections.</p>
-                    {texts.slice(page * pageSize, (page + 1) * pageSize).map((_, index) => {
-                        const i = index + page * pageSize;
+                    {visibleSections.slice(visiblePage * pageSize, (visiblePage + 1) * pageSize).map((i, index) => {
+                        const sectionNumber = visiblePage * pageSize + index + 1;
                         const seg = original.segments?.[i];
                         return <div key={i} className="space-y-2">
                             <label htmlFor={`transcript-section-${i}`} className="text-sm font-medium">
-                                {segmented ? `Section ${i + 1}` : 'Transcript text'}
+                                {segmented ? `Section ${sectionNumber}` : 'Transcript text'}
                                 {seg && <span className="ml-2 text-muted-foreground">{time(seg.start)} · {seg.speaker ? speakerMappings[seg.speaker] || seg.speaker_name || seg.speaker : ''}</span>}
                             </label>
                             {parts[i].map((part, partIndex) => <PartEditor key={partIndex} part={part} busy={busy}
-                                label={segmented ? `Section ${i + 1}${parts[i].length > 1 ? ` part ${partIndex + 1}` : ''}` : 'Transcript'}
+                                label={segmented ? `Section ${sectionNumber}${parts[i].length > 1 ? ` part ${partIndex + 1}` : ''}` : 'Transcript'}
                                 speakers={segmented ? speakers : []} speakerName={speakerName}
                                 autoFocus={tab === 'edit' && i === targetSection && partIndex === 0 && !!initialTarget}
                                 initialSelectedText={i === targetSection && partIndex === 0 ? initialTarget?.selectedText : undefined}
-                                onChange={next => setParts(previous => previous.map((section, sectionIndex) => sectionIndex === i ? section.flatMap((value, j) => j === partIndex ? next : [value]) : section))} />)}
+                                onChange={next => setParts(previous => previous.map((section, sectionIndex) => sectionIndex === i ? section.flatMap((value, j) => j === partIndex ? next : [value]) : section))}
+                                onBlur={() => setParts(previous => previous.map((section, sectionIndex) => sectionIndex === i ? section.filter(value => value.text.trim()) : section))} />)}
                         </div>;
                     })}
-                    {texts.length > pageSize && <div className="flex items-center gap-3">
-                        <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous sections</Button>
-                        <span className="text-sm">{page * pageSize + 1}–{Math.min(texts.length, (page + 1) * pageSize)} of {texts.length}</span>
-                        <Button variant="outline" size="sm" disabled={(page + 1) * pageSize >= texts.length} onClick={() => setPage(p => p + 1)}>Next sections</Button>
+                    {visibleSections.length === 0 && <p className="text-sm text-muted-foreground">Transcript is empty.</p>}
+                    {visibleSections.length > pageSize && <div className="flex items-center gap-3">
+                        <Button variant="outline" size="sm" disabled={visiblePage === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous sections</Button>
+                        <span className="text-sm">{visiblePage * pageSize + 1}–{Math.min(visibleSections.length, (visiblePage + 1) * pageSize)} of {visibleSections.length}</span>
+                        <Button variant="outline" size="sm" disabled={visiblePage >= lastPage} onClick={() => setPage(p => Math.min(lastPage, p + 1))}>Next sections</Button>
                     </div>}
                 </> : <>
                     {history.isPending && <p>Loading history…</p>}
@@ -214,9 +219,9 @@ function EditorSession({ audioId, initial, initialMode, initialTarget, speakerMa
     </Dialog>;
 }
 
-function PartEditor({ part, label, speakers, speakerName, busy, autoFocus = false, initialSelectedText, onChange }: {
+function PartEditor({ part, label, speakers, speakerName, busy, autoFocus = false, initialSelectedText, onChange, onBlur }: {
     part: Part; label: string; speakers: string[]; speakerName: (key: string) => string; busy: boolean;
-    autoFocus?: boolean; initialSelectedText?: string; onChange: (parts: Part[]) => void;
+    autoFocus?: boolean; initialSelectedText?: string; onChange: (parts: Part[]) => void; onBlur: () => void;
 }) {
     const [selection, setSelection] = useState({ start: 0, end: 0 });
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -267,6 +272,7 @@ function PartEditor({ part, label, speakers, speakerName, busy, autoFocus = fals
             rows={Math.min(10, Math.max(3, Math.ceil(part.text.length / 95)))}
             onSelect={e => setSelection({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })}
             onChange={e => { onChange([{ ...part, text: e.target.value }]); setSelection({ start: 0, end: 0 }); }}
+            onBlur={onBlur}
             className="font-reading text-base leading-relaxed" />
     </div>;
 }

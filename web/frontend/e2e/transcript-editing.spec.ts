@@ -26,8 +26,8 @@ test('save, reload, compare and restore retains every correction', async ({ page
       if (!versions.length) versions.push({ id: 1, kind: 'original', created_at: '2026-09-08T01:00:00Z', transcript: structuredClone(transcript) });
       if (body.restore_id) transcript = structuredClone(versions.find(r => r.id === body.restore_id)!.transcript);
       else {
-        expect(body.segment_texts).toHaveLength(2);
-        transcript = { ...transcript, text: body.segment_texts.join(' '), segments: transcript.segments.map((s, i) => ({ ...s, text: body.segment_texts[i] })) };
+        expect(body.segment_parts).toHaveLength(2);
+        transcript = { ...transcript, text: body.segment_parts.map((section: { text: string }[]) => section.map(part => part.text).join('')).join(' '), segments: transcript.segments.map((s, i) => ({ ...s, text: body.segment_parts[i][0].text })) };
       }
       version++;
       versions.push({ id: versions.length + 1, kind: body.restore_id ? 'restore' : 'edit', created_at: `2026-09-08T01:0${version}:00Z`, transcript: structuredClone(transcript) });
@@ -170,8 +170,8 @@ test('contextual actions reopen after a saved edit removes stale word timings', 
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON();
       transcript = {
-        text: body.segment_texts.join(' '),
-        segments: transcript.segments.map((segment, index) => ({ ...segment, text: body.segment_texts[index] })),
+        text: body.segment_parts.map((section: { text: string }[]) => section.map(part => part.text).join('')).join(' '),
+        segments: transcript.segments.map((segment, index) => ({ ...segment, text: body.segment_parts[index][0].text })),
       };
       version++;
     }
@@ -190,6 +190,36 @@ test('contextual actions reopen after a saved edit removes stale word timings', 
   await page.locator('[data-transcript-text]').filter({ hasText: 'Another' }).dblclick();
   await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Listen', exact: true })).toBeVisible();
+});
+
+test('empty sections disappear after moving their words into a neighbor', async ({ page }) => {
+  const transcript = {
+    text: 'One thing that happens.',
+    segments: [
+      { start: 3, end: 4, text: 'One thing that', speaker: '' },
+      { start: 4, end: 20, text: ' happens.', speaker: 'SPEAKER_00' },
+      { start: 20, end: 21, text: '', speaker: '' },
+    ],
+  };
+  await page.route('**/api/v1/transcription/1/transcript/editor', async route => {
+    if (route.request().method() === 'PUT') {
+      expect(route.request().postDataJSON().segment_parts).toEqual([
+        [], [{ text: 'One thing that happens.', speaker: 'SPEAKER_00' }], [],
+      ]);
+    }
+    await route.fulfill({ json: { version: 'v0', transcript } });
+  });
+  await page.goto('/audio/1');
+  await page.getByRole('button', { name: 'Edit text', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit transcript', exact: true });
+  await expect(dialog.getByRole('textbox', { name: 'Section 3 text' })).toHaveCount(0);
+  await dialog.getByRole('textbox', { name: 'Section 2 text' }).fill('One thing that happens.');
+  await dialog.getByRole('textbox', { name: 'Section 1 text' }).fill('');
+  await dialog.getByRole('heading', { name: 'Edit transcript' }).click();
+  await expect(dialog.getByRole('textbox', { name: 'Section 2 text' })).toHaveCount(0);
+  await expect(dialog.getByRole('textbox', { name: 'Section 1 text' })).toHaveValue('One thing that happens.');
+  await dialog.getByRole('button', { name: 'Save correction' }).click();
+  await expect(dialog).toBeHidden();
 });
 
 test('assign a selected phrase to another speaker without changing its words', async ({ page }) => {

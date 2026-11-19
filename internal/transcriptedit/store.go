@@ -265,6 +265,8 @@ func apply(raw string, request Request) (string, error) {
 		if request.Text != nil || len(request.SegmentTexts) != len(segments) {
 			return "", ErrInvalid
 		}
+		kept := make([]map[string]json.RawMessage, 0, len(segments))
+		texts := make([]string, 0, len(segments))
 		for i, seg := range segments {
 			if seg == nil {
 				return "", ErrInvalid
@@ -275,18 +277,24 @@ func apply(raw string, request Request) (string, error) {
 				changed = true
 				seg["text"], _ = json.Marshal(request.SegmentTexts[i])
 			}
+			if strings.TrimSpace(request.SegmentTexts[i]) == "" {
+				changed = true
+				continue
+			}
+			kept = append(kept, seg)
+			texts = append(texts, request.SegmentTexts[i])
 		}
 		if !changed {
 			return raw, nil
 		}
 		// All word offsets become stale once text changes. Exact originals remain in history.
-		for _, seg := range segments {
+		for _, seg := range kept {
 			delete(seg, "words")
 			delete(seg, "tokens")
 			delete(seg, "chars")
 		}
-		p["segments"], _ = json.Marshal(segments)
-		p["text"], _ = json.Marshal(strings.Join(request.SegmentTexts, " "))
+		p["segments"], _ = json.Marshal(kept)
+		p["text"], _ = json.Marshal(strings.Join(texts, " "))
 	} else {
 		if request.Text == nil || request.SegmentTexts != nil {
 			return "", ErrInvalid
