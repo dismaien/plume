@@ -130,3 +130,66 @@ def test_clipped_syllable_on_overlap_preserves_a_separate_acknowledgement():
     assert clipped_word_proposal(1, words, (1.36, 2.16), evidence, p)['proposed'] == 'A'
     words[1]['word'] = 'Yeah.'
     assert clipped_word_proposal(1, words, (1.36, 2.16), evidence, p) is None
+
+
+def test_word_crossing_vad_cut_only_counts_audio_passed_to_asr():
+    from gap_evidence import local_voice_evidence, gap_proposals
+    turns = [dict(start=2, end=6, speaker='B'), dict(start=7.9, end=10, speaker='A')]
+    primary = dict(segments=turns, regular_segments=turns)
+    p = np.zeros((1000, 2))
+    p[200:600, 1] = .99
+    p[790:, 0] = .99
+    ev = local_voice_evidence(primary, p, np.ones(1000, bool), .01)
+    words = [dict(start=.65, end=8.2, word='when'), dict(start=8.2, end=8.6, word='ready', speaker='A')]
+    metadata = dict(vad_retained_speech_regions='[{"start":0,"end":1},{"start":8,"end":10}]')
+    got = gap_proposals(ev,p,.01,words,metadata)
+    assert [(x['index'],x['proposed']) for x in got] == [(0,'A')]
+    assert not gap_proposals(ev,p,.01,words,{})
+    # The same competing voice counts if the recognizer actually heard it.
+    metadata['vad_retained_speech_regions'] = '[{"start":0,"end":3},{"start":8,"end":10}]'
+    assert not gap_proposals(ev,p,.01,words,metadata)
+
+
+def test_native_reply_requires_a_separate_locally_identified_turn():
+    from gap_evidence import local_voice_evidence, native_reply_proposal
+    turns = [dict(start=0, end=1.02, speaker='A'), dict(start=2, end=3.5, speaker='A'),
+             dict(start=4, end=10, speaker='B')]
+    primary = dict(segments=turns, regular_segments=turns)
+    p = np.zeros((1000, 2))
+    p[:100,0] = p[200:350,0] = .98
+    p[117:168,1] = p[400:,1] = .99
+    words = [dict(start=.6,end=1,word='asking',speaker='A'),dict(start=1,end=1.52,word='yeah'),
+             dict(start=2,end=2.4,word='then',speaker='A')]
+    ev = local_voice_evidence(primary,p,np.ones(len(p),bool),.01)
+    assert native_reply_proposal(1,words,ev,p,.01)['proposed'] == 'B'
+    words[2]['start'] = 1.38
+    assert native_reply_proposal(1,words,ev,p,.01) is None
+
+
+def test_overlap_only_identity_requires_both_sides_of_isolated_reply(tmp_path):
+    primary = dict(segments=[dict(start=0,end=5,speaker='A')], regular_segments=[
+        dict(start=0,end=5,speaker='A'), dict(start=3,end=3.14,speaker='B')])
+    turns = [dict(start=0,end=1,speaker='speaker_0'), dict(start=1.25,end=1.55,speaker='speaker_1'),
+             dict(start=2,end=5,speaker='speaker_0'), dict(start=3,end=3.14,speaker='speaker_1'),
+             dict(start=4,end=4.45,speaker='speaker_1')]
+    logits = np.full((500,2),-7.)
+    for t in turns:
+        logits[round(t['start']*100):round(t['end']*100),int(t['speaker'][-1])] = 7.
+    native = dict(regular_segments=turns, activity_artifact=save_activity(tmp_path/'reply.npz',logits,np.ones(500),.01,5))
+    words = [dict(start=.6,end=1,word='finished',speaker='A'),
+             dict(start=1.25,end=1.56,word='yeah',speaker='A'),
+             dict(start=2,end=2.4,word='and',speaker='A')]
+    props = module.propose(primary,native,words)['proposals']
+    assert [(p['index'],p['proposed']) for p in props] == [(1,'B')]
+    primary['regular_segments'].append(dict(start=3,end=3.14,speaker='C'))
+    assert not module.propose(primary,native,words)['proposals']
+
+
+def test_short_decode_needs_word_and_an_independent_timed_neighbor():
+    from short_word_times import matches
+    words = [dict(word='right',start=1,end=1.15),dict(word='there',start=1.2,end=1.45)]
+    observed = [dict(word=' Right,',start=.02,end=.19,probability=.99),
+                dict(word=' there.',start=.2,end=.45,probability=.95)]
+    assert matches(words,0,observed,1) == [(1.02,1.19)]
+    observed[1]['start'],observed[1]['end']=1.3,1.55
+    assert not matches(words,0,observed,1)

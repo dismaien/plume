@@ -11,7 +11,7 @@ from pathlib import Path
 
 POLICY = dict(activity_probability=.9,activity_margin=.25,mapping_jaccard=.25,
               other_regular_support=.25,primary_regular_support=.5,
-              preserve_explicit_unknown=True,mapping_activity_threshold=.4,version='anchored_native_word_gaps_v4')
+              preserve_explicit_unknown=True,mapping_activity_threshold=.4,version='retained_audio_word_gaps_v5')
 
 
 def annotation(payload):
@@ -63,6 +63,8 @@ def propose(primary,native,words,metadata=None):
         from activity_timeline import validate
         logits,mask=validate(data['logits'],data['attention_mask'],float(data['frame_seconds']),float(data['audio_duration']))
         probabilities=expit(logits);step=float(data['frame_seconds'])
+    from gap_evidence import gap_proposals, local_voice_evidence, unmapped_spans, is_reply
+    evidence = local_voice_evidence(primary, probabilities, mask, step)
     proposals=[]
     for index,word in enumerate(words):
         current=word.get('speaker')
@@ -80,15 +82,35 @@ def propose(primary,native,words,metadata=None):
         p=np.average(probabilities[left:right],axis=0,weights=frame_weights)
         order=np.argsort(p);best=int(order[-1]);activity=float(p[best])
         margin=float(p[best]-p[order[-2]]) if len(order)>1 else activity
-        if activity<POLICY['activity_probability'] or margin<POLICY['activity_margin']:continue
         channel=f'speaker_{best}'
+        isolated = None
+        if (channel not in mapping and brief_matches.get(channel) and is_reply(word)
+                and index > 0 and index+1 < len(words)):
+            isolated = isolated_overlap_reply(community, nemo, mapping, brief_matches, channel, current,
+                                             words[index-1:index+2])
+            if isolated:
+                audible = (probabilities[left:right, best] >= .5) & mask[left:right]
+                if frame_weights[audible].sum() < .65*frame_weights.sum():
+                    continue
+                core = np.average(probabilities[left:right][audible], axis=0, weights=frame_weights[audible])
+                activity = float(core[best])
+                margin = activity - (float(np.partition(core,-2)[-2]) if len(core)>1 else 0.)
+        if activity<POLICY['activity_probability'] or margin<POLICY['activity_margin']:continue
         if mapping.get(channel)==current:continue
+        if evidence and channel not in mapping:
+            labels, _, _, _, _, solo, local = evidence
+            single = solo[left:right] == best
+            if (current in labels and single.mean() >= .85 and np.all(local[left:right][single] == labels.index(current))):
+                # An unmatched global channel may already corroborate the
+                # assigned speaker on this particular stretch of the recording.
+                if not brief_matches.get(channel):
+                    continue
         support=({person:primary_support[person].crop(Segment(start,end)).support().duration()/duration for person in people}
                  if duration else {person:float(any(t.start<=start<t.end for t in primary_support[person])) for person in people})
-        if (support.get(current,0)>=POLICY['primary_regular_support']
+        if (isolated is None and support.get(current,0)>=POLICY['primary_regular_support']
                 and max([v for person,v in support.items() if person!=current],default=0)<POLICY['other_regular_support']):
             continue
-        proposed = mapping.get(channel)
+        proposed = isolated or mapping.get(channel)
         if proposed is None:
             supported = [person for person in brief_matches.get(channel, [])
                          if support.get(person, 0) >= POLICY['primary_regular_support']]
@@ -100,8 +122,6 @@ def propose(primary,native,words,metadata=None):
         if proposed is None:
             proposal['review_channel'] = channel
         proposals.append(proposal)
-    from gap_evidence import gap_proposals, local_voice_evidence, unmapped_spans
-    evidence = local_voice_evidence(primary, probabilities, mask, step)
     already_proposed = {p['index'] for p in proposals}
     proposals.extend(p for p in gap_proposals(evidence, probabilities, step, words, metadata or {})
                      if p['index'] not in already_proposed)
@@ -111,6 +131,44 @@ def propose(primary,native,words,metadata=None):
     return dict(policy=POLICY,proposals=proposals,mapping=mapping,
                 mixed_activity=recover_mixed_activity(primary, native, mapping, local_spans),
                 confidence_kind='uncalibrated frame activity; not person identity probability')
+
+
+def isolated_overlap_reply(primary, native, mapping, brief_matches, channel, current, words):
+    """Identify a separate reply using a nearby two-track overlap anchor."""
+    from pyannote.core import Segment
+    previous, word, following = words
+    if previous.get('speaker') != current or following.get('speaker') != current:
+        return None
+    if not 0 < word['end']-word['start'] <= 1. or following['start']-previous['end'] > 4:
+        return None
+    candidates = brief_matches.get(channel, [])
+    if len(candidates) != 1:
+        return None
+    person = candidates[0]
+    if any(person in matches for c, matches in brief_matches.items() if c != channel):
+        return None
+    incumbents = [c for c, p in mapping.items() if p == current]
+    if len(incumbents) != 1:
+        return None
+    incumbent = incumbents[0]
+    gap = Segment(previous['end'], following['start'])
+    turns = list(native.label_timeline(channel).support().crop(gap))
+    if len(turns) != 1 or turns[0].start <= gap.start or turns[0].end >= gap.end or turns[0].duration > 1.:
+        return None
+    if any(c != channel for c in native.crop(turns[0]).labels()):
+        return None
+    if any(incumbent not in native.crop(Segment(w['start'],w['end'])).labels() for w in (previous, following)):
+        return None
+    neighborhood = Segment(max(0, word['start']-20.), word['end']+20.)
+    for anchor in primary.label_timeline(person).support().crop(neighborhood):
+        if anchor.duration < .10 or set(primary.crop(anchor).labels()) != {person, current}:
+            continue
+        if set(native.crop(anchor).labels()) != {channel, incumbent}:
+            continue
+        if all(native.label_timeline(c).support().crop(anchor).duration() >= .9*anchor.duration
+               for c in (channel, incumbent)):
+            return person
+    return None
 
 
 def recover_mixed_activity(primary, native, mapping, local_spans=None):

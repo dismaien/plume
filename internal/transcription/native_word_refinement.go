@@ -17,7 +17,7 @@ import (
 	"quill/pkg/binaries"
 )
 
-const wordRefinementPolicy = "anchored_native_word_gaps_v4"
+const wordRefinementPolicy = "retained_audio_word_gaps_v5"
 
 const wordRefinementRevision = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
 
@@ -58,7 +58,7 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	}
 	// Existing profiles pin the same model. The embedded scripts and Go
 	// validator always apply the current policy to fresh outputs.
-	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "primary_mixed_track_local_support_v3" && profile.Policy != "primary_speakers_review_unmatched_v2" && profile.Policy != "known_machine_labels_v1") {
+	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "anchored_native_word_gaps_v4" && profile.Policy != "primary_mixed_track_local_support_v3" && profile.Policy != "primary_speakers_review_unmatched_v2" && profile.Policy != "known_machine_labels_v1") {
 		return result, fmt.Errorf("unverified native word-refinement profile")
 	}
 	if result == nil || result.Diarization == nil || len(result.WordSegments) == 0 {
@@ -140,7 +140,17 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	refined.Metadata["word_refinement_engine"] = "nvidia/Nemotron-3-Diarization"
 	refined.Metadata["word_refinement_model_revision"] = wordRefinementRevision
 	refined.Metadata["word_refinement_artifact_dir"] = directory
-	return refined, nil
+	// This optional local decoder uses a separate environment. Retain the
+	// validated native result if the supplementary excerpt pass fails.
+	observed, timingErr := u.checkShortWordTimes(ctx, refined, converted, directory, filepath.Join(root, "scripts"))
+	if timingErr != nil {
+		if ctx.Err() != nil {
+			return refined, ctx.Err()
+		}
+		refined.Metadata["short_word_timing_error"] = timingErr.Error()
+		return refined, nil
+	}
+	return observed, nil
 }
 
 func nativeWordEnvironment() []string {

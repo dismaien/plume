@@ -138,16 +138,20 @@ def local_voice_evidence(primary, probabilities, mask, step):
     return people, frames, exclusive, primary_voice, active, solo, local
 
 
+def is_reply(word):
+    return word['word'].casefold().strip(" .,!?…") in {
+        'yeah', 'yes', 'no', 'okay', 'ok', 'right', 'mhm', 'mm', 'uh-huh',
+        'yep', 'yup', 'nope', 'ja', 'nein', 'genau', 'si', 'sí', 'sim', 'não', 'oui', 'non',
+    }
+
+
 def clipped_word_proposal(index, words, window, evidence, probabilities):
     """An aligner can place the last syllable of a word on a background voice."""
     if not window or index == 0:
         return None
     word = words[index]
     # An isolated acknowledgement can be a complete utterance during overlap.
-    if word['word'].casefold().strip(" .,!?…") in {
-        'yeah', 'yes', 'no', 'okay', 'ok', 'right', 'mhm', 'mm', 'uh-huh',
-        'yep', 'yup', 'nope', 'ja', 'nein', 'genau', 'si', 'sí', 'sim', 'não', 'oui', 'non',
-    }:
+    if is_reply(word):
         return None
     start, end = word['start'], word['end']
     a, b = window
@@ -183,11 +187,153 @@ def clipped_word_proposal(index, words, window, evidence, probabilities):
                 proposed=target, activity=activity, margin=margin)
 
 
+def retained_clock(metadata, frames):
+    """Only ranges passed to ASR can carry a word across a VAD splice."""
+    try:
+        regions = json.loads(metadata.get('vad_retained_speech_regions') or '[]')
+        starts = [r['start'] for r in regions]
+        ends = [r['end'] for r in regions]
+        if (not regions or any(not math.isfinite(a+b) or a < 0 or b <= a for a, b in zip(starts, ends))
+                or any(a < b for a, b in zip(starts[1:], ends))):
+            return None
+    except (ValueError, TypeError, KeyError):
+        return None
+    mask = np.zeros(len(frames), dtype=bool)
+    for a, b in zip(np.searchsorted(frames, starts), np.searchsorted(frames, ends)):
+        mask[a:b] = True
+    return starts, ends, mask
+
+
+def retained_word_proposal(i, words, evidence, probabilities, step, clock):
+    word = words[i]
+    a, b = word['start'], word['end']
+    people, frames, exclusive, voice, active, solo, local = evidence
+    lo, hi = np.searchsorted(frames, [a, b])
+    cut = False
+    if clock:
+        starts, ends, retained = clock
+        cut = bisect_left(starts, b) - bisect_right(ends, a) >= 2
+    if not cut and b-a > 2.5:
+        return None
+    idx = np.flatnonzero(retained[lo:hi]) + lo if cut else np.arange(lo, hi)
+    if not len(idx) or len(idx)*step > 2.5:
+        return None
+    # Both models work on full audio. Speech in removed silence cannot be
+    # evidence for or against the word. On the retained audio, every active
+    # native frame must have the same locally anchored identity.
+    heard = idx[active[idx].any(axis=1)]
+    if not len(heard) or np.any(solo[heard] < 0):
+        return None
+    person = local[heard[0]]
+    if person < 0 or np.any(local[heard] != person):
+        return None
+    if np.any((voice[idx] != -1) & (voice[idx] != person)) or np.any((exclusive[idx] >= 0) & (exclusive[idx] != person)):
+        return None
+    direct = heard[(voice[heard] == person) & (exclusive[heard] == person)]
+    if cut:
+        # A splice may leave a word with only one voiced piece. Check the
+        # identity on the retained native frames and inside the adjoining
+        # primary turn; never use sound from the removed gap as an anchor.
+        neighbor_confirmed = False
+        for j, edge in ((i-1, int(heard[0])), (i+1, int(heard[-1]))):
+            if not 0 <= j < len(words) or words[j].get('speaker') != people[person]:
+                continue
+            neighbor = words[j]
+            t = neighbor['end'] if j < i else neighbor['start']
+            if abs(frames[edge]-t) > .45:
+                continue
+            a0, b0 = np.searchsorted(frames, [max(0,t-.18), t+.18])
+            anchor = np.arange(a0, b0)
+            anchor = anchor[(frames[anchor] >= neighbor['start']) & (frames[anchor] < neighbor['end'])]
+            anchor = anchor[(local[anchor] == person) & (voice[anchor] == person)
+                            & (solo[anchor] == solo[edge]) & retained[anchor]]
+            if len(anchor) and (np.min(abs(anchor-edge))*step <= .25):
+                left, right = sorted((edge, int(anchor[np.argmin(abs(anchor-edge))])))
+                if np.all(retained[left:right+1]) and np.all(solo[left:right+1] == solo[edge]):
+                    neighbor_confirmed = True
+                    break
+        if neighbor_confirmed and len(heard)*step >= .055:
+            core = probabilities[heard]
+            best = float(core[np.arange(len(core)), solo[heard]].mean())
+            second = float(np.partition(core, -2, axis=1)[:, -2].mean()) if core.shape[1]>1 else 0.
+            if best >= .9 and best-second >= .4:
+                return dict(index=i, word=word['word'], start=a, end=b, previous='', proposed=people[person],
+                            gap_evidence=True, activity=best, margin=best-second, primary_fraction=len(direct)/len(heard))
+    if not len(direct):
+        return None
+    prior = words[i-1] if i else {}
+    continues = (prior.get('speaker') == people[person] and a-prior.get('end', a-1) <= .4
+                 and local[max(0, lo-1)] == person)
+    # A few boundary frames alone could be the NEXT person's onset.
+    # Shorter coverage is usable when anchored in a preceding native turn,
+    # or when removing a documented splice leaves very little voiced audio.
+    seconds = len(direct)*step
+    if cut:
+        required = min(.075, max(.035, .4*len(heard)*step))
+    elif continues:
+        required = min(.065, max(.03, .3*len(idx)*step))
+    else:
+        required = min(.085, max(.065, .45*len(idx)*step))
+    if seconds + 1e-9 < required:
+        return None
+    core = probabilities[direct]
+    values = core[np.arange(len(core)), solo[direct]]
+    best = float(values.mean())
+    other = np.partition(core, -2, axis=1)[:, -2] if core.shape[1] > 1 else np.zeros(len(core))
+    margin = float((values-other).mean())
+    fraction = len(direct)/len(heard)
+    if margin < .4 or best < (.65 if fraction >= .8 else .9):
+        return None
+    return dict(index=i, word=word['word'], start=a, end=b, previous='', proposed=people[person],
+                gap_evidence=True, activity=best, margin=margin, primary_fraction=len(direct)/len(heard))
+
+
+def native_reply_proposal(i, words, evidence, probabilities, step):
+    """A previous speaker's release can overlap the first frame of a reply."""
+    w = words[i]
+    if not is_reply(w) or i == 0 or i+1 >= len(words) or not 0 < w['end']-w['start'] <= 1.25:
+        return None
+    prior, following = words[i-1], words[i+1]
+    people, frames, _, voice, _, solo, local = evidence
+    lo, hi = np.searchsorted(frames, [w['start'], w['end']])
+    # Find a separate native onset. Do not use the nearest track across a
+    # silence, or split an ongoing speaker merely because their volume dipped.
+    for j in range(max(1, lo), hi):
+        channel = solo[j]
+        if channel < 0 or solo[j-1] >= 0 or frames[j] < prior['end']:
+            continue
+        stop = j+1
+        while stop < len(solo) and solo[stop] == channel and (stop-j)*step <= 1.25:
+            stop += 1
+        if (stop-j)*step > 1.25 or frames[stop-1] > following['start']+.03:
+            continue
+        cut = min(stop, hi)
+        if (cut-j)*step < .14 or (cut-j) < .28*(stop-j):
+            continue
+        person = local[j]
+        if person < 0 or people[person] == prior.get('speaker') or np.any(local[j:cut] != person):
+            continue
+        # During the independently observed reply itself, primary silence
+        # is permissible. A positive opposing voice is evidence against it.
+        if np.any((voice[j:cut] != -1) & (voice[j:cut] != person)):
+            continue
+        if np.any((solo[lo:j] >= 0) & (probabilities[lo:j].max(axis=1) >= .9)):
+            continue
+        row = probabilities[j:cut].mean(axis=0)
+        best = float(row[channel])
+        margin = best - (float(np.partition(row,-2)[-2]) if len(row)>1 else 0.)
+        if best >= .9 and margin >= .5:
+            return dict(index=i, word=w['word'], start=w['start'], end=w['end'], previous='',
+                        proposed=people[person], gap_evidence=True, activity=best, margin=margin)
+    return None
+
+
 def gap_proposals(evidence, probabilities, step, words, metadata):
     if evidence is None:
         return []
     people, frames, exclusive, primary_voice, active, solo, local = evidence
     windows = decoder_windows(metadata, words)
+    clock = retained_clock(metadata, frames)
     result = []
     for index, word in enumerate(words):
         if word.get('speaker_review'):
@@ -270,6 +416,12 @@ def gap_proposals(evidence, probabilities, step, words, metadata):
                                proposed=people[person], gap_evidence=True, activity=float(best),
                                margin=float(best-runner), primary_fraction=float(primary_fraction)))
             break
+        else:
+            extra = retained_word_proposal(index, words, evidence, probabilities, step, clock)
+            if extra is None:
+                extra = native_reply_proposal(index, words, evidence, probabilities, step)
+            if extra:
+                result.append(extra)
     return result
 
 

@@ -20,6 +20,7 @@ func main() {
 	output := flag.String("out", "", "New assembled output JSON")
 	overlapReview := flag.Bool("overlap-review", false, "Experimental conservative overlap policy; not the production default")
 	proposals := flag.String("word-proposals", "", "Optional frozen independent-model word proposals; no inference")
+	observations := flag.String("word-times", "", "Optional frozen word times from independently decoded excerpts")
 	nativeRuntime := flag.String("native-runtime", "", "Optional configured local runtime for the real application refinement stage")
 	audio := flag.String("audio", "", "Full original-clock WAV for native-runtime preflight")
 	vadEvidence := flag.String("vad-evidence", "", "Retained VAD manifest for original-clock words; no timestamp edits")
@@ -62,6 +63,15 @@ func main() {
 		read(*proposals, &payload)
 		var err error
 		result, err = transcription.ApplyAcousticWordRefinement(result, payload)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if *observations != "" {
+		var batch transcription.WordTimeObservations
+		read(*observations, &batch)
+		var err error
+		result, err = transcription.ApplyObservedWordTimes(result, batch)
 		if err != nil {
 			panic(err)
 		}
