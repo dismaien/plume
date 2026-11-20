@@ -33,6 +33,7 @@ import (
 	"quill/internal/service"
 	"quill/internal/sse"
 	"quill/internal/transcription"
+	"quill/internal/voicememos"
 	"quill/pkg/binaries"
 	"quill/pkg/logger"
 
@@ -43,33 +44,34 @@ import (
 
 // Handler contains all the API handlers
 type Handler struct {
-	config              *config.Config
-	authService         *auth.AuthService
-	userService         service.UserService
-	fileService         service.FileService
-	jobRepo             repository.JobRepository
-	apiKeyRepo          repository.APIKeyRepository
-	profileRepo         repository.ProfileRepository
-	userRepo            repository.UserRepository
-	llmConfigRepo       repository.LLMConfigRepository
-	summaryRepo         repository.SummaryRepository
-	chatRepo            repository.ChatRepository
-	noteRepo            repository.NoteRepository
-	speakerMappingRepo  repository.SpeakerMappingRepository
-	contactRepo         repository.ContactRepository
-	refreshTokenRepo    repository.RefreshTokenRepository
-	cloudProviderRepo   repository.CloudProviderConfigRepository
-	taskQueue           *queue.TaskQueue
-	unifiedProcessor    *transcription.UnifiedJobProcessor
-	quickTranscription  *transcription.QuickTranscriptionService
-	multiTrackProcessor *processing.MultiTrackProcessor
-	folderWatchService  *folderwatch.Service
-	contactManager      *contacts.Manager
-	bundleManager       *transcription.BundleManager
-	runtimeWarmup       *transcription.RuntimeWarmupManager
-	ftsManager          *search.FTSManager
-	broadcaster         *sse.Broadcaster
-	notifier            *sse.Notifier
+	config               *config.Config
+	authService          *auth.AuthService
+	userService          service.UserService
+	fileService          service.FileService
+	jobRepo              repository.JobRepository
+	apiKeyRepo           repository.APIKeyRepository
+	profileRepo          repository.ProfileRepository
+	userRepo             repository.UserRepository
+	llmConfigRepo        repository.LLMConfigRepository
+	summaryRepo          repository.SummaryRepository
+	chatRepo             repository.ChatRepository
+	noteRepo             repository.NoteRepository
+	speakerMappingRepo   repository.SpeakerMappingRepository
+	contactRepo          repository.ContactRepository
+	refreshTokenRepo     repository.RefreshTokenRepository
+	cloudProviderRepo    repository.CloudProviderConfigRepository
+	taskQueue            *queue.TaskQueue
+	unifiedProcessor     *transcription.UnifiedJobProcessor
+	quickTranscription   *transcription.QuickTranscriptionService
+	multiTrackProcessor  *processing.MultiTrackProcessor
+	folderWatchService   *folderwatch.Service
+	contactManager       *contacts.Manager
+	bundleManager        *transcription.BundleManager
+	runtimeWarmup        *transcription.RuntimeWarmupManager
+	ftsManager           *search.FTSManager
+	voiceMemoSyncService *voicememos.Service
+	broadcaster          *sse.Broadcaster
+	notifier             *sse.Notifier
 }
 
 // NewHandler creates a new handler
@@ -126,6 +128,11 @@ func NewHandler(
 // SetFolderWatchService wires optional desktop auto-import functionality.
 func (h *Handler) SetFolderWatchService(folderWatchService *folderwatch.Service) {
 	h.folderWatchService = folderWatchService
+}
+
+// SetVoiceMemoSyncService wires the explicit Apple Voice Memos archive sync.
+func (h *Handler) SetVoiceMemoSyncService(syncService *voicememos.Service) {
+	h.voiceMemoSyncService = syncService
 }
 
 // SetContactManager wires optional file-first contact synchronization.
@@ -453,13 +460,14 @@ func (h *Handler) UploadAudio(c *gin.Context) {
 	jobID = jobID[:len(jobID)-len(filepath.Ext(jobID))] // Extract ID from filename
 
 	job := models.TranscriptionJob{
-		ID:               jobID,
-		AudioPath:        filePath,
-		VaultID:          vaultID,
-		Status:           models.StatusUploaded,
-		OriginalFilename: header.Filename,
-		FileHash:         uploadResult.FileHash,
-		RecordedAt:       transcription.ExtractRecordingDate(filePath, header.Filename),
+		ID:                  jobID,
+		AudioPath:           filePath,
+		VaultID:             vaultID,
+		Status:              models.StatusUploaded,
+		OriginalFilename:    header.Filename,
+		FileHash:            uploadResult.FileHash,
+		AudioDurationMillis: durationMillisFromAudio(c.Request.Context(), filePath),
+		RecordedAt:          transcription.ExtractRecordingDate(filePath, header.Filename),
 	}
 
 	if title := c.PostForm(paramTitle); title != "" {
@@ -583,13 +591,14 @@ func (h *Handler) UploadVideo(c *gin.Context) {
 
 	// Create job record
 	job := models.TranscriptionJob{
-		ID:               jobID,
-		AudioPath:        audioPath, // Use the extracted audio path
-		VaultID:          vaultID,
-		Status:           models.StatusUploaded,
-		OriginalFilename: header.Filename,
-		FileHash:         uploadResult.FileHash,
-		RecordedAt:       transcription.ExtractRecordingDate(videoPath, header.Filename),
+		ID:                  jobID,
+		AudioPath:           audioPath, // Use the extracted audio path
+		VaultID:             vaultID,
+		Status:              models.StatusUploaded,
+		OriginalFilename:    header.Filename,
+		FileHash:            uploadResult.FileHash,
+		AudioDurationMillis: durationMillisFromAudio(c.Request.Context(), audioPath),
+		RecordedAt:          transcription.ExtractRecordingDate(videoPath, header.Filename),
 	}
 
 	if title := c.PostForm(paramTitle); title != "" {
@@ -955,7 +964,7 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 		getFormValueWithDefault(c, "diarize_model", transcription.DiarizeSortformer),
 	)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		_ = h.fileService.RemoveFile(filePath)
 		return
 	}
@@ -964,13 +973,14 @@ func (h *Handler) SubmitJob(c *gin.Context) {
 
 	// Create job
 	job := models.TranscriptionJob{
-		ID:               jobID,
-		AudioPath:        filePath,
-		Status:           models.StatusPending,
-		Diarization:      diarize,
-		Parameters:       params,
-		OriginalFilename: header.Filename,
-		FileHash:         uploadResult.FileHash,
+		ID:                  jobID,
+		AudioPath:           filePath,
+		Status:              models.StatusPending,
+		Diarization:         diarize,
+		Parameters:          params,
+		OriginalFilename:    header.Filename,
+		FileHash:            uploadResult.FileHash,
+		AudioDurationMillis: durationMillisFromAudio(c.Request.Context(), filePath),
 	}
 
 	if title := c.PostForm(paramTitle); title != "" {
@@ -1044,7 +1054,7 @@ func (h *Handler) GetTranscript(c *gin.Context) {
 	}
 
 	// Return empty transcript gracefully for non-completed jobs
-	if job.Status != models.StatusCompleted {
+	if job.Status != models.StatusCompleted && job.Transcript == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"job_id":     job.ID,
 			"title":      job.Title,
@@ -1078,6 +1088,8 @@ func (h *Handler) GetTranscript(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse transcript"})
 		return
 	}
+
+	annotateLegacyTranscript(transcript, job.Diarization)
 
 	c.JSON(http.StatusOK, gin.H{
 		"job_id":     job.ID,
@@ -1169,7 +1181,7 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 	jobIDs := make([]string, len(jobs))
 	for i := range jobs {
 		jobIDs[i] = jobs[i].ID
-		h.populateJobComputedFields(c.Request.Context(), &jobs[i])
+		populateJobListComputedFields(&jobs[i])
 	}
 
 	// Count pending speaker suggestions per job for badge display.
@@ -1258,15 +1270,29 @@ func (h *Handler) populateJobComputedFields(ctx context.Context, job *models.Tra
 	if job.HasAudio {
 		audioDuration = durationMillisFromAudio(ctx, job.AudioPath)
 	}
-	job.Duration = preferredRecordingDurationMillis(audioDuration, durationMillisFromTranscript(job.Transcript))
+	job.Duration = preferredRecordingDurationMillis(audioDuration, job.AudioDurationMillis, durationMillisFromTranscript(job.Transcript))
 }
 
-func preferredRecordingDurationMillis(audioDuration int64, transcriptDuration int64) int64 {
-	if audioDuration > 0 {
-		return audioDuration
+// populateJobListComputedFields keeps list responses fast and non-blocking.
+// Persisted source duration is authoritative because transcript timing may omit
+// silence removed by VAD. Transcript timing remains a legacy fallback only.
+func populateJobListComputedFields(job *models.TranscriptionJob) {
+	if job == nil {
+		return
 	}
-	if transcriptDuration > 0 {
-		return transcriptDuration
+	if job.AudioPath != "" {
+		if _, statErr := os.Stat(job.AudioPath); statErr == nil {
+			job.HasAudio = true
+		}
+	}
+	job.Duration = preferredRecordingDurationMillis(job.AudioDurationMillis, durationMillisFromTranscript(job.Transcript))
+}
+
+func preferredRecordingDurationMillis(durations ...int64) int64 {
+	for _, duration := range durations {
+		if duration > 0 {
+			return duration
+		}
 	}
 	return 0
 }
@@ -1350,31 +1376,13 @@ func (h *Handler) StartTranscription(c *gin.Context) {
 		return
 	}
 
-	// Update job with parameters
-	job.Parameters = *requestParams
-	job.Diarization = requestParams.Diarize
-	job.Status = models.StatusPending
-
-	// Clear previous results for re-transcription
-	job.Transcript = nil
-	job.Summary = nil
-	job.ErrorMessage = nil
-
-	// Clear stale speaker mappings so re-transcription starts fresh
-	if err := h.speakerMappingRepo.DeleteByJobID(c.Request.Context(), jobID); err != nil {
-		logger.Warn("failed to clear speaker mappings for re-transcription", "job_id", jobID, "error", err)
-	}
-
-	// Save updated job
-	if err := h.jobRepo.Update(c.Request.Context(), job); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job"})
+	if err := h.startJob(c.Request.Context(), jobID, *requestParams); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Enqueue job for transcription
-	if err := h.taskQueue.EnqueueJob(jobID); err != nil {
-		logger.Error("Failed to enqueue job", "job_id", jobID, "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enqueue job"})
+	job, err = h.jobRepo.FindByID(c.Request.Context(), jobID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load queued job"})
 		return
 	}
 
@@ -1476,10 +1484,11 @@ func (h *Handler) getValidatedTranscriptionParams(c *gin.Context, job *models.Tr
 
 	normalizedDiarizeModel, validDiarizeModel := normalizeDiarizeModel(requestParams.DiarizeModel)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		return nil, fmt.Errorf("invalid diarize_model")
 	}
 	requestParams.DiarizeModel = normalizedDiarizeModel
+	h.resolveDiarizationToken(&requestParams)
 	// h.fallbackDiarizationModelIfTokenMissing(&requestParams, fmt.Sprintf("start_transcription job=%s", jobID), h.config.HFToken) // pyannote disabled
 
 	// Validate multi-track compatibility
@@ -1694,6 +1703,9 @@ func (h *Handler) AutoGenerateTranscriptionTitleForJob(ctx context.Context, jobI
 	}
 	if job.Transcript == nil || strings.TrimSpace(*job.Transcript) == "" {
 		logger.Debug("Auto-title skipped: no transcript content", "job_id", jobID)
+		return nil
+	}
+	if !TranscriptAllowsAutomaticTextFollowups(job) {
 		return nil
 	}
 	if !isLikelyDefaultTranscriptionTitle(job) {
@@ -1969,19 +1981,27 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		return "", "", fmt.Errorf("transcript content is required")
 	}
 
-	subject, err := h.generateTranscriptTitleFromLLM(ctx, svc, selectedModel, buildTranscriptTitleSource(*job.Transcript))
-	if err != nil {
-		return "", "", err
-	}
-
 	var currentTitle string
 	if job.Title != nil {
 		currentTitle = strings.TrimSpace(*job.Title)
 	}
 	mappings, _ := h.speakerMappingRepo.ListByJob(ctx, job.ID)
+	speakerEvidence := transcription.TitleSpeakerEvidenceFromTranscript(*job.Transcript, mappings)
+	subject, err := h.generateTranscriptTitleFromLLM(
+		ctx,
+		svc,
+		selectedModel,
+		buildTranscriptTitleSource(*job.Transcript),
+		speakerEvidence,
+	)
+	if err != nil {
+		return "", "", err
+	}
+
 	speakers := transcription.SpeakerTitleNamesFromTranscript(*job.Transcript, mappings)
 	durationMillis := preferredRecordingDurationMillis(
 		durationMillisFromAudio(ctx, job.AudioPath),
+		job.AudioDurationMillis,
 		durationMillisFromTranscript(job.Transcript),
 	)
 	title := transcription.FormatGeneratedArchiveTitle(transcription.GeneratedArchiveTitleInput{
@@ -1992,6 +2012,7 @@ func (h *Handler) generateAndPersistTranscriptionTitle(
 		OriginalFilename: job.OriginalFilename,
 		Transcript:       *job.Transcript,
 		Speakers:         speakers,
+		NarratorCount:    speakerEvidence.EffectiveNarratorCount,
 		DurationMillis:   durationMillis,
 	})
 
@@ -2230,14 +2251,39 @@ func isLikelyDefaultTranscriptionTitle(job *models.TranscriptionJob) bool {
 	if looksLikeAppleVoiceMemoFallbackTitle(title) {
 		return true
 	}
+	// Archive imports initially inherit Apple Voice Memos' source title. Treat
+	// Apple's generic and location-only names as provisional, but only when the
+	// job has archive-import provenance so a matching user-authored title is not
+	// overwritten.
+	if isImportedAppleVoiceMemo(job) && looksLikeProvisionalAppleVoiceMemoTitle(title) {
+		return true
+	}
 
 	return false
 }
 
 var appleVoiceMemoFallbackTitleRE = regexp.MustCompile(`^\d{6} \d{2}:\d{2} 20\d{6} \d{6}-[0-9A-Fa-f]{8,}$`)
+var appleVoiceMemoSourceFilenameRE = regexp.MustCompile(`^20\d{6} \d{6}(?:-[0-9A-Fa-f]{8,})?\.[^.]+$`)
+var appleVoiceMemoGenericTitleRE = regexp.MustCompile(`(?i)^(?:new recording|neue aufnahme|nueva grabaci[oó]n|recording)(?:\s+\d+)?(?:\s+\[[^\]]+\])?$`)
 
 func looksLikeAppleVoiceMemoFallbackTitle(title string) bool {
 	return appleVoiceMemoFallbackTitleRE.MatchString(strings.TrimSpace(title))
+}
+
+func isImportedAppleVoiceMemo(job *models.TranscriptionJob) bool {
+	if job == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(job.ID)), "archive-") {
+		return false
+	}
+
+	originalFilename := strings.TrimSpace(filepath.Base(job.OriginalFilename))
+	audioPath := strings.ToLower(filepath.ToSlash(strings.TrimSpace(job.AudioPath)))
+	return appleVoiceMemoSourceFilenameRE.MatchString(originalFilename) ||
+		strings.Contains(audioPath, "/voice notes archive/")
+}
+
+func looksLikeProvisionalAppleVoiceMemoTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	return appleVoiceMemoGenericTitleRE.MatchString(title) || transcription.IsArchiveSourceLocation(title)
 }
 
 // looksLikeTimestamp returns true when the title is purely a date/time stamp
@@ -2262,12 +2308,14 @@ func looksLikeTimestamp(s string) bool {
 // generateTranscriptTitleFromLLM generates a title optimised for audio transcripts
 // (conversations, phone calls, voice memos, interviews, podcasts, etc.) rather than
 // the chat-session prompt used by generateTitleFromLLM.
-func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string) (string, error) {
-	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations — phone calls, voice memos, casual chats, interviews, brainstorms, podcasts, and similar recordings. They are NOT corporate meeting minutes.
+func (h *Handler) generateTranscriptTitleFromLLM(ctx context.Context, svc llm.Service, model, transcript string, evidence transcription.TitleSpeakerEvidence) (string, error) {
+	prompt := `You are an expert at creating concise, descriptive titles for audio transcripts. These are everyday conversations, phone calls, voice memos, personal reflections, interviews, dreams, brainstorms, podcasts, and similar recordings. They are not corporate meeting minutes.
 
 Generate a short subject title (4-8 words) that captures the main idea of the recording.
 
 Rules:
+- Identify the recording's dominant throughline across the complete transcript before choosing words. Do not title it after an incidental example, brief tangent, quoted phrase, or isolated opening/closing fragment
+- When several topics appear, name the central situation, relationship dynamic, or purpose that best explains the recording as a whole
 - Use Title Case (Every Important Word Capitalized)
 - Lead with the topic or subject, not a verb
 - Do not include speaker names unless they are essential to the subject; speaker brackets are added separately
@@ -2278,7 +2326,10 @@ Rules:
 - Never use generic labels like "Brief Note", "Personal Issue", "Conversation", "Chat", "Discussion", "Audio Recording"
 - Never return raw file names such as "20260724 183644-60C99703"
 - Never return hallucinated filler such as "Thank You"
-- If this is primarily a personal dream account, begin the subject with "Dream: "; Plume converts that into its visible (dream) type marker
+- A dream diary is a solo first-person account of the narrator's own remembered dream. Quoted dialogue and dream characters remain part of that one narration
+- A conversation that merely mentions, interprets, or discusses dreams is not a dream diary
+- If recording evidence reports more than one narrator, never begin the subject with "Dream: "
+- For a genuine dream diary, begin the subject with "Dream: " and title its central scene, event, transformation, or image rather than using a generic label such as "Dream Analysis"
 
 Examples:
 - "Jake's Birthday Party Planning"
@@ -2292,11 +2343,19 @@ Examples:
 
 Return ONLY the title, nothing else.`
 
+	evidenceBlock := fmt.Sprintf(
+		"Recording evidence: acoustic_speakers=%d; effective_narrators=%d; unresolved_speakers=%d; confirmed_names=%s.",
+		evidence.AcousticSpeakerCount,
+		evidence.EffectiveNarratorCount,
+		evidence.UnresolvedSpeakerCount,
+		strings.Join(evidence.ConfirmedNames, ", "),
+	)
+
 	var lastRejected string
 	for attempt := 0; attempt < 2; attempt++ {
-		userContent := transcript
+		userContent := evidenceBlock + "\n\n--- TRANSCRIPT ---\n" + transcript + "\n--- END TRANSCRIPT ---"
 		if attempt > 0 {
-			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, or filename-like. Generate a specific subject title from this transcript instead.\n\n%s", lastRejected, transcript)
+			userContent = fmt.Sprintf("The previous title candidate %q was rejected because it was generic, filler, filename-like, or not representative of the recording. Generate a specific title for the dominant throughline instead.\n\n%s\n\n--- TRANSCRIPT ---\n%s\n--- END TRANSCRIPT ---", lastRejected, evidenceBlock, transcript)
 		}
 
 		chatMsgs := []llm.ChatMessage{
@@ -2330,15 +2389,27 @@ func buildTranscriptTitleSource(transcript string) string {
 		return trimmed
 	}
 
-	// Keep title generation prompt compact for smaller context-window models.
-	const sectionChars = 3000
-	if len(trimmed) <= sectionChars*2 {
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if strings.HasPrefix(trimmed, "{") && json.Unmarshal([]byte(trimmed), &payload) == nil && strings.TrimSpace(payload.Text) != "" {
+		trimmed = strings.Join(strings.Fields(payload.Text), " ")
+	}
+
+	// Keep the prompt compact for local models while sampling the beginning,
+	// middle, and end. Head/tail-only sampling overweights greetings and
+	// wrap-up tangents in long personal recordings.
+	const sectionChars = 2400
+	runes := []rune(trimmed)
+	if len(runes) <= sectionChars*3 {
 		return trimmed
 	}
 
-	head := strings.TrimSpace(trimmed[:sectionChars])
-	tail := strings.TrimSpace(trimmed[len(trimmed)-sectionChars:])
-	return head + "\n...\n" + tail
+	head := strings.TrimSpace(string(runes[:sectionChars]))
+	midStart := len(runes)/2 - sectionChars/2
+	middle := strings.TrimSpace(string(runes[midStart : midStart+sectionChars]))
+	tail := strings.TrimSpace(string(runes[len(runes)-sectionChars:]))
+	return "[BEGINNING]\n" + head + "\n\n[MIDDLE]\n" + middle + "\n\n[END]\n" + tail
 }
 
 func normalizeGeneratedTranscriptTitle(title string) string {
@@ -2533,7 +2604,7 @@ func (h *Handler) GetJobExecutionData(c *gin.Context) {
 func (h *Handler) GetAudioFile(c *gin.Context) {
 	jobID := c.Param("id")
 
-	job, err := h.jobRepo.FindByID(c.Request.Context(), jobID)
+	job, err := h.jobRepo.FindAudioSourceByID(c.Request.Context(), jobID)
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
@@ -2542,7 +2613,6 @@ func (h *Handler) GetAudioFile(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get job"})
 		return
 	}
-
 	logger.Debug("GetAudioFile", "job_id", jobID, "status", job.Status, "audio_path", job.AudioPath)
 
 	// For multi-track jobs, prefer merged audio if available
@@ -2573,8 +2643,15 @@ func (h *Handler) GetAudioFile(c *gin.Context) {
 		return
 	}
 
+	playbackPath, err := localPlaybackPath(h.config.TempDir, audioPath, job.ArtifactDir)
+	if err != nil {
+		logger.Error("failed to prepare audio for playback", "job_id", jobID, "path", audioPath, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare audio for playback"})
+		return
+	}
+
 	// Set appropriate content type based on file extension
-	ext := filepath.Ext(job.AudioPath)
+	ext := filepath.Ext(playbackPath)
 	switch ext {
 	case ".mp3":
 		c.Header("Content-Type", "audio/mpeg")
@@ -2613,7 +2690,7 @@ func (h *Handler) GetAudioFile(c *gin.Context) {
 	c.Header("Accept-Ranges", "bytes")
 
 	// Open the file
-	file, err := os.Open(audioPath)
+	file, err := os.Open(playbackPath)
 	if err != nil {
 		fmt.Printf("ERROR: Failed to open audio file: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open audio file"})
@@ -2630,7 +2707,7 @@ func (h *Handler) GetAudioFile(c *gin.Context) {
 	}
 
 	// Use http.ServeContent for efficient streaming and range request support
-	http.ServeContent(c.Writer, c.Request, filepath.Base(audioPath), fileInfo.ModTime(), file)
+	http.ServeContent(c.Writer, c.Request, filepath.Base(playbackPath), fileInfo.ModTime(), file)
 }
 
 // @Summary Login
@@ -3371,8 +3448,8 @@ func normalizeDiarizeModel(rawModel string) (string, bool) {
 	switch model {
 	case "", transcription.DiarizeSortformer:
 		return transcription.DiarizeSortformer, true
-	// case transcription.ModelPyannote, transcription.ModelDiarization31, transcription.ModelDiarizationCommunity1:
-	// 	return transcription.ModelPyannote, true
+	case transcription.ModelPyannote, transcription.ModelDiarizationCommunity1:
+		return transcription.ModelPyannote, true
 	case transcription.DiarizeSherpaOnnx:
 		return transcription.DiarizeSherpaOnnx, true
 	default:
@@ -3764,7 +3841,7 @@ func (h *Handler) SubmitQuickTranscription(c *gin.Context) {
 
 	normalizedDiarizeModel, validDiarizeModel := normalizeDiarizeModel(params.DiarizeModel)
 	if !validDiarizeModel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'nvidia_sortformer' or 'sherpa-onnx'"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid diarize_model. Must be 'pyannote', 'nvidia_sortformer' or 'sherpa-onnx'"})
 		return
 	}
 	params.DiarizeModel = normalizedDiarizeModel
@@ -3921,9 +3998,10 @@ func (h *Handler) DownloadFromYouTube(c *gin.Context) {
 
 	// Create transcription record
 	job := models.TranscriptionJob{
-		ID:        jobID,
-		AudioPath: actualFilePath,
-		Status:    models.StatusUploaded,
+		ID:                  jobID,
+		AudioPath:           actualFilePath,
+		Status:              models.StatusUploaded,
+		AudioDurationMillis: durationMillisFromAudio(c.Request.Context(), actualFilePath),
 	}
 
 	// Set title

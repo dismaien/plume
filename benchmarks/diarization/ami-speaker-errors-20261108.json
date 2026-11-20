@@ -1,0 +1,1001 @@
+{
+  "date": "2026-11-08",
+  "kind": "read-only rescore of existing outputs; no new inference or accuracy gain",
+  "dataset": "AMI IS1009a Mix-Headset",
+  "split": "tuning",
+  "scorer_sha256": "c23baad150cb18a1c5a3b60c8aaed3ebf6724248540bb1fe07b253c9e586b858",
+  "policy": "one global optimal identity permutation per excerpt; region precision and recall weighted by distinct speaker-time; overlap includes simultaneous reference people",
+  "limitations": [
+    "One public meeting; two-speakers is nested in four-opening; do not pool durations.",
+    "Oracle manual words are not ASR output.",
+    "Literal unknown-label corrections did not change these existing outputs or their original DER.",
+    "These scores diagnose current failures; no new engine result or installed accuracy improvement."
+  ],
+  "results": [
+    {
+      "excerpt": "two-speakers",
+      "engine": "community1-auto",
+      "candidate_sha256": "146b667e90aa9901b0f1dfefbbfd415784e10a64a4e4d01cc913a814d63b9c49",
+      "reference_sha256": {
+        "rttm": "cc31fb407357e5c0710cb83ecfce4135968149f7677b68e3d37a41ba45e99125",
+        "uem": "86adb8f93e94558eef6160e53479c17087331c06fd592ff251e6871e46d3aef7"
+      },
+      "strict_der": 0.09818870436105505,
+      "brief_turn_recall": 0.20362787356321346,
+      "worst_speaker_recall": 0.20362787356321346,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 1.740000000000002,
+          "hypothesis_speaker_seconds": 1.047156249999997,
+          "correct_speaker_seconds": 1.047156249999997,
+          "recall": 0.6018139367816068,
+          "precision": 1.0,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0.870000000000001,
+              "correct_seconds": 0.870000000000001,
+              "recall": 1.0,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0.1771562499999959,
+              "correct_seconds": 0.1771562499999959,
+              "recall": 0.20362787356321346,
+              "precision": 1.0
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 37.699999999999996,
+          "hypothesis_speaker_seconds": 35.95971875,
+          "correct_speaker_seconds": 35.239999999999995,
+          "recall": 0.9347480106100795,
+          "precision": 0.9799854177113105,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 37.699999999999996,
+              "hypothesis_seconds": 35.833125,
+              "correct_seconds": 35.239999999999995,
+              "recall": 0.9347480106100795,
+              "precision": 0.9834475781835939
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "sortformer-heads",
+      "candidate_sha256": "e1a2659c0fbfdfad649edd05d897a11bd6af7f9c1af7cba968b8904a13ab70fb",
+      "reference_sha256": {
+        "rttm": "cc31fb407357e5c0710cb83ecfce4135968149f7677b68e3d37a41ba45e99125",
+        "uem": "86adb8f93e94558eef6160e53479c17087331c06fd592ff251e6871e46d3aef7"
+      },
+      "strict_der": 0.16708924949290063,
+      "brief_turn_recall": 1.0,
+      "worst_speaker_recall": 0.8426238008815142,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 1.740000000000002,
+          "hypothesis_speaker_seconds": 1.1400000000000041,
+          "correct_speaker_seconds": 1.1400000000000041,
+          "recall": 0.6551724137931051,
+          "precision": 1.0,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0.2700000000000031,
+              "correct_seconds": 0.2700000000000031,
+              "recall": 0.3103448275862101,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0.870000000000001,
+              "correct_seconds": 0.870000000000001,
+              "recall": 1.0,
+              "precision": 1.0
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 37.699999999999996,
+          "hypothesis_speaker_seconds": 32.92999999999999,
+          "correct_speaker_seconds": 32.22999999999999,
+          "recall": 0.8549071618037134,
+          "precision": 0.9787427877315517,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 37.699999999999996,
+              "hypothesis_seconds": 32.57999999999999,
+              "correct_seconds": 32.22999999999999,
+              "recall": 0.8549071618037134,
+              "precision": 0.9892572130141191
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "two-speakers",
+      "engine": "sortformer-recluster",
+      "candidate_sha256": "8fbb9a5be33d3e281a433d10029ec00d3ce941d0a4f0df160c6dd3778d0b5635",
+      "reference_sha256": {
+        "rttm": "cc31fb407357e5c0710cb83ecfce4135968149f7677b68e3d37a41ba45e99125",
+        "uem": "86adb8f93e94558eef6160e53479c17087331c06fd592ff251e6871e46d3aef7"
+      },
+      "strict_der": 0.22489858012170388,
+      "brief_turn_recall": 0.0,
+      "worst_speaker_recall": 0.0,
+      "missed_speakers": [
+        "FIO089"
+      ],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 1.740000000000002,
+          "hypothesis_speaker_seconds": 0.2700000000000031,
+          "correct_speaker_seconds": 0.2700000000000031,
+          "recall": 0.15517241379310506,
+          "precision": 1.0,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0.2700000000000031,
+              "correct_seconds": 0.2700000000000031,
+              "recall": 0.3103448275862101,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 0.870000000000001,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 37.699999999999996,
+          "hypothesis_speaker_seconds": 32.57999999999999,
+          "correct_speaker_seconds": 30.649999999999995,
+          "recall": 0.8129973474801061,
+          "precision": 0.9407612031921425,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 37.699999999999996,
+              "hypothesis_seconds": 30.919999999999995,
+              "correct_seconds": 30.649999999999995,
+              "recall": 0.8129973474801061,
+              "precision": 0.991267787839586
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "community1-auto",
+      "candidate_sha256": "1b297590307dfc823f57233b6526aa82a887d0c84e6ccb7ca9f132b209e56ee4",
+      "reference_sha256": {
+        "rttm": "9dde2a05212fb37123e48296c577fb7c4994e1d224af9c12697818a6cb89f1a8",
+        "uem": "5b8cc487725bde55f934aad9aeeb39519feace34eadeaeb275eee1c09fb5949d"
+      },
+      "strict_der": 0.1882487397449839,
+      "brief_turn_recall": 0.535846920289848,
+      "worst_speaker_recall": 0.7956233085250277,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 6.74000000000008,
+          "hypothesis_speaker_seconds": 4.587437500000007,
+          "correct_speaker_seconds": 4.260906250000019,
+          "recall": 0.6321819362017758,
+          "precision": 0.9288205561383698,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 3.37000000000004,
+              "hypothesis_seconds": 1.8965312500000238,
+              "correct_seconds": 1.8965312500000238,
+              "recall": 0.5627689169139469,
+              "precision": 1.0
+            },
+            "FIO084": {
+              "reference_seconds": 0.14000000000000057,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO087": {
+              "reference_seconds": 1.0100000000000051,
+              "hypothesis_seconds": 1.0100000000000051,
+              "correct_seconds": 1.0100000000000051,
+              "recall": 1.0,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 2.2200000000000344,
+              "hypothesis_seconds": 1.6809062499999783,
+              "correct_seconds": 1.3543749999999903,
+              "recall": 0.610078828828815,
+              "precision": 0.8057409507520171
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 94.42999999999998,
+          "hypothesis_speaker_seconds": 102.28193749999994,
+          "correct_speaker_seconds": 88.18499999999997,
+          "recall": 0.9338663560309223,
+          "precision": 0.8621756896226181,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 59.979999999999976,
+              "hypothesis_seconds": 61.30034374999995,
+              "correct_seconds": 54.37971874999998,
+              "recall": 0.9066308561187063,
+              "precision": 0.8871029985048008
+            },
+            "FIO084": {
+              "reference_seconds": 16.090000000000003,
+              "hypothesis_seconds": 16.453125000000014,
+              "correct_seconds": 16.090000000000003,
+              "recall": 1.0,
+              "precision": 0.9779297245963906
+            },
+            "FIO087": {
+              "reference_seconds": 13.189999999999998,
+              "hypothesis_seconds": 14.633124999999978,
+              "correct_seconds": 13.189999999999998,
+              "recall": 1.0,
+              "precision": 0.9013795754495377
+            },
+            "FIO089": {
+              "reference_seconds": 5.170000000000009,
+              "hypothesis_seconds": 9.895343750000002,
+              "correct_seconds": 4.525281249999999,
+              "recall": 0.8752961798839441,
+              "precision": 0.45731420396588024
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "sortformer-heads",
+      "candidate_sha256": "4c25076d914c43cc8446955d27ce1b68458274ece536e09a90e2072d925df7e4",
+      "reference_sha256": {
+        "rttm": "9dde2a05212fb37123e48296c577fb7c4994e1d224af9c12697818a6cb89f1a8",
+        "uem": "5b8cc487725bde55f934aad9aeeb39519feace34eadeaeb275eee1c09fb5949d"
+      },
+      "strict_der": 0.2756746070969651,
+      "brief_turn_recall": 0.8429951690821259,
+      "worst_speaker_recall": 0.02112676056338108,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 6.74000000000008,
+          "hypothesis_speaker_seconds": 4.270000000000046,
+          "correct_speaker_seconds": 4.050000000000047,
+          "recall": 0.6008902077151334,
+          "precision": 0.9484777517564411,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 3.37000000000004,
+              "hypothesis_seconds": 1.6500000000000057,
+              "correct_seconds": 1.6500000000000057,
+              "recall": 0.489614243323438,
+              "precision": 1.0
+            },
+            "FIO084": {
+              "reference_seconds": 0.14000000000000057,
+              "hypothesis_seconds": 0.21999999999999886,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": 0.0
+            },
+            "FIO087": {
+              "reference_seconds": 1.0100000000000051,
+              "hypothesis_seconds": 0.30000000000001137,
+              "correct_seconds": 0.30000000000001137,
+              "recall": 0.2970297029703068,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 2.2200000000000344,
+              "hypothesis_seconds": 2.10000000000003,
+              "correct_seconds": 2.10000000000003,
+              "recall": 0.9459459459459447,
+              "precision": 1.0
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 94.42999999999998,
+          "hypothesis_speaker_seconds": 85.45000000000002,
+          "correct_speaker_seconds": 70.76000000000005,
+          "recall": 0.749338134067564,
+          "precision": 0.828086600351083,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 59.979999999999976,
+              "hypothesis_seconds": 52.13000000000004,
+              "correct_seconds": 51.28000000000003,
+              "recall": 0.8549516505501842,
+              "precision": 0.9836946096297716
+            },
+            "FIO084": {
+              "reference_seconds": 16.090000000000003,
+              "hypothesis_seconds": 26.679999999999993,
+              "correct_seconds": 14.310000000000002,
+              "recall": 0.8893722809198259,
+              "precision": 0.5363568215892056
+            },
+            "FIO087": {
+              "reference_seconds": 13.189999999999998,
+              "hypothesis_seconds": 0.7599999999999909,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": 0.0
+            },
+            "FIO089": {
+              "reference_seconds": 5.170000000000009,
+              "hypothesis_seconds": 5.879999999999988,
+              "correct_seconds": 5.170000000000009,
+              "recall": 1.0,
+              "precision": 0.8792517006802754
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-opening",
+      "engine": "sortformer-recluster",
+      "candidate_sha256": "99dd8cf60a0bf3cdfde194476389e5115d9ef7791aae68831e1b59f939e91447",
+      "reference_sha256": {
+        "rttm": "9dde2a05212fb37123e48296c577fb7c4994e1d224af9c12697818a6cb89f1a8",
+        "uem": "5b8cc487725bde55f934aad9aeeb39519feace34eadeaeb275eee1c09fb5949d"
+      },
+      "strict_der": 0.1836512800237221,
+      "brief_turn_recall": 0.8429951690821259,
+      "worst_speaker_recall": 0.810576164167325,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 6.74000000000008,
+          "hypothesis_speaker_seconds": 3.7500000000000355,
+          "correct_speaker_seconds": 3.7500000000000355,
+          "recall": 0.5563798219584556,
+          "precision": 1.0,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 3.37000000000004,
+              "hypothesis_seconds": 1.6500000000000057,
+              "correct_seconds": 1.6500000000000057,
+              "recall": 0.489614243323438,
+              "precision": 1.0
+            },
+            "FIO084": {
+              "reference_seconds": 0.14000000000000057,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO087": {
+              "reference_seconds": 1.0100000000000051,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO089": {
+              "reference_seconds": 2.2200000000000344,
+              "hypothesis_seconds": 2.10000000000003,
+              "correct_seconds": 2.10000000000003,
+              "recall": 0.9459459459459447,
+              "precision": 1.0
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 94.42999999999998,
+          "hypothesis_speaker_seconds": 81.95000000000002,
+          "correct_speaker_seconds": 80.29000000000005,
+          "recall": 0.850259451445516,
+          "precision": 0.9797437461866996,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 59.979999999999976,
+              "hypothesis_seconds": 50.47000000000004,
+              "correct_seconds": 49.700000000000045,
+              "recall": 0.8286095365121718,
+              "precision": 0.9847434119278781
+            },
+            "FIO084": {
+              "reference_seconds": 16.090000000000003,
+              "hypothesis_seconds": 13.359999999999985,
+              "correct_seconds": 13.22999999999999,
+              "recall": 0.8222498446239892,
+              "precision": 0.9902694610778446
+            },
+            "FIO087": {
+              "reference_seconds": 13.189999999999998,
+              "hypothesis_seconds": 12.239999999999995,
+              "correct_seconds": 12.189999999999998,
+              "recall": 0.9241849886277482,
+              "precision": 0.9959150326797388
+            },
+            "FIO089": {
+              "reference_seconds": 5.170000000000009,
+              "hypothesis_seconds": 5.879999999999988,
+              "correct_seconds": 5.170000000000009,
+              "recall": 1.0,
+              "precision": 0.8792517006802754
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "community1-auto",
+      "candidate_sha256": "91184787134095bb5b294e9af9dd18d55db668b07aa677cf2090c1496d05d948",
+      "reference_sha256": {
+        "rttm": "659608cd5a66536f939fc47f509803249e5b1a13ccc0ddd5de04a25d3117ac5c",
+        "uem": "eda0e8569a05887f22d91a46a06df9f1b4144224153115eea062d901210c2390"
+      },
+      "strict_der": 0.2805687709030103,
+      "brief_turn_recall": 0.7015624999999974,
+      "worst_speaker_recall": 0.10871624564459968,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 35.24999999999999,
+          "hypothesis_speaker_seconds": 26.761500000000012,
+          "correct_speaker_seconds": 20.462562499999958,
+          "recall": 0.5804982269503536,
+          "precision": 0.7646268893746594,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 14.799999999999986,
+              "hypothesis_seconds": 14.514781249999999,
+              "correct_seconds": 13.54846874999999,
+              "recall": 0.9154370777027029,
+              "precision": 0.933425624309701
+            },
+            "FIO084": {
+              "reference_seconds": 4.280000000000008,
+              "hypothesis_seconds": 0.32784375000000665,
+              "correct_seconds": 0.3200000000000003,
+              "recall": 0.07476635514018684,
+              "precision": 0.9760747307215519
+            },
+            "FIO087": {
+              "reference_seconds": 8.340000000000003,
+              "hypothesis_seconds": 2.9436874999999816,
+              "correct_seconds": 2.9436874999999816,
+              "recall": 0.35296013189448205,
+              "precision": 1.0
+            },
+            "FIO089": {
+              "reference_seconds": 7.829999999999995,
+              "hypothesis_seconds": 6.034500000000019,
+              "correct_seconds": 3.6504062499999854,
+              "recall": 0.4662076947637277,
+              "precision": 0.6049227359350359
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 114.24999999999999,
+          "hypothesis_speaker_seconds": 116.62537499999996,
+          "correct_speaker_seconds": 94.141875,
+          "recall": 0.8239989059080963,
+          "precision": 0.8072160539676724,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 71.82000000000001,
+              "hypothesis_seconds": 71.34521874999997,
+              "correct_seconds": 67.75340624999998,
+              "recall": 0.9433779761904758,
+              "precision": 0.9496558765544469
+            },
+            "FIO084": {
+              "reference_seconds": 1.4599999999999866,
+              "hypothesis_seconds": 1.8996562499999996,
+              "correct_seconds": 0.3040312500000013,
+              "recall": 0.20824058219178362,
+              "precision": 0.16004540295119254
+            },
+            "FIO087": {
+              "reference_seconds": 22.659999999999982,
+              "hypothesis_seconds": 15.534437500000024,
+              "correct_seconds": 15.302562499999993,
+              "recall": 0.6753116725507504,
+              "precision": 0.985073485924416
+            },
+            "FIO089": {
+              "reference_seconds": 18.310000000000002,
+              "hypothesis_seconds": 14.333624999999984,
+              "correct_seconds": 10.781875000000007,
+              "recall": 0.588851720371382,
+              "precision": 0.7522085306403662
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "sortformer-heads",
+      "candidate_sha256": "a9e38cea6c01e9547044c6cd8897c974ac4955371da4b3a6702d1a3e3bf06d37",
+      "reference_sha256": {
+        "rttm": "659608cd5a66536f939fc47f509803249e5b1a13ccc0ddd5de04a25d3117ac5c",
+        "uem": "eda0e8569a05887f22d91a46a06df9f1b4144224153115eea062d901210c2390"
+      },
+      "strict_der": 0.30207357859531797,
+      "brief_turn_recall": 0.6640624999999942,
+      "worst_speaker_recall": 0.4878048780487829,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 35.24999999999999,
+          "hypothesis_speaker_seconds": 22.669999999999934,
+          "correct_speaker_seconds": 19.159999999999958,
+          "recall": 0.543546099290779,
+          "precision": 0.8451698279664761,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 14.799999999999986,
+              "hypothesis_seconds": 11.939999999999959,
+              "correct_seconds": 11.459999999999962,
+              "recall": 0.7743243243243224,
+              "precision": 0.9597989949748745
+            },
+            "FIO084": {
+              "reference_seconds": 4.280000000000008,
+              "hypothesis_seconds": 4.3500000000000085,
+              "correct_seconds": 2.250000000000007,
+              "recall": 0.5257009345794399,
+              "precision": 0.5172413793103454
+            },
+            "FIO087": {
+              "reference_seconds": 8.340000000000003,
+              "hypothesis_seconds": 2.019999999999982,
+              "correct_seconds": 1.5600000000000023,
+              "recall": 0.1870503597122304,
+              "precision": 0.7722772277227804
+            },
+            "FIO089": {
+              "reference_seconds": 7.829999999999995,
+              "hypothesis_seconds": 4.359999999999985,
+              "correct_seconds": 3.8899999999999864,
+              "recall": 0.4968071519795644,
+              "precision": 0.8922018348623852
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 114.24999999999999,
+          "hypothesis_speaker_seconds": 93.0,
+          "correct_speaker_seconds": 86.82999999999998,
+          "recall": 0.76,
+          "precision": 0.9336559139784945,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 71.82000000000001,
+              "hypothesis_seconds": 65.12000000000002,
+              "correct_seconds": 61.67000000000004,
+              "recall": 0.8586744639376223,
+              "precision": 0.9470208845208848
+            },
+            "FIO084": {
+              "reference_seconds": 1.4599999999999866,
+              "hypothesis_seconds": 2.25,
+              "correct_seconds": 0.5500000000000043,
+              "recall": 0.3767123287671297,
+              "precision": 0.24444444444444635
+            },
+            "FIO087": {
+              "reference_seconds": 22.659999999999982,
+              "hypothesis_seconds": 15.259999999999962,
+              "correct_seconds": 15.139999999999958,
+              "recall": 0.6681376875551619,
+              "precision": 0.9921363040629092
+            },
+            "FIO089": {
+              "reference_seconds": 18.310000000000002,
+              "hypothesis_seconds": 10.370000000000019,
+              "correct_seconds": 9.469999999999992,
+              "recall": 0.5172037138175855,
+              "precision": 0.9132111861137874
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-middle",
+      "engine": "sortformer-recluster",
+      "candidate_sha256": "101e0b7d1f8d8afd8ecac7ca2fe78adf52da87c1bfd39f275f178379b64cb75a",
+      "reference_sha256": {
+        "rttm": "659608cd5a66536f939fc47f509803249e5b1a13ccc0ddd5de04a25d3117ac5c",
+        "uem": "eda0e8569a05887f22d91a46a06df9f1b4144224153115eea062d901210c2390"
+      },
+      "strict_der": 0.35591973244147196,
+      "brief_turn_recall": 0.21093749999999453,
+      "worst_speaker_recall": 0.0,
+      "missed_speakers": [
+        "FIO084"
+      ],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 35.24999999999999,
+          "hypothesis_speaker_seconds": 14.129999999999914,
+          "correct_speaker_seconds": 13.189999999999937,
+          "recall": 0.37418439716311885,
+          "precision": 0.9334748761500367,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 14.799999999999986,
+              "hypothesis_seconds": 10.599999999999934,
+              "correct_seconds": 10.38999999999994,
+              "recall": 0.7020270270270236,
+              "precision": 0.9801886792452835
+            },
+            "FIO084": {
+              "reference_seconds": 4.280000000000008,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO087": {
+              "reference_seconds": 8.340000000000003,
+              "hypothesis_seconds": 2.019999999999982,
+              "correct_seconds": 1.5600000000000023,
+              "recall": 0.1870503597122304,
+              "precision": 0.7722772277227804
+            },
+            "FIO089": {
+              "reference_seconds": 7.829999999999995,
+              "hypothesis_seconds": 1.2399999999999949,
+              "correct_seconds": 1.2399999999999949,
+              "recall": 0.15836526181353713,
+              "precision": 1.0
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 114.24999999999999,
+          "hypothesis_speaker_seconds": 87.37,
+          "correct_speaker_seconds": 83.97,
+          "recall": 0.7349671772428885,
+          "precision": 0.9610850406317958,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 71.82000000000001,
+              "hypothesis_seconds": 63.65000000000005,
+              "correct_seconds": 61.67000000000004,
+              "recall": 0.8586744639376223,
+              "precision": 0.9688923802042418
+            },
+            "FIO084": {
+              "reference_seconds": 1.4599999999999866,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO087": {
+              "reference_seconds": 22.659999999999982,
+              "hypothesis_seconds": 15.259999999999962,
+              "correct_seconds": 15.139999999999958,
+              "recall": 0.6681376875551619,
+              "precision": 0.9921363040629092
+            },
+            "FIO089": {
+              "reference_seconds": 18.310000000000002,
+              "hypothesis_seconds": 7.240000000000002,
+              "correct_seconds": 7.160000000000004,
+              "recall": 0.3910431458219554,
+              "precision": 0.9889502762430942
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "community1-auto",
+      "candidate_sha256": "3c22838f4f20fb6ff67c480dc8afb864607b99cbed0540f509bc0778f1fb4c9f",
+      "reference_sha256": {
+        "rttm": "47933ce32e297244ef6dd86cb0f86151d35d1cf7f7bf35b75b79506fcce58d5f",
+        "uem": "f9935a0b40f63bcbd5b0d90c9c23357f592eeffd23862ca839b33586224e49e5"
+      },
+      "strict_der": 0.14283465927572397,
+      "brief_turn_recall": 0.31585526315789375,
+      "worst_speaker_recall": 0.0,
+      "missed_speakers": [
+        "FIO087"
+      ],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 41.00000000000014,
+          "hypothesis_speaker_seconds": 33.43465625000008,
+          "correct_speaker_seconds": 28.99306250000008,
+          "recall": 0.707147865853658,
+          "precision": 0.867155991771263,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 18.620000000000076,
+              "hypothesis_seconds": 18.823468750000075,
+              "correct_seconds": 17.948750000000082,
+              "recall": 0.9639500537056933,
+              "precision": 0.9535304166507573
+            },
+            "FIO084": {
+              "reference_seconds": 10.020000000000032,
+              "hypothesis_seconds": 5.9961874999999765,
+              "correct_seconds": 3.8402812499999754,
+              "recall": 0.3832616017964035,
+              "precision": 0.640453830037835
+            },
+            "FIO087": {
+              "reference_seconds": 2.030000000000001,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO089": {
+              "reference_seconds": 10.330000000000034,
+              "hypothesis_seconds": 8.61500000000003,
+              "correct_seconds": 7.20403125000002,
+              "recall": 0.6973892787996124,
+              "precision": 0.8362195298897266
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 143.45999999999992,
+          "hypothesis_speaker_seconds": 143.51659374999997,
+          "correct_speaker_seconds": 135.49812499999996,
+          "recall": 0.9445010804405412,
+          "precision": 0.9441286297250905,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 113.24999999999991,
+              "hypothesis_seconds": 112.56528124999998,
+              "correct_seconds": 108.64284374999997,
+              "recall": 0.9593187086092719,
+              "precision": 0.9651541091849756
+            },
+            "FIO084": {
+              "reference_seconds": 6.749999999999993,
+              "hypothesis_seconds": 8.92131250000001,
+              "correct_seconds": 6.209093750000008,
+              "recall": 0.9198657407407429,
+              "precision": 0.6959843352645703
+            },
+            "FIO087": {
+              "reference_seconds": 0.8700000000000045,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO089": {
+              "reference_seconds": 22.58999999999999,
+              "hypothesis_seconds": 22.029999999999983,
+              "correct_seconds": 20.646187499999975,
+              "recall": 0.9139525232403711,
+              "precision": 0.9371850885156601
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "sortformer-heads",
+      "candidate_sha256": "1bfb1a8a8e41fd97e4a6bc0742f6edb06be469d43c43aa933c2282f68c3f1048",
+      "reference_sha256": {
+        "rttm": "47933ce32e297244ef6dd86cb0f86151d35d1cf7f7bf35b75b79506fcce58d5f",
+        "uem": "f9935a0b40f63bcbd5b0d90c9c23357f592eeffd23862ca839b33586224e49e5"
+      },
+      "strict_der": 0.17505150168058092,
+      "brief_turn_recall": 0.8568421052631554,
+      "worst_speaker_recall": 0.7233154442456763,
+      "missed_speakers": [],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 41.00000000000014,
+          "hypothesis_speaker_seconds": 31.89000000000007,
+          "correct_speaker_seconds": 31.37000000000006,
+          "recall": 0.765121951219511,
+          "precision": 0.9836939479460644,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 18.620000000000076,
+              "hypothesis_seconds": 14.960000000000052,
+              "correct_seconds": 14.960000000000052,
+              "recall": 0.8034371643394195,
+              "precision": 1.0
+            },
+            "FIO084": {
+              "reference_seconds": 10.020000000000032,
+              "hypothesis_seconds": 5.460000000000001,
+              "correct_seconds": 5.460000000000001,
+              "recall": 0.544910179640717,
+              "precision": 1.0
+            },
+            "FIO087": {
+              "reference_seconds": 2.030000000000001,
+              "hypothesis_seconds": 1.7199999999999989,
+              "correct_seconds": 1.5699999999999932,
+              "recall": 0.7733990147783213,
+              "precision": 0.9127906976744152
+            },
+            "FIO089": {
+              "reference_seconds": 10.330000000000034,
+              "hypothesis_seconds": 9.750000000000021,
+              "correct_seconds": 9.380000000000017,
+              "recall": 0.9080348499515959,
+              "precision": 0.9620512820512817
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 143.45999999999992,
+          "hypothesis_speaker_seconds": 132.5999999999999,
+          "correct_speaker_seconds": 126.48999999999995,
+          "recall": 0.88170918722989,
+          "precision": 0.9539215686274513,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 113.24999999999991,
+              "hypothesis_seconds": 99.98999999999997,
+              "correct_seconds": 98.95999999999995,
+              "recall": 0.8738189845474615,
+              "precision": 0.9896989698969896
+            },
+            "FIO084": {
+              "reference_seconds": 6.749999999999993,
+              "hypothesis_seconds": 8.68999999999999,
+              "correct_seconds": 6.670000000000009,
+              "recall": 0.9881481481481504,
+              "precision": 0.767548906789415
+            },
+            "FIO087": {
+              "reference_seconds": 0.8700000000000045,
+              "hypothesis_seconds": 1.7800000000000047,
+              "correct_seconds": 0.8700000000000045,
+              "recall": 1.0,
+              "precision": 0.4887640449438215
+            },
+            "FIO089": {
+              "reference_seconds": 22.58999999999999,
+              "hypothesis_seconds": 22.139999999999937,
+              "correct_seconds": 19.989999999999988,
+              "recall": 0.8849048251438688,
+              "precision": 0.9028906955736244
+            }
+          }
+        }
+      }
+    },
+    {
+      "excerpt": "four-brief-speaker",
+      "engine": "sortformer-recluster",
+      "candidate_sha256": "afa1e1e884ccbd3ad757817823f6d415b6349e3f8e2aa3b8a9a155ab156ecde4",
+      "reference_sha256": {
+        "rttm": "47933ce32e297244ef6dd86cb0f86151d35d1cf7f7bf35b75b79506fcce58d5f",
+        "uem": "f9935a0b40f63bcbd5b0d90c9c23357f592eeffd23862ca839b33586224e49e5"
+      },
+      "strict_der": 0.242979507752358,
+      "brief_turn_recall": 0.45052631578947394,
+      "worst_speaker_recall": 0.0,
+      "missed_speakers": [
+        "FIO087"
+      ],
+      "activity_by_region": {
+        "overlap": {
+          "reference_speaker_seconds": 41.00000000000014,
+          "hypothesis_speaker_seconds": 22.59000000000008,
+          "correct_speaker_seconds": 22.220000000000077,
+          "recall": 0.5419512195121952,
+          "precision": 0.9836210712704735,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 18.620000000000076,
+              "hypothesis_seconds": 15.410000000000055,
+              "correct_seconds": 15.410000000000055,
+              "recall": 0.8276047261009664,
+              "precision": 1.0
+            },
+            "FIO084": {
+              "reference_seconds": 10.020000000000032,
+              "hypothesis_seconds": 0.28000000000000114,
+              "correct_seconds": 0.28000000000000114,
+              "recall": 0.027944111776447133,
+              "precision": 1.0
+            },
+            "FIO087": {
+              "reference_seconds": 2.030000000000001,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO089": {
+              "reference_seconds": 10.330000000000034,
+              "hypothesis_seconds": 6.900000000000027,
+              "correct_seconds": 6.5300000000000225,
+              "recall": 0.6321393998063892,
+              "precision": 0.9463768115942024
+            }
+          }
+        },
+        "non_overlap": {
+          "reference_speaker_seconds": 143.45999999999992,
+          "hypothesis_speaker_seconds": 125.50999999999989,
+          "correct_speaker_seconds": 120.69999999999993,
+          "recall": 0.8413495050885264,
+          "precision": 0.9616763604493669,
+          "per_speaker": {
+            "FIE088": {
+              "reference_seconds": 113.24999999999991,
+              "hypothesis_seconds": 97.43999999999997,
+              "correct_seconds": 96.46999999999994,
+              "recall": 0.851832229580574,
+              "precision": 0.9900451559934316
+            },
+            "FIO084": {
+              "reference_seconds": 6.749999999999993,
+              "hypothesis_seconds": 6.3999999999999915,
+              "correct_seconds": 5.8799999999999955,
+              "recall": 0.8711111111111114,
+              "precision": 0.9187500000000005
+            },
+            "FIO087": {
+              "reference_seconds": 0.8700000000000045,
+              "hypothesis_seconds": 0,
+              "correct_seconds": 0,
+              "recall": 0.0,
+              "precision": null
+            },
+            "FIO089": {
+              "reference_seconds": 22.58999999999999,
+              "hypothesis_seconds": 20.329999999999934,
+              "correct_seconds": 18.349999999999987,
+              "recall": 0.812306330234617,
+              "precision": 0.902606984751601
+            }
+          }
+        }
+      }
+    }
+  ],
+  "brief_person_failure": {
+    "excerpt": "four-brief-speaker",
+    "person": "FIO087",
+    "reference_seconds": 2.9,
+    "simultaneous_reference_seconds": 2.03,
+    "reference_replies": 6,
+    "sortformer_raw_identity_recall": 0.8413793103448252,
+    "reclustered_identity_recall": 0,
+    "community1_identity_recall": 0,
+    "observed_raw_head_intervals": 5,
+    "intervals_retained_but_unidentified_after_reclustering": 5,
+    "embedding_eligible_raw_head_intervals_at_one_second_minimum": 2,
+    "interpretation": "Three raw head intervals cannot be embedded under the one-second rule; two eligible intervals also become unidentified. Exact embedding rejection/mixture cause is not established without a new instrumented run."
+  }
+}

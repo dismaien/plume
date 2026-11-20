@@ -47,6 +47,33 @@ This runs:
 - Tool bundling at `dist/desktop-tools` (`uv`, `ffmpeg`, `ffprobe`, `yt-dlp`, `whisperx/whisperx.zip`).
 - `electron-builder` DMG packaging.
 
+### Local signing
+
+Plume uses ad-hoc signing for local builds. It must not use Apple Development,
+Apple Distribution, or any other project's keychain identity. `mac.identity` is
+explicitly `null` to bypass electron-builder's certificate discovery/import path;
+the `afterPack` hook signs the staged app with `codesign --sign -` instead.
+Notarization is explicitly disabled for these local builds.
+
+The hook signs nested Mach-O files and bundles before the outer app, preserves
+existing runtime flags and entitlements, and regenerates signing requirements.
+It verifies the sealed app and checks that every code object is ad-hoc signed
+without a certificate authority or team identifier. No keychain password is needed.
+
+For a backend-only update, first copy the installed app into a staging directory,
+replace its backend, and patch the backend's library path as in
+`scripts/build-desktop-backend.sh`. Then run from the repository root:
+
+```bash
+node scripts/sign-desktop-app-local.cjs /path/to/staged/Plume.app
+```
+
+The helper refuses to sign an app inside `/Applications` or `~/Applications`.
+Verify the staged copy before replacing the installed app, and retain the old
+app for rollback. Certificate-based distribution would require a separate,
+explicitly approved configuration; do not infer an intended identity from an
+old Plume signature or the certificates available in the keychain.
+
 ## Tool bundling
 
 `scripts/prepare-desktop-tools.sh` resolves tools from local sources and verifies them against pinned checksums in:

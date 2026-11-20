@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,7 @@ import { useContacts, useCreateContact } from "@/features/contacts/hooks/useCont
 import type { Contact } from "@/features/contacts/types";
 import type { SpeakerMapping, SpeakerMappingsUpdateResponse } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import { isConfirmedSpeakerMapping, usePromoteSpeakerSuggestion, useSpeakerSuggestions, useDismissSpeakerSuggestion } from "@/features/transcription/hooks/useTranscriptionSpeakers";
-import { speakerIndexToLabel } from "@/lib/speaker-utils";
+import { formatSpeakerLabel } from "@/lib/speaker-utils";
 import { sanitizeInputValue } from "@/lib/filename-validation";
 
 interface SpeakerRenameDialogProps {
@@ -28,6 +28,8 @@ interface SpeakerRenameDialogProps {
   onOpenChange: (open: boolean) => void;
   transcriptionId: string;
   onSpeakerMappingsUpdate: (mappings: SpeakerMapping[]) => void;
+  priorConstraints?: string;
+  priorDiarizer?: string;
   initialSpeakers?: string[]; // Detected speakers from transcript
 }
 
@@ -64,6 +66,18 @@ function getModelsForFamily(family: string): string[] {
   }
 }
 
+// Reuse an explicit count supplied to the accepted run. A detected cluster
+// count is a model estimate and cannot serve as the input to the next run.
+function priorExactCount(constraints?: string): string {
+  try {
+    const bounds = JSON.parse(constraints ?? "{}");
+    const count = bounds?.min_speakers;
+    return Number.isInteger(count) && count >= 1 && count <= 20 && count === bounds.max_speakers ? String(count) : "";
+  } catch {
+    return "";
+  }
+}
+
 function normalize(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
@@ -74,7 +88,10 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
   transcriptionId,
   onSpeakerMappingsUpdate,
   initialSpeakers = [],
+  priorConstraints,
+  priorDiarizer,
 }) => {
+  const [dialogContainer, setDialogContainer] = useState<HTMLDivElement | null>(null);
   const { getAuthHeaders } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -115,74 +132,83 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
     [contacts],
   );
 
-  const fetchSpeakerMappings = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/v1/transcription/${transcriptionId}/speakers`, {
-        headers: { ...getAuthHeaders() },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch speaker mappings: ${response.statusText}`);
-      }
-
-      const existingMappings: SpeakerMapping[] = await response.json();
-
-      // Create a mapping object from the response
-      const mappingObj: Record<string, string> = {};
-      const detailsMap = new Map<string, SpeakerMapping>();
-      const alreadyPromoted = new Set<string>();
-
-      // Initialize with existing mappings and preserve confidence metadata
-      existingMappings.forEach(mapping => {
-        // If custom_name is just the raw label (legacy auto-populated data), treat as unset
-        // so the placeholder shows the friendly "Speaker A" / "Speaker B" format
-        const isRawLabel = mapping.custom_name === mapping.original_speaker ||
-          /^speaker[_ ]\d+$/i.test(mapping.custom_name);
-        mappingObj[mapping.original_speaker] = isRawLabel || !isConfirmedSpeakerMapping(mapping)
-          ? ''
-          : mapping.custom_name;
-        detailsMap.set(mapping.original_speaker, mapping);
-        if (mapping.match_source === 'suggestion_promoted' && isConfirmedSpeakerMapping(mapping)) {
-          alreadyPromoted.add(mapping.original_speaker);
-        }
-      });
-
-      // Add any speakers from the transcript that don't have mappings yet.
-      // Use case-insensitive matching because PyAnnote RTTM labels are uppercase
-      // (SPEAKER_00) while speaker_mappings may store them lowercased (speaker_00).
-      const mappingKeysLower = new Set(Object.keys(mappingObj).map(k => k.toLowerCase()));
-      initialSpeakers.forEach(speaker => {
-        if (!mappingObj[speaker] && !mappingKeysLower.has(speaker.toLowerCase())) {
-          mappingObj[speaker] = ''; // Empty so placeholder shows friendly label
-        }
-      });
-
-      setSpeakerMappings(mappingObj);
-      setMappingDetails(detailsMap);
-      setPromotedSpeakers(alreadyPromoted);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch speaker mappings');
-
-      // Initialize with default mappings if fetch fails
-      const defaultMappings: Record<string, string> = {};
-      initialSpeakers.forEach(speaker => {
-        defaultMappings[speaker] = '';
-      });
-      setSpeakerMappings(defaultMappings);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [transcriptionId, getAuthHeaders, initialSpeakers]);
-
-  // Initialize speaker mappings when dialog opens
+  // Inputs can change on every playback render. Capture them only at the start
+  // of an editing session; reloading while typing would discard the user's draft.
+  const initializationInputs = useRef({ initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer });
+  initializationInputs.current = { initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer };
   useEffect(() => {
-    if (open && transcriptionId) {
-      fetchSpeakerMappings();
-    }
-  }, [open, transcriptionId, fetchSpeakerMappings]);
+    if (!open || !transcriptionId) return;
+    let cancelled = false;
+    const { initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer } = initializationInputs.current;
+    setRetranscribeNumSpeakers(priorExactCount(priorConstraints));
+    setRetranscribeDiarizeMode(priorDiarizer === "pyannote/speaker-diarization-community-1" ? "pyannote" : "sherpa-onnx");
+    const fetchSpeakerMappings = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/v1/transcription/${transcriptionId}/speakers`, {
+          headers: { ...getAuthHeaders() },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch speaker mappings: ${response.statusText}`);
+        }
+
+        const existingMappings: SpeakerMapping[] = await response.json();
+        if (cancelled) return;
+
+        // Create a mapping object from the response
+        const mappingObj: Record<string, string> = {};
+        const detailsMap = new Map<string, SpeakerMapping>();
+        const alreadyPromoted = new Set<string>();
+
+        // Initialize with existing mappings and preserve confidence metadata
+        existingMappings.forEach(mapping => {
+          // If custom_name is just the raw label (legacy auto-populated data), treat as unset
+          // so the placeholder shows the friendly "Speaker A" / "Speaker B" format
+          const isRawLabel = mapping.custom_name === mapping.original_speaker ||
+            /^speaker[_ ]\d+$/i.test(mapping.custom_name);
+          mappingObj[mapping.original_speaker] = isRawLabel || !isConfirmedSpeakerMapping(mapping)
+            ? ''
+            : mapping.custom_name;
+          detailsMap.set(mapping.original_speaker, mapping);
+          if (mapping.match_source === 'suggestion_promoted' && isConfirmedSpeakerMapping(mapping)) {
+            alreadyPromoted.add(mapping.original_speaker);
+          }
+        });
+
+        // Add any speakers from the transcript that don't have mappings yet.
+        // Use case-insensitive matching because PyAnnote RTTM labels are uppercase
+        // (SPEAKER_00) while speaker_mappings may store them lowercased (speaker_00).
+        const mappingKeysLower = new Set(Object.keys(mappingObj).map(k => k.toLowerCase()));
+        initialSpeakers.forEach(speaker => {
+          if (!mappingObj[speaker] && !mappingKeysLower.has(speaker.toLowerCase())) {
+            mappingObj[speaker] = ''; // Empty so placeholder shows friendly label
+          }
+        });
+
+        setSpeakerMappings(mappingObj);
+        setMappingDetails(detailsMap);
+        setPromotedSpeakers(alreadyPromoted);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to fetch speaker mappings');
+
+        // Initialize with default mappings if fetch fails
+        const defaultMappings: Record<string, string> = {};
+        initialSpeakers.forEach(speaker => {
+          defaultMappings[speaker] = '';
+        });
+        setSpeakerMappings(defaultMappings);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+    void fetchSpeakerMappings();
+    // Ignore responses from a closed dialog or a previously selected recording.
+    return () => { cancelled = true; };
+  }, [open, transcriptionId]);
 
   const handleSpeakerNameChange = (originalSpeaker: string, customName: string) => {
     setSpeakerMappings(prev => ({
@@ -369,9 +395,17 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       const payload: SpeakerMappingsUpdateResponse = await response.json();
       onSpeakerMappingsUpdate(payload.mappings);
 
-      // Invalidate contact appearances so the Contacts page reflects updated mappings
-      queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] });
-      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      // Speaker saves can also rewrite the transcript and its derived title.
+      // Refresh every view that displays those values before closing the dialog
+      // so the detail header and recording lists cannot disagree.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["speakerMappings", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["transcript", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["audio", transcriptionId] }),
+        queryClient.invalidateQueries({ queryKey: ["audioFiles"] }),
+        queryClient.invalidateQueries({ queryKey: ["contacts", "appearances"] }),
+        queryClient.invalidateQueries({ queryKey: ["contacts"] }),
+      ]);
 
       if (payload.contact_bootstrap.started_count > 0) {
         const started = payload.contact_bootstrap.started_count;
@@ -459,17 +493,11 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
     }
   };
 
-  const speakers = Object.keys(speakerMappings).sort();
-
-  // Build order-based labels (A, B, C, …) so they match the transcript view,
-  // regardless of the raw numeric suffix (e.g. speaker_13 after centroid merge).
-  const speakerDisplayLabel = useCallback(
-    (speaker: string) => {
-      const idx = speakers.indexOf(speaker);
-      return idx >= 0 ? speakerIndexToLabel(idx) : speaker;
-    },
-    [speakers],
-  );
+  // Labels belong to the persistent speaker key, never its position in the list.
+  const speakers = useMemo(() => Object.keys(speakerMappings).sort(
+    (a, b) => a.localeCompare(b, undefined, { numeric: true })
+  ), [speakerMappings]);
+  const speakerDisplayLabel = formatSpeakerLabel;
 
   // Categorize speakers into three groups
   const { autoAssigned, suggested, unassigned } = useMemo(() => {
@@ -508,14 +536,12 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       // close animation because speakers briefly shift to the suggestion category
       // when details are empty. fetchSpeakerMappings resets it on next open.
       setRetranscribeOpen(false);
-      setRetranscribeNumSpeakers("");
-      setRetranscribeDiarizeMode("sherpa-onnx");
     }
   }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md overflow-y-hidden">
+      <DialogContent ref={setDialogContainer} className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
@@ -556,23 +582,18 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                     </div>
                     {autoAssigned.map((speaker) => {
                       const detail = mappingDetails.get(speaker);
-                      const isJustPromoted = promotedSpeakers.has(speaker);
                       return (
                         <div key={speaker} className="space-y-1">
                           <div className="flex items-center gap-2">
                             <Label htmlFor={`speaker-${speaker}`} className="text-xs font-medium text-muted-foreground">
                               {speakerDisplayLabel(speaker)}
                             </Label>
-                            <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400 inline-flex items-center gap-1" data-testid={`badge-auto-${speaker}`}>
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400 inline-flex items-center gap-1" data-testid={`${detail?.match_source === 'suggestion_promoted' ? 'badge-matched' : 'badge-auto'}-${speaker}`}
+                              aria-label={`${detail?.match_source === 'suggestion_promoted' ? 'Accepted' : 'Automatic'} voice match score ${Math.round((detail?.confidence_score ?? 0) * 100)}%`}>
                               <Check className="h-3 w-3" />
                               {Math.round((detail?.confidence_score ?? 0) * 100)}%
                             </span>
                           </div>
-                          {isJustPromoted ? (
-                            <div className="text-sm font-medium truncate px-3 py-2 rounded-md bg-green-500/5 border border-green-500/20">
-                              {speakerMappings[speaker] || detail?.custom_name}
-                            </div>
-                          ) : (
                             <Popover
                               open={activeSpeaker === speaker}
                               onOpenChange={(nextOpen) => {
@@ -596,12 +617,13 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                                 />
                               </PopoverAnchor>
                               <PopoverContent
+                              container={dialogContainer}
                                 align="start"
                                 sideOffset={6}
                                 onOpenAutoFocus={(event) => event.preventDefault()}
                                 className="w-[var(--radix-popover-trigger-width)] p-0"
                               >
-                                <div className="max-h-44 overflow-y-auto py-1">
+                                <div className="max-h-[min(11rem,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain py-1">
                                   {contactsQuery.isLoading ? (
                                     <div className="px-3 py-2 text-xs text-[var(--text-tertiary)]">Loading contacts...</div>
                                   ) : (
@@ -657,7 +679,6 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                                 </div>
                               </PopoverContent>
                             </Popover>
-                          )}
                         </div>
                       );
                     })}
@@ -806,12 +827,13 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                               />
                             </PopoverAnchor>
                             <PopoverContent
+                              container={dialogContainer}
                               align="start"
                               sideOffset={6}
                               onOpenAutoFocus={(event) => event.preventDefault()}
                               className="w-[var(--radix-popover-trigger-width)] p-0"
                             >
-                              <div className="max-h-44 overflow-y-auto py-1">
+                              <div className="max-h-[min(11rem,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain py-1">
                                 {contactsQuery.isLoading ? (
                                   <div className="px-3 py-2 text-xs text-[var(--text-tertiary)]">Loading contacts...</div>
                                 ) : (
@@ -938,13 +960,13 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                     <SelectContent>
                       <SelectItem value="sherpa-onnx">sherpa-onnx</SelectItem>
                       <SelectItem value="local">NVIDIA Sortformer</SelectItem>
-                      {/* <SelectItem value="pyannote">Pyannote</SelectItem> */}
+                      <SelectItem value="pyannote">Pyannote Community-1</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-[var(--text-tertiary)]">
                     {retranscribeDiarizeMode === "sherpa-onnx" && "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers."}
                     {retranscribeDiarizeMode === "local" && "NVIDIA Sortformer runs locally without a Hugging Face token (up to 4 speakers)."}
-                    {/* {retranscribeDiarizeMode === "pyannote" && "Pyannote supports up to 20 speakers. Configure your Hugging Face token in Settings → Transcription."} */}
+                    {retranscribeDiarizeMode === "pyannote" && "Community-1 runs locally and supports an exact speaker count."}
                   </p>
                 </div>
 

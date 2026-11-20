@@ -20,8 +20,11 @@ var (
 	archiveDreamTranscriptPattern   = regexp.MustCompile(
 		`(?i)\b(?:in|from|about|remember(?:ing)?|recall(?:ing)?|had|having|last image in)\s+(?:a\s+|the\s+|my\s+|this\s+|that\s+)?dream\b|\bi\s+(?:dreamed|dreamt)\b|\bdream\s+i\b`,
 	)
-	archiveDreamSubjectPrefixPattern = regexp.MustCompile(`(?i)^dream(?: account| note| recording)?\s*[:\-]\s*`)
-	archiveDreamSubjectSuffixPattern = regexp.MustCompile(`(?i)\s+dream$`)
+	archiveDreamSubjectPrefixPattern  = regexp.MustCompile(`(?i)^dream(?: account| note| recording)?\s*[:\-]\s*`)
+	archiveDreamSubjectSuffixPattern  = regexp.MustCompile(`(?i)\s+dream$`)
+	archiveLocationSourcePattern      = regexp.MustCompile(`(?i)^(?:rua\s+|malplaquetstra(?:ss|ß)e\b)`)
+	archiveKnownLocationSourcePattern = regexp.MustCompile(`(?i)^(?:cascade dr|bridgeway|sushi ran|hillside ct)(?:\s+\d+)?$`)
+	archiveSourceSpeakerBlockPattern  = regexp.MustCompile(`\s+\[[^\[\]\n]+\]\s*$`)
 )
 
 // GeneratedArchiveTitleInput contains the durable metadata surrounding an
@@ -34,11 +37,12 @@ type GeneratedArchiveTitleInput struct {
 	OriginalFilename string
 	Transcript       string
 	Speakers         []string
+	NarratorCount    int
 	DurationMillis   int64
 }
 
 // FormatGeneratedArchiveTitle builds the canonical, scan-friendly Plume title:
-// YYMMDD HH:MM (dream) Subject (original title) [Speakers] {MM:SS|HH:MM}.
+// YYMMDD HH:MM (dream) Subject (original title) [Speakers] @Location {MM:SS|HH:MM:SS}.
 func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 	recordedAt := input.CreatedAt
 	if input.RecordedAt != nil && !input.RecordedAt.IsZero() {
@@ -56,12 +60,20 @@ func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 		parts = append(parts, subject)
 	}
 
+	sourceLocation := ""
 	if original := sourceTitleLabel(input.CurrentTitle, input.OriginalFilename, subject); original != "" {
-		parts = append(parts, "("+original+")")
+		if location := sourceLocationLabel(original); location != "" {
+			sourceLocation = location
+		} else {
+			parts = append(parts, "("+original+")")
+		}
 	}
 
 	if speakers := normalizeSpeakerTitleNames(input.Speakers); len(speakers) > 0 {
 		parts = append(parts, "["+strings.Join(speakers, ", ")+"]")
+	}
+	if sourceLocation != "" {
+		parts = append(parts, "@"+sourceLocation)
 	}
 
 	if input.DurationMillis > 0 {
@@ -71,6 +83,18 @@ func FormatGeneratedArchiveTitle(input GeneratedArchiveTitleInput) string {
 	return strings.Join(parts, " ")
 }
 
+func sourceLocationLabel(label string) string {
+	label = strings.TrimSpace(label)
+	label = strings.TrimSpace(archiveSourceSpeakerBlockPattern.ReplaceAllString(label, ""))
+	if !archiveLocationSourcePattern.MatchString(label) && !archiveKnownLocationSourcePattern.MatchString(label) {
+		return ""
+	}
+	return strings.TrimSpace(archiveSourceSpeakerBlockPattern.ReplaceAllString(label, ""))
+}
+
+// IsArchiveSourceLocation shares title eligibility with location preservation.
+func IsArchiveSourceLocation(label string) bool { return sourceLocationLabel(label) != "" }
+
 func sourceTitleLabel(currentTitle string, originalFilename string, subject string) string {
 	current := strings.TrimSpace(currentTitle)
 	current = strings.TrimSpace(archiveDreamMarkerPattern.ReplaceAllString(current, " "))
@@ -78,7 +102,7 @@ func sourceTitleLabel(currentTitle string, originalFilename string, subject stri
 	if current != "" && !archiveCanonicalTitlePattern.MatchString(current) {
 		label = current
 	}
-	if label == "" {
+	if label == "" && strings.TrimSpace(originalFilename) != "" {
 		label = strings.TrimSpace(strings.TrimSuffix(filepath.Base(originalFilename), filepath.Ext(originalFilename)))
 	}
 	if label == "" || strings.EqualFold(label, subject) || strings.EqualFold(label, "Title Not Available") || archiveNewRecordingPattern.MatchString(label) {
@@ -111,6 +135,13 @@ func sourceTitleLabel(currentTitle string, originalFilename string, subject stri
 }
 
 func isLikelyDreamArchiveRecording(input GeneratedArchiveTitleInput) bool {
+	// Dream diaries in this archive are solo narration. Dialogue inside the
+	// dream is quoted content, not evidence of another recorder. Conversely,
+	// stable multi-person acoustic evidence means the recording is a
+	// conversation about a dream, not a dream diary.
+	if input.NarratorCount > 1 {
+		return false
+	}
 	currentTitle := strings.TrimSpace(input.CurrentTitle)
 	if archiveDreamMarkerPattern.MatchString(currentTitle) {
 		return true
@@ -152,10 +183,10 @@ func cleanGeneratedDreamSubject(subject string, isDream bool) string {
 }
 
 func formatArchiveDuration(durationMillis int64) string {
-	// Match the player/list display, which reports completed whole seconds.
-	totalSeconds := durationMillis / 1000
+	// Match the player/list display, which rounds to the nearest whole second.
+	totalSeconds := (durationMillis + 500) / 1000
 	if totalSeconds >= 3600 {
-		return fmt.Sprintf("%02d:%02d", totalSeconds/3600, (totalSeconds%3600)/60)
+		return fmt.Sprintf("%02d:%02d:%02d", totalSeconds/3600, (totalSeconds%3600)/60, totalSeconds%60)
 	}
 	return fmt.Sprintf("%02d:%02d", totalSeconds/60, totalSeconds%60)
 }

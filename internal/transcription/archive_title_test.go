@@ -1,6 +1,7 @@
 package transcription
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,9 +17,33 @@ func TestFormatGeneratedArchiveTitlePreservesSourceLabel(t *testing.T) {
 		Speakers:         []string{"Leona", "Leona"},
 		DurationMillis:   237_973,
 	})
-	want := "260812 10:44 (dream) Sapphire Ring and Family [Leona] {03:57}"
+	want := "260812 10:44 (dream) Sapphire Ring and Family [Leona] {03:58}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatArchiveDurationDoesNotConfuseHoursWithMinutes(t *testing.T) {
+	for _, test := range []struct {
+		millis int64
+		want   string
+	}{
+		{613_000, "10:13"},
+		{3_600_000, "01:00:00"},
+		{36_783_000, "10:13:03"},
+	} {
+		if got := formatArchiveDuration(test.millis); got != test.want {
+			t.Errorf("formatArchiveDuration(%d) = %q, want %q", test.millis, got, test.want)
+		}
+	}
+}
+
+func TestKnownAppleLocationsSurviveAsLocationSuffixes(t *testing.T) {
+	for _, location := range []string{"Cascade Dr 6", "Bridgeway", "Sushi Ran", "Hillside Ct 3"} {
+		title := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{CreatedAt: time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC), Subject: "A Descriptive Subject", CurrentTitle: location + " [Leona]", DurationMillis: 60000})
+		if !strings.Contains(title, "@"+location+" {01:00}") {
+			t.Fatal("location was lost", title)
+		}
 	}
 }
 
@@ -30,7 +55,7 @@ func TestFormatGeneratedArchiveTitleOmitsMachineFilename(t *testing.T) {
 		OriginalFilename: "20260724 183644-60C99703.qta",
 		DurationMillis:   5_072_000,
 	})
-	want := "260724 18:36 Repairing the Garden Fence {01:24}"
+	want := "260724 18:36 Repairing the Garden Fence {01:24:32}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -46,7 +71,24 @@ func TestFormatGeneratedArchiveTitlePreservesExplicitTitle(t *testing.T) {
 		Speakers:         []string{"Leona", "Henri"},
 		DurationMillis:   28_800_000,
 	})
-	want := "260511 08:00 Catching Up With Henri (morning with henri) [Leona, Henri] {08:00}"
+	want := "260511 08:00 Catching Up With Henri (morning with henri) [Leona, Henri] {08:00:00}"
+	if got != want {
+		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGeneratedArchiveTitleFormatsAppleLocationAfterSpeakers(t *testing.T) {
+	recordedAt := time.Date(2026, time.October, 4, 21, 54, 48, 0, time.UTC)
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		RecordedAt:       &recordedAt,
+		Subject:          "Struggling With Suicide Ideation",
+		CurrentTitle:     "Rua Regedoura Guinta da Regedoura 120 [Leona]",
+		OriginalFilename: "20261004 215448-74FB0B7B.m4a",
+		Transcript:       "I had a dream about struggling with suicide ideation.",
+		Speakers:         []string{"Leona"},
+		DurationMillis:   1_557_000,
+	})
+	want := "261004 21:54 (dream) Struggling With Suicide Ideation [Leona] @Rua Regedoura Guinta da Regedoura 120 {25:57}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -63,7 +105,7 @@ func TestFormatGeneratedArchiveTitleDoesNotNestCanonicalTitle(t *testing.T) {
 		Speakers:         []string{"Leona"},
 		DurationMillis:   237_973,
 	})
-	want := "260812 10:44 (dream) Family Travel and Sapphire Ring [Leona] {03:57}"
+	want := "260812 10:44 (dream) Family Travel and Sapphire Ring [Leona] {03:58}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}
@@ -77,11 +119,27 @@ func TestFormatGeneratedArchiveTitleDetectsDreamFromTranscript(t *testing.T) {
 		OriginalFilename: "20260809 081311-EF53EB7E.qta",
 		Transcript:       "I had a dream about walking through wooden rooms and hidden passages.",
 		Speakers:         []string{"Leona"},
+		NarratorCount:    1,
 		DurationMillis:   352_000,
 	})
 	want := "260809 08:13 (dream) Wooden Walkways and Hidden Rooms [Leona] {05:52}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGeneratedArchiveTitleRejectsDreamMarkerForConversation(t *testing.T) {
+	recordedAt := time.Date(2026, time.November, 5, 18, 23, 0, 0, time.UTC)
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		RecordedAt:     &recordedAt,
+		Subject:        "College Applications and Product Security",
+		CurrentTitle:   "261105 18:23 (dream) College Application Essays {39:40}",
+		Transcript:     "I had a dream once. What do you think? I disagree.",
+		NarratorCount:  3,
+		DurationMillis: 2_380_000,
+	})
+	if strings.Contains(got, "(dream)") {
+		t.Fatalf("multi-person conversation retained false dream marker: %q", got)
 	}
 }
 
@@ -110,6 +168,18 @@ func TestFormatGeneratedArchiveTitleDoesNotTagSongAboutDreams(t *testing.T) {
 		DurationMillis:   196_000,
 	})
 	want := "261226 21:57 Dreams That Whisper Evening Song (song) {03:16}"
+	if got != want {
+		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatGeneratedArchiveTitleRoundsDurationLikePlayer(t *testing.T) {
+	got := FormatGeneratedArchiveTitle(GeneratedArchiveTitleInput{
+		CreatedAt:      time.Date(2026, time.August, 18, 9, 59, 17, 0, time.UTC),
+		Subject:        "A Short Recording",
+		DurationMillis: 198_571,
+	})
+	want := "260818 09:59 A Short Recording {03:19}"
 	if got != want {
 		t.Fatalf("FormatGeneratedArchiveTitle() = %q, want %q", got, want)
 	}

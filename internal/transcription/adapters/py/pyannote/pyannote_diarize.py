@@ -1,306 +1,183 @@
 #!/usr/bin/env python3
-"""
-PyAnnote speaker diarization script.
-Processes audio files to identify and separate different speakers.
-"""
-
+"""Local Community-1 diarisation with replayable regular/exclusive timelines."""
 import argparse
+import hashlib
+import importlib.metadata
 import json
-import sys
 import os
-import functools
+import time
+import wave
+import warnings
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Compatibility shim: older pyannote.audio internally passes the deprecated
-# `use_auth_token` kwarg to huggingface_hub functions.  Newer huggingface_hub
-# (>=0.24) removed it entirely, causing a TypeError.  We monkey-patch BEFORE
-# importing pyannote so its `from huggingface_hub import ...` picks up the
-# wrapped versions.  We also patch submodules (e.g. huggingface_hub.file_download)
-# to catch imports that bypass the top-level namespace.
-# ---------------------------------------------------------------------------
-import huggingface_hub as _hfh
 
-def _strip_use_auth_token(fn):
-    """Wrap a huggingface_hub function to silently drop `use_auth_token`."""
-    @functools.wraps(fn)
-    def _wrapper(*args, **kwargs):
-        kwargs.pop("use_auth_token", None)
-        return fn(*args, **kwargs)
-    return _wrapper
-
-_FUNCS_TO_PATCH = ("hf_hub_download", "snapshot_download", "cached_download",
-                   "model_info", "repo_info", "list_repo_files")
-
-# Patch top-level huggingface_hub namespace
-for _name in _FUNCS_TO_PATCH:
-    if hasattr(_hfh, _name):
-        setattr(_hfh, _name, _strip_use_auth_token(getattr(_hfh, _name)))
-
-# Also patch submodules that pyannote may import directly (e.g.
-# `from huggingface_hub.file_download import hf_hub_download`).
-import importlib as _imp
-for _submod_name in ("file_download", "_hf_api", "hub_mixin", "utils"):
-    try:
-        _submod = _imp.import_module(f"huggingface_hub.{_submod_name}")
-        for _name in _FUNCS_TO_PATCH:
-            if hasattr(_submod, _name):
-                setattr(_submod, _name, _strip_use_auth_token(getattr(_submod, _name)))
-    except (ImportError, ModuleNotFoundError):
-        pass
-# ---------------------------------------------------------------------------
-
-from pyannote.audio import Pipeline
-import torch
-
-# Fix for PyTorch 2.6+ which defaults weights_only=True
-# We need to allowlist PyAnnote's custom classes
-try:
-    from pyannote.audio.core.task import Specifications, Problem, Resolution
-    if hasattr(torch.serialization, "add_safe_globals"):
-        torch.serialization.add_safe_globals([Specifications, Problem, Resolution])
-except ImportError:
-    pass
-except Exception as e:
-    print(f"Warning: Could not add safe globals: {e}")
+def load_audio_waveform(audio_path):
+    import numpy as np
+    import torch
+    with wave.open(str(audio_path), 'rb') as wav:
+        if wav.getsampwidth() != 2:
+            raise ValueError('Expected 16-bit PCM WAV input')
+        sample_rate, channels = wav.getframerate(), wav.getnchannels()
+        samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2')
+    waveform = samples.astype(np.float32).reshape(-1, channels).T.copy() / 32768.0
+    return {'waveform': torch.from_numpy(waveform), 'sample_rate': sample_rate}
 
 
-def diarize_audio(
-    audio_path: str,
-    output_file: str,
-    hf_token: str,
-    model: str = "pyannote/speaker-diarization-community-1",
-    min_speakers: int = None,
-    max_speakers: int = None,
-    output_format: str = "rttm",
-    device: str = "auto",
-):
-    """
-    Perform speaker diarization on audio file using PyAnnote.
-    """
-    print(f"Loading PyAnnote speaker diarization pipeline: {model}")
+def select_device(requested, torch):
+    if requested == 'auto':
+        if torch.cuda.is_available():
+            return 'cuda'
+        if torch.backends.mps.is_available():
+            return 'mps'
+        return 'cpu'
+    if requested == 'cuda' and not torch.cuda.is_available():
+        raise ValueError('CUDA requested but unavailable')
+    if requested == 'mps' and not torch.backends.mps.is_available():
+        raise ValueError('MPS requested but unavailable')
+    return requested
 
-    try:
-        # Set the token in the environment so huggingface_hub picks it up
-        # automatically — avoids version-specific kwarg issues with
-        # Pipeline.from_pretrained().
-        os.environ["HF_TOKEN"] = hf_token
 
-        pipeline = Pipeline.from_pretrained(model)
+def annotation_segments(annotation):
+    return sorted([{'start': float(turn.start), 'end': float(turn.end),
+                    'speaker': str(speaker).lower(), 'duration': float(turn.duration)}
+                   for turn, _, speaker in annotation.itertracks(yield_label=True)],
+                  key=lambda t: (t['start'], t['end'], t['speaker']))
 
-        # Move to specified device
-        # if device == "auto" or device == "cuda":
+
+def speaker_inventory(regular_segments, exclusive_segments):
+    # Exclusive diarization can omit a person who only speaks during overlap.
+    return sorted({s['speaker'] for s in regular_segments + exclusive_segments if s.get('speaker')})
+
+
+def diarize_audio(audio_path, output_file, hf_token='',
+                  model='pyannote/speaker-diarization-community-1',
+                  min_speakers=None, max_speakers=None, output_format='json', device='auto',
+                  cpu_threads=None, embedding_exclude_overlap=None):
+    import torch
+    from pyannote.audio import Pipeline
+    started = time.monotonic()
+    actual_device = select_device(device, torch)
+    if cpu_threads is not None and not 1 <= cpu_threads <= 6:
+        raise ValueError('cpu_threads must be between one and six')
+    torch.set_num_threads(cpu_threads if cpu_threads is not None else min(6, os.cpu_count() or 1))
+    # HF_HUB_OFFLINE=1 works without a token when the model is already cached.
+    pipeline = Pipeline.from_pretrained(model, token=hf_token or None)
+    if pipeline is None:
+        raise RuntimeError('Community-1 unavailable. Cache the model after accepting its terms or configure HF_TOKEN.')
+    if embedding_exclude_overlap is not None:
+        pipeline.embedding_exclude_overlap = bool(embedding_exclude_overlap)
+    pipeline.to(torch.device(actual_device))
+    audio = load_audio_waveform(audio_path)
+    params = {k: v for k, v in {'min_speakers': min_speakers, 'max_speakers': max_speakers}.items() if v is not None}
+    result = pipeline(audio, **params)
+    regular = getattr(result, 'speaker_diarization', result)
+    exclusive = getattr(result, 'exclusive_speaker_diarization', regular)
+    segments = annotation_segments(exclusive)
+    regular_segments = annotation_segments(regular)
+    raw_speakers = speaker_inventory(regular_segments, segments)
+    aliases = {}
+    votes = []
+    mixed = {}
+    check_status = "skipped"
+    check_hash = ""
+    if not params and model == 'pyannote/speaker-diarization-community-1':
+        import speaker_aliases
+        check_hash = hashlib.sha256(Path(speaker_aliases.__file__).read_bytes()).hexdigest()
+
+        def sample(start, end):
+            rate = audio['sample_rate']
+            return audio['waveform'][:, round(start * rate):round(end * rate)], rate
         try:
-            if torch.cuda.is_available():
-                pipeline = pipeline.to(torch.device("cuda"))
-                print("Using CUDA for diarization")
-            elif device == "cuda":
-                print("CUDA requested but not available, falling back to CPU")
-            else:
-                print("CUDA not available, using CPU")
-        except ImportError:
-            print("PyTorch not available for CUDA, using CPU")
-        except Exception as e:
-            print(f"Error moving to device: {e}, using CPU")
-
-        print("Pipeline loaded successfully")
-    except Exception as e:
-        print(f"Error loading pipeline: {e}")
-        print("Make sure you have a valid Hugging Face token and have accepted the model's license")
-        sys.exit(1)
-
-    print(f"Processing audio file: {audio_path}")
-
-    try:
-        # Run diarization
-        diarization_params = {}
-        if min_speakers is not None:
-            diarization_params["min_speakers"] = min_speakers
-        if max_speakers is not None:
-            diarization_params["max_speakers"] = max_speakers
-
-        if diarization_params:
-            print(f"Using speaker constraints: {diarization_params}")
-            diarization = pipeline(audio_path, **diarization_params)
-        else:
-            print("Using automatic speaker detection")
-            diarization = pipeline(audio_path)
-
-        print(f"Diarization completed. Saving results to: {output_file}")
-
-        if output_format == "rttm":
-            # Save the diarization output to RTTM format
-            with open(output_file, "w") as rttm:
-                diarization.write_rttm(rttm)
-        else:
-            # Save as JSON format
-            save_json_format(diarization, output_file, audio_path)
-
-        # Print summary
-        speakers = set()
-        total_speech_time = 0.0
-
-        # Iterate over speaker diarization
-        # PyAnnote 4.x returns a DiarizeOutput object with a speaker_diarization attribute
-        if hasattr(diarization, "speaker_diarization"):
-            for turn, speaker in diarization.speaker_diarization:
-                speakers.add(speaker)
-                total_speech_time += turn.duration
-        elif hasattr(diarization, "itertracks"):
-            # Fallback for older versions
-            for segment, track, speaker in diarization.itertracks(yield_label=True):
-                speakers.add(speaker)
-                total_speech_time += segment.duration
-        else:
-            # Try iterating directly (some versions return Annotation directly)
-            for segment, track, speaker in diarization.itertracks(yield_label=True):
-                speakers.add(speaker)
-                total_speech_time += segment.duration
-
-        print(f"\nDiarization Summary:")
-        print(f"  Speakers detected: {len(speakers)}")
-        print(f"  Speaker labels: {sorted(speakers)}")
-        print(f"  Total speech time: {total_speech_time:.2f} seconds")
-        print(f"  Output file saved: {output_file}")
-
-    except Exception as e:
-        print(f"Error during diarization: {e}")
-        sys.exit(1)
-
-
-def save_json_format(diarization, output_file: str, audio_path: str):
-    """Save diarization results in JSON format."""
-    segments = []
-    speakers = set()
-
-    # PyAnnote 4.x
-    if hasattr(diarization, "speaker_diarization"):
-        for turn, speaker in diarization.speaker_diarization:
-            segments.append({
-                "start": turn.start,
-                "end": turn.end,
-                "speaker": speaker,
-                "confidence": 1.0,
-                "duration": turn.duration
-            })
-            speakers.add(speaker)
-    # Older versions
-    elif hasattr(diarization, "itertracks"):
-        for segment, track, speaker in diarization.itertracks(yield_label=True):
-            segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "speaker": speaker,
-                "confidence": 1.0,
-                "duration": segment.duration
-            })
-            speakers.add(speaker)
-
-    # Sort segments by start time
-    segments.sort(key=lambda x: x["start"])
-
-    results = {
-        "audio_file": audio_path,
-        "model": "pyannote/speaker-diarization-community-1",
-        "segments": segments,
-        "speakers": sorted(speakers),
-        "speaker_count": len(speakers),
-        "total_duration": max(seg["end"] for seg in segments) if segments else 0,
-        "processing_info": {
-            "total_segments": len(segments),
-            "total_speech_time": sum(seg["duration"] for seg in segments)
-        }
+            aliases, votes = speaker_aliases.check_aliases(segments, regular_segments, sample, pipeline)
+            mixed = speaker_aliases.mixed_tracks(votes, aliases, regular_segments)
+            check_status = "tested" if votes else "insufficient_reference_turns"
+        except (RuntimeError, ValueError) as err:
+            # The original diarization succeeded. A failed optional reference
+            # panel must not discard its timeline or apply a partial decision.
+            aliases, votes, mixed = {}, [], {}
+            check_status = "failed_primary_retained"
+            warnings.warn(f"Speaker reference check failed: {err}")
+        if aliases:
+            original = {str(label).lower(): label for label in set(regular.labels()) | set(exclusive.labels())}
+            mapping = {original[s]: original[target] for s, target in aliases.items()}
+            regular = regular.rename_labels(mapping=mapping)
+            exclusive = exclusive.rename_labels(mapping=mapping)
+            segments = annotation_segments(exclusive)
+            regular_segments = annotation_segments(regular)
+    mixed_exclusive = [r for r in segments if r['speaker'] in mixed]
+    mixed_regular = [r for r in regular_segments if r['speaker'] in mixed]
+    if mixed:
+        segments = [r for r in segments if r['speaker'] not in mixed]
+        regular_segments = [r for r in regular_segments if r['speaker'] not in mixed]
+    speakers = speaker_inventory(regular_segments, segments)
+    metadata = {
+        'speaker_alias_check_status': check_status, 'speaker_alias_check_sha256': check_hash,
+        'speaker_count_before_alias_check': str(len(raw_speakers)),
+        'speaker_aliases': json.dumps(aliases, sort_keys=True),
+        'speaker_mixed_tracks': json.dumps(mixed, sort_keys=True),
+        'speaker_alias_panel_votes': json.dumps(votes, sort_keys=True),
+        'diarization_engine': model, 'diarization_device': actual_device,
+        'pyannote_audio_version': importlib.metadata.version('pyannote.audio'),
+        'torch_version': torch.__version__, 'speaker_identity_status': ('solo' if len(speakers)==1 else 'accepted') if speakers else 'uncertain',
+        'torch_cpu_threads': str(torch.get_num_threads()),
+        'embedding_exclude_overlap': str(pipeline.embedding_exclude_overlap).lower(),
+        'speaker_identity_reason': '' if speakers else 'no_speech_tracks_not_verified_silence',
+        'confidence_kind': 'unavailable', 'assignment_timeline': 'exclusive',
+        'speaker_count_source': 'regular_and_exclusive_tracks',
+        'exclusive_speaker_count': str(len(speaker_inventory([], segments))),
+        'regular_speaker_count': str(len(speaker_inventory(regular_segments, []))),
+        'speaker_constraints': json.dumps(params, sort_keys=True),
+        'processing_seconds': str(time.monotonic() - started),
+        'diarization_script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'mps_fallback_enabled': os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK','0'),
     }
-
-    with open(output_file, "w") as f:
-        json.dump(results, f, indent=2)
+    if mixed:
+        metadata.update(speaker_identity_status='uncertain',
+                        speaker_identity_reason='mixed_track_needs_turn_review')
+    payload = {'audio_file': str(audio_path), 'model': model, 'segments': segments,
+               'regular_segments': regular_segments, 'speakers': speakers,
+               'speaker_count': len(speakers), 'metadata': metadata}
+    if mixed:
+        payload.update(mixed_segments=mixed_exclusive, mixed_regular_segments=mixed_regular)
+    try:
+        from huggingface_hub import hf_hub_download
+        checkpoint=Path(hf_hub_download(model,'config.yaml',local_files_only=True))
+        metadata['model_snapshot_revision']=checkpoint.parent.name
+        metadata['model_config_sha256']=hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    except Exception:
+        metadata['model_snapshot_revision']='unrecorded'
+    path = Path(output_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if output_format == 'rttm':
+        with path.open('w') as handle:
+            # RTTM has no review-track field. Retain the timed evidence under
+            # an explicitly mixed track name instead of claiming another person.
+            regular.rename_labels(mapping={s: 'MIXED_' + str(s) for s in regular.labels()
+                                           if str(s).lower() in mixed}).write_rttm(handle)
+    else:
+        path.write_text(json.dumps(payload, indent=2, allow_nan=False))
+    print(f'Community-1 completed on {actual_device}: {len(speakers)} speakers, {len(segments)} turns')
+    return payload
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Perform speaker diarization using PyAnnote.audio"
-    )
-    parser.add_argument(
-        "audio_file",
-        help="Path to audio file"
-    )
-    parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="Output file path"
-    )
-    parser.add_argument(
-        "--hf-token",
-        default=os.environ.get("HF_TOKEN", ""),
-        help="Hugging Face access token (defaults to HF_TOKEN env var)"
-    )
-    parser.add_argument(
-        "--model",
-        default="pyannote/speaker-diarization-community-1",
-        help="PyAnnote model to use"
-    )
-    parser.add_argument(
-        "--min-speakers",
-        type=int,
-        help="Minimum number of speakers"
-    )
-    parser.add_argument(
-        "--max-speakers",
-        type=int,
-        help="Maximum number of speakers"
-    )
-    parser.add_argument(
-        "--output-format",
-        choices=["rttm", "json"],
-        default="rttm",
-        help="Output format"
-    )
-    parser.add_argument(
-        "--device",
-        choices=["cpu", "cuda", "auto"],
-        default="auto",
-        help="Device to use for computation"
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('audio_file')
+    parser.add_argument('--output', '-o', required=True)
+    parser.add_argument('--hf-token', default=os.environ.get('HF_TOKEN', ''))
+    parser.add_argument('--model', default='pyannote/speaker-diarization-community-1')
+    parser.add_argument('--min-speakers', type=int)
+    parser.add_argument('--max-speakers', type=int)
+    parser.add_argument('--output-format', choices=['json', 'rttm'], default='json')
+    parser.add_argument('--device', choices=['auto', 'cpu', 'cuda', 'mps'], default='auto')
     args = parser.parse_args()
-
-    # Validate input file
-    if not os.path.exists(args.audio_file):
-        print(f"Error: Audio file not found: {args.audio_file}")
-        sys.exit(1)
-
-    # Validate speaker constraints
-    if args.min_speakers is not None and args.min_speakers < 1:
-        print("Error: min_speakers must be at least 1")
-        sys.exit(1)
-
-    if args.max_speakers is not None and args.max_speakers < 1:
-        print("Error: max_speakers must be at least 1")
-        sys.exit(1)
-
-    if (args.min_speakers is not None and args.max_speakers is not None and
-        args.min_speakers > args.max_speakers):
-        print("Error: min_speakers cannot be greater than max_speakers")
-        sys.exit(1)
-
-    # Create output directory if it doesn't exist
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        diarize_audio(
-            audio_path=args.audio_file,
-            output_file=args.output,
-            hf_token=args.hf_token,
-            model=args.model,
-            min_speakers=args.min_speakers,
-            max_speakers=args.max_speakers,
-            output_format=args.output_format,
-            device=args.device,
-        )
-    except Exception as e:
-        print(f"Error during diarization: {e}")
-        sys.exit(1)
+    if any(n is not None and n < 1 for n in [args.min_speakers, args.max_speakers]):
+        parser.error('speaker counts must be positive')
+    if args.min_speakers and args.max_speakers and args.min_speakers > args.max_speakers:
+        parser.error('min_speakers cannot exceed max_speakers')
+    diarize_audio(args.audio_file, args.output, args.hf_token, args.model,
+                  args.min_speakers, args.max_speakers, args.output_format, args.device)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

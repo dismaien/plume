@@ -17,7 +17,7 @@ import (
 	"quill/pkg/logger"
 )
 
-//go:embed py/nvidia/*
+//go:embed py/nvidia/*.py py/nvidia/*.toml
 var nvidiaScripts embed.FS
 
 // CanaryAdapter implements the TranscriptionAdapter interface for NVIDIA Canary

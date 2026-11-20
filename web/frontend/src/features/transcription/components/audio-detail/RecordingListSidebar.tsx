@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import { AlertCircle, CheckCircle2, Clock3, Loader2, PanelLeftClose, Search } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { formatRecordingSidebarDateTime } from "@/lib/recording-date";
 import { useAudioListInfinite, type AudioFile } from "@/features/transcription/hooks/useAudioFiles";
+
+import { useRecordingActions } from "./RecordingActions";
 
 interface RecordingListSidebarProps {
     currentAudioId: string;
@@ -52,25 +55,6 @@ function formatDuration(durationMs?: number) {
     return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
 
-function formatRecordedAt(file: AudioFile) {
-    const value = file.recorded_at || file.created_at;
-    const date = new Date(value);
-    const now = new Date();
-    const sameDay = date.getFullYear() === now.getFullYear()
-        && date.getMonth() === now.getMonth()
-        && date.getDate() === now.getDate();
-
-    if (sameDay) {
-        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
-
-    return date.toLocaleDateString([], {
-        month: "short",
-        day: "numeric",
-        year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
-    });
-}
-
 function RecordingStatusIcon({ status }: { status: AudioFile["status"] }) {
     if (status === "processing" || status === "pending") {
         return <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--brand-solid)]" aria-label="Processing" />;
@@ -86,12 +70,18 @@ function RecordingStatusIcon({ status }: { status: AudioFile["status"] }) {
 
 export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onClose }: RecordingListSidebarProps) {
     const navigate = useNavigate();
+    const location = useLocation();
+    const actions = useRecordingActions((id) => {
+        if (id === currentAudioId) navigate(dashboardReturnPath, { replace: true });
+    });
     const inheritedParams = useMemo(
         () => parseDashboardListParams(dashboardReturnPath),
         [dashboardReturnPath],
     );
     const [search, setSearch] = useState(inheritedParams.search);
     const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+    const positionedInitialSelectionRef = useRef(false);
     const { ref: loadMoreRef, inView } = useInView({ rootMargin: "240px" });
 
     useEffect(() => {
@@ -127,13 +117,29 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
         }
     }, [fetchNextPage, hasNextPage, inView, isFetchingNextPage]);
 
-    useEffect(() => {
-        selectedRowRef.current?.scrollIntoView({ block: "nearest" });
-    }, [currentAudioId, recordings.length]);
+    useLayoutEffect(() => {
+        if (
+            positionedInitialSelectionRef.current
+            || !selectedRowRef.current
+            || !scrollContainerRef.current
+        ) return;
+
+        const savedScrollTop = (location.state as { recordingsSidebarScrollTop?: number } | null)
+            ?.recordingsSidebarScrollTop;
+        if (typeof savedScrollTop === "number" && Number.isFinite(savedScrollTop)) {
+            scrollContainerRef.current.scrollTop = savedScrollTop;
+        } else {
+            selectedRowRef.current.scrollIntoView({ block: "nearest" });
+        }
+        positionedInitialSelectionRef.current = true;
+    }, [location.state, recordings.length]);
 
     const openRecording = useCallback((id: string) => {
         navigate(`/audio/${id}`, {
-            state: { from: dashboardReturnPath },
+            state: {
+                from: dashboardReturnPath,
+                recordingsSidebarScrollTop: scrollContainerRef.current?.scrollTop ?? 0,
+            },
             preventScrollReset: true,
         });
     }, [dashboardReturnPath, navigate]);
@@ -184,7 +190,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                 </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 scrollbar-thin">
+            <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 scrollbar-thin">
                 {isLoading ? (
                     <div className="space-y-1.5">
                         {Array.from({ length: 8 }).map((_, index) => (
@@ -199,23 +205,26 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                             const selected = file.id === currentAudioId;
                             const duration = formatDuration(file.duration);
                             return (
-                                <button
+                                <div
                                     key={file.id}
-                                    ref={selected ? selectedRowRef : undefined}
-                                    type="button"
-                                    aria-current={selected ? "page" : undefined}
-                                    onClick={() => openRecording(file.id)}
                                     className={cn(
-                                        "group w-full rounded-[var(--radius-btn)] border px-3 py-2.5 text-left transition-colors",
+                                        "group relative w-full rounded-[var(--radius-btn)] border text-left transition-colors",
                                         selected
-                                            ? "border-[var(--brand-solid)]/45 bg-[var(--brand-light)]"
+                                            ? "border-[var(--border-focus)] bg-[var(--bg-elevated)]"
                                             : "border-transparent hover:border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)]",
                                     )}
                                 >
+                                    <button
+                                        ref={selected ? selectedRowRef : undefined}
+                                        type="button"
+                                        aria-current={selected ? "page" : undefined}
+                                        onClick={() => openRecording(file.id)}
+                                        className="w-full rounded-[var(--radius-btn)] px-3 py-2.5 pr-11 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-solid)]"
+                                    >
                                     <div className="flex items-start gap-2">
                                         <span className={cn(
                                             "line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug",
-                                            selected ? "text-[var(--brand-solid)]" : "text-[var(--text-primary)]",
+                                            "text-[var(--text-primary)]",
                                         )}>
                                             {file.title || "Untitled Recording"}
                                         </span>
@@ -224,10 +233,12 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                                         </span>
                                     </div>
                                     <div className="mt-1.5 flex items-center justify-between gap-3 text-xs tabular-nums text-[var(--text-tertiary)]">
-                                        <span>{formatRecordedAt(file)}</span>
+                                        <span>{formatRecordingSidebarDateTime(file.recorded_at, file.created_at, file.title)}</span>
                                         {duration && <span>{duration}</span>}
                                     </div>
-                                </button>
+                                    </button>
+                                    <div className="absolute right-1 top-1.5">{actions.menu(file)}</div>
+                                </div>
                             );
                         })}
                         <div ref={loadMoreRef} className="flex h-10 items-center justify-center">
@@ -236,6 +247,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                     </div>
                 )}
             </div>
+            {actions.dialogs}
         </aside>
     );
 }

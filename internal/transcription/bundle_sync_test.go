@@ -412,7 +412,30 @@ func TestBundleSyncService_SelfWriteSkip(t *testing.T) {
 	}
 }
 
-func TestBundleSyncService_DeletesOrphanedJob(t *testing.T) {
+func TestBundleSyncService_PendingSelfWriteSkip(t *testing.T) {
+	db := setupSyncTestDB(t)
+	dir := t.TempDir()
+	svc := newSyncService(t, db, dir, nil)
+
+	bundleDir := filepath.Join(dir, "pending-self-write-test")
+	mustMkdir(t, bundleDir)
+	mustWrite(t, filepath.Join(bundleDir, "audio.wav"), "fake")
+	mustWriteMetadata(t, bundleDir, &BundleMetadata{
+		ID: "pending-selfwrite-1", Title: "Pending Self Write", Status: "completed",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+
+	svc.BeginSelfWrite(MetadataPath(bundleDir))
+	result, err := svc.SyncFromFilesystem(context.Background())
+	if err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+	if result.Skipped != 1 || result.Imported != 0 {
+		t.Fatalf("pending self-write was not skipped: %#v", result)
+	}
+}
+
+func TestBundleSyncService_PreservesJobAndRelatedDataWhenBundleIsMissing(t *testing.T) {
 	db := setupSyncTestDB(t)
 	dir := t.TempDir()
 	vaultID := uint(1)
@@ -428,22 +451,48 @@ func TestBundleSyncService_DeletesOrphanedJob(t *testing.T) {
 		VaultID:     &vaultID,
 	}
 	db.Create(job)
+	db.Create(&models.SpeakerMapping{
+		TranscriptionJobID: "orphan-1",
+		OriginalSpeaker:    "speaker_0",
+		CustomName:         "Leona",
+	})
+	db.Create(&models.Summary{
+		TranscriptionID: "orphan-1",
+		Content:         "Preserve this summary",
+	})
+	db.Create(&models.Note{
+		ID:              "orphan-note-1",
+		TranscriptionID: "orphan-1",
+		Content:         "Preserve this note",
+	})
 
-	// Directory doesn't exist on disk — sync should delete
+	// Directory doesn't exist on disk. This may be a transient rename or an
+	// unavailable volume, so passive sync must preserve every database record.
 	result, err := svc.SyncFromFilesystem(context.Background())
 	if err != nil {
 		t.Fatalf("sync error: %v", err)
 	}
-	if result.Deleted != 1 {
-		t.Errorf("expected 1 deleted, got %d", result.Deleted)
+	if result.Deleted != 0 {
+		t.Errorf("expected 0 deleted, got %d", result.Deleted)
+	}
+	if result.Missing != 1 {
+		t.Errorf("expected 1 missing bundle report, got %d", result.Missing)
 	}
 
-	// Verify job is gone from DB
-	var count int64
-	db.Model(&models.TranscriptionJob{}).Where("id = ?", "orphan-1").Count(&count)
-	if count != 0 {
-		t.Error("expected orphaned job to be deleted from DB")
+	assertCount := func(model any, where string) {
+		t.Helper()
+		var count int64
+		if err := db.Model(model).Where(where, "orphan-1").Count(&count).Error; err != nil {
+			t.Fatalf("counting %T: %v", model, err)
+		}
+		if count != 1 {
+			t.Errorf("expected one preserved %T record, got %d", model, count)
+		}
 	}
+	assertCount(&models.TranscriptionJob{}, "id = ?")
+	assertCount(&models.SpeakerMapping{}, "transcription_job_id = ?")
+	assertCount(&models.Summary{}, "transcription_id = ?")
+	assertCount(&models.Note{}, "transcription_id = ?")
 }
 
 func TestBundleSyncService_DoesNotDeleteExistingBundle(t *testing.T) {

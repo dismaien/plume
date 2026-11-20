@@ -280,6 +280,14 @@ func (m *MockJobRepository) FindByID(ctx context.Context, id interface{}) (*mode
 	return args.Get(0).(*models.TranscriptionJob), args.Error(1)
 }
 
+func (m *MockJobRepository) FindAudioSourceByID(ctx context.Context, id string) (*models.TranscriptionJob, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.TranscriptionJob), args.Error(1)
+}
+
 func (m *MockJobRepository) Update(ctx context.Context, entity *models.TranscriptionJob) error {
 	args := m.Called(ctx, entity)
 	return args.Error(0)
@@ -308,7 +316,7 @@ func (m *MockJobRepository) ListByUser(ctx context.Context, userID uint, offset,
 	return args.Get(0).([]models.TranscriptionJob), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockJobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string) error {
+func (m *MockJobRepository) UpdateTranscript(ctx context.Context, jobID string, transcript string, audioDurationMillis int64) error {
 	args := m.Called(ctx, jobID, transcript)
 	return args.Error(0)
 }

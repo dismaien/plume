@@ -1,5 +1,9 @@
 import type { Transcript } from "@/features/transcription/hooks/useAudioDetail";
-import { formatSpeakerLabel } from "@/lib/speaker-utils";
+import {
+    buildMarkdownTranscript,
+    formatTranscriptTimestamp,
+    getDisplaySpeakerName,
+} from "./transcript-download-format";
 
 export function useTranscriptDownload() {
 
@@ -12,12 +16,6 @@ export function useTranscriptDownload() {
         return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${milliseconds.toString().padStart(3, '0')}`;
     };
 
-    const formatTimestamp = (seconds: number): string => {
-        const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = Math.floor(seconds % 60);
-        return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
-    };
-
     const downloadFile = (content: string, filename: string, contentType: string) => {
         const blob = new Blob([content], { type: contentType });
         const url = URL.createObjectURL(blob);
@@ -28,10 +26,6 @@ export function useTranscriptDownload() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-    };
-
-    const getDisplaySpeakerName = (originalSpeaker: string, mappings: Record<string, string>) => {
-        return mappings[originalSpeaker] || formatSpeakerLabel(originalSpeaker);
     };
 
     const downloadSRT = (transcript: Transcript, filenameBase: string, speakerMappings: Record<string, string>) => {
@@ -48,6 +42,8 @@ export function useTranscriptDownload() {
 
                 if (segment.speaker) {
                     text = `${getDisplaySpeakerName(segment.speaker, speakerMappings)}: ${text}`;
+                } else if (transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') {
+                    text = `Speaker unclear: ${text}`;
                 }
 
                 srtContent += `${counter}\n${startTime} --> ${endTime}\n${text}\n\n`;
@@ -77,11 +73,13 @@ export function useTranscriptDownload() {
                 if (index > 0) content += '\n\n';
 
                 if (options.includeTimestamps) {
-                    content += `[${formatTimestamp(segment.start)}] `;
+                    content += `[${formatTranscriptTimestamp(segment.start)}] `;
                 }
 
                 if (options.includeSpeakerLabels && segment.speaker) {
                     content += `${getDisplaySpeakerName(segment.speaker, speakerMappings)}: `;
+                } else if (options.includeSpeakerLabels && transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') {
+                    content += 'Speaker unclear: ';
                 }
 
                 content += segment.text.trim();
@@ -122,7 +120,7 @@ export function useTranscriptDownload() {
                     if (options.includeTimestamps) {
                         segmentData.start = segment.start;
                         segmentData.end = segment.end;
-                        segmentData.timestamp = formatTimestamp(segment.start);
+                        segmentData.timestamp = formatTranscriptTimestamp(segment.start);
                     }
 
                     if (options.includeSpeakerLabels && segment.speaker) {
@@ -139,6 +137,7 @@ export function useTranscriptDownload() {
             };
         }
 
+        jsonData.metadata = transcript.metadata;
         downloadFile(JSON.stringify(jsonData, null, 2), `${filenameBase}.json`, 'application/json');
     };
 
@@ -150,35 +149,8 @@ export function useTranscriptDownload() {
     ) => {
         if (!transcript) return;
 
-        let content = `# ${filenameBase}\n\n`;
-
-        if (!options.includeSpeakerLabels && !options.includeTimestamps) {
-            content += transcript.text;
-        } else if (transcript.segments) {
-            let lastSpeaker = '';
-            transcript.segments.forEach((segment) => {
-                const speaker = segment.speaker
-                    ? getDisplaySpeakerName(segment.speaker, speakerMappings)
-                    : '';
-
-                if (options.includeSpeakerLabels && speaker && speaker !== lastSpeaker) {
-                    content += `\n**${speaker}**`;
-                    if (options.includeTimestamps) {
-                        content += ` _[${formatTimestamp(segment.start)}]_`;
-                    }
-                    content += '\n\n';
-                    lastSpeaker = speaker;
-                } else if (options.includeTimestamps && (!options.includeSpeakerLabels || !speaker)) {
-                    content += `_[${formatTimestamp(segment.start)}]_ `;
-                }
-
-                content += segment.text.trim() + ' ';
-            });
-        } else {
-            content += transcript.text;
-        }
-
-        downloadFile(content.trim(), `${filenameBase}.md`, 'text/markdown');
+        const content = buildMarkdownTranscript(transcript, filenameBase, speakerMappings, options);
+        downloadFile(content, `${filenameBase}.md`, 'text/markdown');
     };
 
     return { downloadSRT, downloadTXT, downloadJSON, downloadMarkdown };

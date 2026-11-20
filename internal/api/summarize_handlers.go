@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -19,7 +20,10 @@ import (
 
 type SummarizeRequest struct {
 	Model           string  `json:"model" binding:"required"`
-	Content         string  `json:"content" binding:"required"`
+	Content         string  `json:"content"`
+	Transcript      string  `json:"transcript"`
+	Instructions    string  `json:"instructions"`
+	IncludeSpeakers bool    `json:"include_speaker_info"`
 	TranscriptionID string  `json:"transcription_id" binding:"required"`
 	TemplateID      *string `json:"template_id,omitempty"`
 }
@@ -43,6 +47,10 @@ func (h *Handler) Summarize(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.Transcript) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "content or transcript is required"})
+		return
+	}
 
 	svc, provider, err := h.getLLMService(c.Request.Context())
 	if err != nil {
@@ -50,11 +58,23 @@ func (h *Handler) Summarize(c *gin.Context) {
 		return
 	}
 
-	// Prepare chat messages: simple single-user message with full content
-	messages := []llm.ChatMessage{{Role: "user", Content: req.Content}}
-
 	start := time.Now()
-	log.Printf("[summarize] start transcription_id=%s provider=%s model=%s content_len=%d", req.TranscriptionID, provider, req.Model, len(req.Content))
+	inputLength := len(req.Content)
+	if req.Transcript != "" {
+		inputLength = len(req.Transcript)
+	}
+	log.Printf("[summarize] start transcription_id=%s provider=%s model=%s input_len=%d structured=%t", req.TranscriptionID, provider, req.Model, inputLength, req.Transcript != "")
+
+	var messages []llm.ChatMessage
+	if strings.TrimSpace(req.Transcript) != "" {
+		messages, err = prepareSummaryMessages(c.Request.Context(), svc, req.Model, req.Transcript, req.Instructions, req.IncludeSpeakers)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		messages = []llm.ChatMessage{{Role: "user", Content: req.Content}}
+	}
 
 	// Stream response with proper headers for real-time delivery
 	c.Header("Content-Type", "text/plain; charset=utf-8")
@@ -251,16 +271,28 @@ func (h *Handler) AutoGenerateSummaryForJob(ctx context.Context, jobID string) e
 		return err
 	}
 
-	// Extract plain text from transcript JSON
-	transcriptText := extractTranscriptText(job.Transcript)
+	// Preserve speaker attribution when the selected template requests it.
+	transcriptText := ""
+	if template.IncludeSpeakerInfo {
+		mappings, _ := h.speakerMappingRepo.ListByJob(ctx, jobID)
+		mappingMap := make(map[string]string, len(mappings))
+		for _, mapping := range mappings {
+			if mapping.IsConfirmedIdentity() {
+				mappingMap[mapping.OriginalSpeaker] = mapping.CustomName
+			}
+		}
+		transcriptText, err = formatTranscriptJSONWithSpeakers([]byte(*job.Transcript), mappingMap)
+		if err != nil {
+			logger.Warn("Auto-summary could not build speaker transcript; using plain text", "job_id", jobID, "error", err)
+			transcriptText = extractTranscriptText(job.Transcript)
+		}
+	} else {
+		transcriptText = extractTranscriptText(job.Transcript)
+	}
 	if transcriptText == "" {
 		logger.Debug("Auto-summary skipped: could not extract transcript text", "job_id", jobID)
 		return nil
 	}
-
-	// Build the prompt using the template
-	combinedContent := "Transcript:\n" + transcriptText + "\n\nInstructions:\n" + template.Prompt
-	messages := []llm.ChatMessage{{Role: "user", Content: combinedContent}}
 
 	model := template.Model
 	if model == "" {
@@ -270,8 +302,13 @@ func (h *Handler) AutoGenerateSummaryForJob(ctx context.Context, jobID string) e
 
 	logger.Info("Auto-generating summary", "job_id", jobID, "provider", provider, "model", model)
 
-	// Use non-streaming completion for background generation
-	resp, err := svc.ChatCompletion(ctx, model, messages, 0.0)
+	messages, err := prepareSummaryMessages(ctx, svc, model, transcriptText, template.Prompt, template.IncludeSpeakerInfo)
+	if err != nil {
+		return err
+	}
+
+	// Use non-streaming completion for background generation.
+	content, err := runSummaryCompletion(ctx, svc, model, messages)
 	if err != nil {
 		errLower := strings.ToLower(err.Error())
 		if strings.Contains(errLower, "connection refused") || strings.Contains(errLower, "no such host") {
@@ -282,11 +319,6 @@ func (h *Handler) AutoGenerateSummaryForJob(ctx context.Context, jobID string) e
 		return err
 	}
 
-	if resp == nil || len(resp.Choices) == 0 {
-		return nil
-	}
-
-	content := resp.Choices[0].Message.Content
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
@@ -294,7 +326,9 @@ func (h *Handler) AutoGenerateSummaryForJob(ctx context.Context, jobID string) e
 	// Persist the summary
 	req := SummarizeRequest{
 		Model:           model,
-		Content:         combinedContent,
+		Transcript:      transcriptText,
+		Instructions:    template.Prompt,
+		IncludeSpeakers: template.IncludeSpeakerInfo,
 		TranscriptionID: jobID,
 		TemplateID:      &template.ID,
 	}
@@ -333,31 +367,13 @@ func extractTranscriptText(transcript *string) string {
 	}
 	raw := *transcript
 
-	// Try to parse as JSON and extract .text field
-	// The transcript is often stored as {"text": "...", "segments": [...]}
+	// The transcript is often stored as {"text": "...", "segments": [...]}.
+	// Use the JSON decoder so escaped quotes, line breaks, and Unicode reach the
+	// summarizer exactly as they appeared in the accepted transcript.
 	if strings.HasPrefix(strings.TrimSpace(raw), "{") {
-		// Simple extraction: find "text" field value
-		idx := strings.Index(raw, `"text"`)
-		if idx >= 0 {
-			rest := raw[idx+len(`"text"`):]
-			// Skip whitespace and colon
-			rest = strings.TrimLeft(rest, " \t\n\r:")
-			if strings.HasPrefix(rest, `"`) {
-				// Find the closing quote (handle escaped quotes)
-				rest = rest[1:] // skip opening quote
-				var result strings.Builder
-				for i := 0; i < len(rest); i++ {
-					if rest[i] == '\\' && i+1 < len(rest) {
-						result.WriteByte(rest[i+1])
-						i++
-						continue
-					}
-					if rest[i] == '"' {
-						return result.String()
-					}
-					result.WriteByte(rest[i])
-				}
-			}
+		var payload regenPayload
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil && strings.TrimSpace(payload.Text) != "" {
+			return payload.Text
 		}
 	}
 

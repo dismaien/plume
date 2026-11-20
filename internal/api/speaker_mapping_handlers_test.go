@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"quill/internal/database"
@@ -1204,6 +1205,77 @@ func TestUpdateSpeakerMappings_CreatesNewMappings(t *testing.T) {
 		if m.MatchSource != "manual" {
 			t.Errorf("mapping %q: MatchSource got %q, want %q", m.OriginalSpeaker, m.MatchSource, "manual")
 		}
+	}
+}
+
+func TestUpdateSpeakerMappings_ConsolidatesDuplicateDisplayIdentity(t *testing.T) {
+	h, db, cleanup := setupSpeakerMappingHarness(t)
+	defer cleanup()
+
+	title := "260820 11:16 Dream Notes [Speaker A, Speaker B, Speaker C] {03:57}"
+	transcript := `{"text":"one voice","segments":[{"text":"one","speaker":"speaker_00"},{"text":"voice","speaker":"speaker_01"},{"text":"continued","speaker":"speaker_02"}],"word_segments":[{"word":"one","speaker":"speaker_00"}]}`
+	job := &models.TranscriptionJob{
+		ID:         "job-consolidate-speakers",
+		AudioPath:  "/tmp/one-voice.wav",
+		Status:     models.StatusCompleted,
+		Title:      &title,
+		Transcript: &transcript,
+	}
+	if err := db.Create(job).Error; err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	reqBody := SpeakerMappingsUpdateRequest{Mappings: []SpeakerMappingRequest{
+		{OriginalSpeaker: "speaker_00", CustomName: "Leona"},
+		{OriginalSpeaker: "speaker_01", CustomName: "Leona"},
+		{OriginalSpeaker: "speaker_02", CustomName: "Leona"},
+	}}
+	body, _ := json.Marshal(reqBody)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: job.ID}}
+	c.Request, _ = http.NewRequest("POST", "/api/v1/transcription/"+job.ID+"/speakers", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.UpdateSpeakerMappings(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var updated models.TranscriptionJob
+	if err := db.First(&updated, "id = ?", job.ID).Error; err != nil {
+		t.Fatalf("reload job: %v", err)
+	}
+	if updated.Title == nil || strings.Count(*updated.Title, "Leona") != 1 || !strings.Contains(*updated.Title, "[Leona]") {
+		t.Fatalf("title did not consolidate speaker names: %v", updated.Title)
+	}
+
+	var payload struct {
+		Segments []struct {
+			Speaker     string `json:"speaker"`
+			SpeakerName string `json:"speaker_name"`
+		} `json:"segments"`
+		Words []struct {
+			Speaker     string `json:"speaker"`
+			SpeakerName string `json:"speaker_name"`
+		} `json:"word_segments"`
+	}
+	if updated.Transcript == nil || json.Unmarshal([]byte(*updated.Transcript), &payload) != nil {
+		t.Fatalf("updated database transcript is invalid: %v", updated.Transcript)
+	}
+	for i, segment := range payload.Segments {
+		if segment.SpeakerName != "Leona" {
+			t.Errorf("segment %d speaker_name: got %q, want Leona", i, segment.SpeakerName)
+		}
+		if segment.Speaker == "Leona" {
+			t.Errorf("segment %d raw speaker label was overwritten", i)
+		}
+	}
+	if len(payload.Words) != 1 || payload.Words[0].SpeakerName != "Leona" {
+		t.Fatalf("word-level speaker identity was not updated: %+v", payload.Words)
 	}
 }
 

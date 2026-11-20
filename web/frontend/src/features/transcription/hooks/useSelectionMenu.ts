@@ -110,6 +110,10 @@ export function useSelectionMenu(
                 }
                 charIndex += node.textContent?.length || 0;
                 node = walker.nextNode();
+                // Transcript views render separate text containers with one
+                // visual space between them. The canonical word map includes
+                // that separator, so account for it before the next node.
+                if (node) charIndex += 1;
             }
 
             // If we found the node, add the local offset

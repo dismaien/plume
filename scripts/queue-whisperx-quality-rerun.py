@@ -48,7 +48,8 @@ WHISPERX_PARAMS: dict[str, Any] = {
     "logprob_threshold": -1.0,
     "no_speech_threshold": 0.6,
     "diarize": True,
-    "diarize_model": "sherpa-onnx",
+    "diarize_model": "nvidia_sortformer",
+    "max_speakers": 4,
 }
 
 
@@ -207,7 +208,7 @@ def select_batch(candidates: list[Candidate], limit: int, max_hours: float) -> l
         if len(selected) >= limit:
             break
         next_hours = total_hours(selected) + candidate.duration_seconds / 3600
-        if selected and max_hours > 0 and next_hours > max_hours:
+        if max_hours > 0 and next_hours > max_hours:
             continue
         selected.append(candidate)
     return selected
@@ -288,6 +289,8 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
+    if args.apply:
+        parser.error("Legacy apply is retired. Use queue-archive-quality-rerun.py --apply-plan with a canonical audit plan.")
 
     db_path = Path(args.db).expanduser()
     run_dir = Path(args.runs_dir).expanduser() / args.run_name

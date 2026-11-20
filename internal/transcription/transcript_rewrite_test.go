@@ -141,6 +141,63 @@ func TestRewriteTranscriptJSON_AppliesMappings(t *testing.T) {
 	}
 }
 
+func TestRewriteTranscriptString_ConsolidatesDisplayIdentity(t *testing.T) {
+	raw := `{
+		"text":"one voice",
+		"segments":[
+			{"start":0,"end":1,"text":"one","speaker":"speaker_00"},
+			{"start":1,"end":2,"text":"voice","speaker":"speaker_01"},
+			{"start":2,"end":3,"text":"continued","speaker":"speaker_02"}
+		],
+		"word_segments":[
+			{"start":0,"end":1,"word":"one","speaker":"speaker_00"},
+			{"start":1,"end":2,"word":"voice","speaker":"speaker_01"}
+		]
+	}`
+
+	rewritten, err := RewriteTranscriptString(raw, map[string]string{
+		"speaker_00": "Leona",
+		"speaker_01": "Leona",
+		"speaker_02": "Leona",
+	})
+	if err != nil {
+		t.Fatalf("RewriteTranscriptString returned error: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(rewritten), &payload); err != nil {
+		t.Fatalf("unmarshal rewritten transcript: %v", err)
+	}
+
+	for i, segment := range payload["segments"].([]interface{}) {
+		if got := segmentField(t, segment, "speaker_name"); got != "Leona" {
+			t.Errorf("segment %d speaker_name: got %q, want Leona", i, got)
+		}
+		if got := segmentField(t, segment, "speaker"); got == "Leona" {
+			t.Errorf("segment %d raw speaker label was overwritten", i)
+		}
+	}
+	for i, word := range payload["word_segments"].([]interface{}) {
+		if got := segmentField(t, word, "speaker_name"); got != "Leona" {
+			t.Errorf("word %d speaker_name: got %q, want Leona", i, got)
+		}
+	}
+}
+
+func TestConfirmedSpeakerNameMap_NormalizesDuplicateIdentity(t *testing.T) {
+	mappings := ConfirmedSpeakerNameMap([]models.SpeakerMapping{
+		{OriginalSpeaker: "speaker_00", CustomName: "Leona", MatchSource: "manual"},
+		{OriginalSpeaker: "speaker_01", CustomName: " leona ", MatchSource: "manual"},
+		{OriginalSpeaker: "speaker_02", CustomName: "LEONA", MatchSource: "manual"},
+	})
+
+	for _, speaker := range []string{"speaker_00", "speaker_01", "speaker_02"} {
+		if got := mappings[speaker]; got != "Leona" {
+			t.Errorf("%s display name: got %q, want Leona", speaker, got)
+		}
+	}
+}
+
 // TestRewriteTranscriptJSON_PreservesOriginalSpeaker verifies that the "speaker"
 // field is NOT modified; only "speaker_name" is added/updated.
 func TestRewriteTranscriptJSON_PreservesOriginalSpeaker(t *testing.T) {

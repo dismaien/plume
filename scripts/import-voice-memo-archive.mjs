@@ -11,6 +11,7 @@ const recordingsDir = path.join(archiveRoot, "Recordings");
 const indexPath = path.join(archiveRoot, "metadata", "recordings-index.tsv");
 const checksumsPath = path.join(archiveRoot, "checksums.sha256");
 const dbPath = args.db || "/Users/leona/Library/Application Support/plume-desktop/data/quill.db";
+const playbackLinkDir = args.playbackLinkDir || path.join(path.dirname(dbPath), "playback-links");
 const apiBase = args.apiBase || "http://127.0.0.1:49291/api/v1";
 const syncReportPath = requiredArg("syncReport");
 const statePath = args.state || path.join(path.dirname(syncReportPath), `plume-import-${path.basename(syncReportPath, ".json")}.json`);
@@ -18,9 +19,13 @@ const shouldStart = Boolean(args.start || args.monitor);
 const shouldMonitor = Boolean(args.monitor);
 
 const syncReport = JSON.parse(fs.readFileSync(syncReportPath, "utf8"));
-const copiedNames = [...new Set(syncReport.copied_audio || [])].filter(isAudioFilename);
+const copiedNames = [...new Set([
+  ...(syncReport.copied_audio || []),
+  ...(syncReport.reconciled_audio || []),
+])].filter(isAudioFilename);
 const index = readTSVIndex(indexPath);
 const manifestHashes = readChecksumManifest(checksumsPath);
+ensureAudioDurationColumn();
 const activeVaultID = Number(sqliteRows("select id from vaults where is_active = 1 order by id limit 1;")[0]?.id || 0);
 
 if (!activeVaultID) throw new Error("Plume has no active vault");
@@ -36,12 +41,14 @@ for (const filename of copiedNames) {
   if (!expectedHash) throw new Error(`Checksum manifest has no entry for ${relativePath}`);
   const actualHash = sha256File(audioPath);
   if (actualHash !== expectedHash) throw new Error(`Checksum mismatch for ${relativePath}`);
+  ensurePlaybackLink(audioPath);
 
   const metadata = index.get(filename) || {};
   const existing = sqliteRows(`select id, status, title, audio_path from transcription_jobs where file_hash = ${quote(actualHash)} and deleted_at is null limit 1;`)[0];
   const id = existing?.id || `archive-${actualHash.slice(0, 32)}`;
   const appleTitle = cleanText(metadata.apple_title) || path.parse(filename).name;
   const recordedAt = filenameRecordedAt(filename);
+  const audioDurationMillis = durationMillis(metadata.duration_seconds);
 
   if (!existing) {
     const now = new Date().toISOString();
@@ -50,24 +57,28 @@ insert into transcription_jobs (
   id, title, status, audio_path, vault_id, diarization, merge_status,
   created_at, updated_at, model_family, model, device, batch_size,
   compute_type, output_format, verbose, task, interpolate_method,
-  vad_preprocess, vad_method, vad_onset, vad_offset, chunk_size,
-  diarize, diarize_model, temperature, best_of, beam_size, patience,
+  vad_preprocess, whisper_full_audio, vad_method, vad_onset, vad_offset, chunk_size,
+  diarize, diarize_model, diarization_device, temperature, best_of, beam_size, patience,
   length_penalty, condition_on_previous_text, fp16,
   temperature_increment_on_fallback, compression_ratio_threshold,
   logprob_threshold, no_speech_threshold, segment_resolution,
-  original_filename, file_hash, recorded_at
+  original_filename, file_hash, audio_duration_ms, recorded_at
 ) values (
   ${quote(id)}, ${quote(appleTitle)}, 'uploaded', ${quote(audioPath)}, ${activeVaultID}, 1, 'none',
   ${quote(now)}, ${quote(now)}, 'whisper', 'large-v3', 'cpu', 8,
   'int8', 'all', 1, 'transcribe', 'nearest',
-  0, 'silero', 0.5, 0.363, 30,
-  1, 'sherpa-onnx', 0, 5, 5, 1,
+  1, 0, 'silero', 0.5, 0.363, 30,
+  1, 'pyannote', 'mps', 0, 5, 5, 1,
   1, 0, 1,
   0.2, 2.4,
-  -1, 0.6, 'sentence',
-  ${quote(filename)}, ${quote(actualHash)}, ${quote(recordedAt)}
+  -0.5, 0.6, 'sentence',
+  ${quote(filename)}, ${quote(actualHash)}, ${audioDurationMillis}, ${quote(recordedAt)}
 );
 commit;`);
+  } else if (audioDurationMillis > 0) {
+    sqliteRun(`update transcription_jobs
+set audio_duration_ms = ${audioDurationMillis}
+where id = ${quote(id)} and coalesce(audio_duration_ms, 0) <= 0;`);
   }
 
   jobs.push({
@@ -77,6 +88,7 @@ commit;`);
     file_hash: actualHash,
     apple_title: appleTitle,
     recorded_at_local: recordedAt,
+    audio_duration_ms: audioDurationMillis,
     existed: Boolean(existing),
     initial_status: existing?.status || "uploaded",
   });
@@ -91,7 +103,7 @@ writeState({
   sync_report: syncReportPath,
   archive_root: archiveRoot,
   storage: "reference",
-  model: "WhisperX large-v3 CPU int8 with Silero VAD",
+  model: "WhisperX large-v3 CPU int8 with required Silero VAD",
   jobs,
 });
 
@@ -117,15 +129,24 @@ if (shouldMonitor) {
       if (finished.has(job.id)) continue;
       const current = getJob(job.id);
       if (current.status === "completed") {
-        let titled = requestJSON("POST", `${apiBase}/transcription/${job.id}/title/auto?force=true`);
-        if (isLocationTitle(job.apple_title) && typeof titled.title === "string") {
-          const corrected = moveLocationToSuffix(titled.title, job.apple_title);
-          if (corrected !== titled.title) {
-            titled = requestJSON("PUT", `${apiBase}/transcription/${job.id}/title`, { title: corrected });
+        if (job.existed && job.initial_status === "completed") {
+          finished.add(job.id);
+          console.log(JSON.stringify({ event: "existing_completed", id: job.id, title: current.title }));
+          continue;
+        }
+        try {
+          let titled = requestJSON("POST", `${apiBase}/transcription/${job.id}/title/auto?force=true`);
+          if (isLocationTitle(job.apple_title) && typeof titled.title === "string") {
+            const corrected = moveLocationToSuffix(titled.title, job.apple_title);
+            if (corrected !== titled.title) {
+              titled = requestJSON("PUT", `${apiBase}/transcription/${job.id}/title`, { title: corrected });
+            }
           }
+          console.log(JSON.stringify({ event: "completed_and_titled", id: job.id, title: titled.title || current.title }));
+        } catch (error) {
+          console.error(JSON.stringify({ event: "completed_title_failed", id: job.id, title: current.title, error: String(error?.message || error) }));
         }
         finished.add(job.id);
-        console.log(JSON.stringify({ event: "completed_and_titled", id: job.id, title: titled.title || current.title }));
       } else if (["cancelled"].includes(current.status)) {
         finished.add(job.id);
         console.log(JSON.stringify({ event: "terminal", id: job.id, status: current.status }));
@@ -138,7 +159,7 @@ if (shouldMonitor) {
       sync_report: syncReportPath,
       archive_root: archiveRoot,
       storage: "reference",
-      model: "WhisperX large-v3 CPU int8 with Silero VAD",
+      model: "WhisperX large-v3 CPU int8 with required Silero VAD",
       completed: finished.size,
       jobs: jobs.map((job) => ({ ...job, status: safeJobStatus(job.id) })),
     });
@@ -162,13 +183,17 @@ function qualityParameters() {
     interpolate_method: "nearest",
     no_align: false,
     return_char_alignments: false,
-    vad_preprocess: false,
+    // Long voice memos often contain extended silence. Required VAD prevents
+    // Whisper from turning those regions into repeated filler hallucinations.
+    vad_preprocess: true,
+    whisper_full_audio: false,
     vad_method: "silero",
     vad_onset: 0.5,
     vad_offset: 0.363,
     chunk_size: 30,
     diarize: true,
-    diarize_model: "sherpa-onnx",
+    diarize_model: "pyannote",
+    diarization_device: "mps",
     speaker_embeddings: false,
     temperature: 0,
     best_of: 5,
@@ -180,7 +205,7 @@ function qualityParameters() {
     fp16: true,
     temperature_increment_on_fallback: 0.2,
     compression_ratio_threshold: 2.4,
-    logprob_threshold: -1,
+    logprob_threshold: -0.5,
     no_speech_threshold: 0.6,
     highlight_words: false,
     segment_resolution: "sentence",
@@ -257,21 +282,37 @@ function sha256File(file) {
   return hash.digest("hex");
 }
 
+function ensurePlaybackLink(audioPath) {
+  fs.mkdirSync(playbackLinkDir, { recursive: true });
+  const digest = crypto.createHash("sha256").update(audioPath).digest("hex");
+  const linkPath = path.join(playbackLinkDir, `${digest}${path.extname(audioPath).toLowerCase()}`);
+  const sourceStat = fs.statSync(audioPath);
+  try {
+    const linkStat = fs.statSync(linkPath);
+    if (sourceStat.dev === linkStat.dev && sourceStat.ino === linkStat.ino) return linkPath;
+    fs.unlinkSync(linkPath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  fs.linkSync(audioPath, linkPath);
+  return linkPath;
+}
+
 function filenameRecordedAt(filename) {
-  const match = filename.match(/^(\d{4})(\d{2})(\d{2}) (\d{2})(\d{2})(\d{2})-/);
+  const match = filename.match(/^(\d{4})(\d{2})(\d{2}) (\d{2})(\d{2})(\d{2})(?:-|\.|$)/);
   if (!match) return "";
   return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}:${match[6]}`;
 }
 
 function isLocationTitle(title) {
-  return /^(?:Rua|R.|Avenida|Av\.|Calle|Carrer|Street|St\.|Road|Rd\.|Beco|Jalan|Fraunhoferstra|Bristlestra|Maspeth|Millennium|Schwarzwald)/i.test(title.trim());
+  return /^(?:Rua|R.|Praça|Praca|Avenida|Av\.|Calle|Carrer|Street|St\.|Road|Rd\.|Beco|Jalan|Fraunhoferstra|Bristlestra|Maspeth|Millennium|Schwarzwald)/i.test(title.trim());
 }
 
 function moveLocationToSuffix(title, location) {
   const escaped = escapeRegExp(location.trim());
   let result = title.replace(new RegExp(`\\s*\\(${escaped}\\)`, "i"), "").trim();
   if (new RegExp(`@${escaped}`, "i").test(result)) return result;
-  const duration = result.match(/\s+(\{\d{2}:\d{2}\})$/);
+  const duration = result.match(/\s+(\{\d{1,2}:\d{2}(?::\d{2})?\})$/);
   if (duration) {
     result = `${result.slice(0, -duration[0].length)} @${location.trim()} ${duration[1]}`;
   } else {
@@ -287,6 +328,18 @@ function sqliteRows(sql) {
 
 function sqliteRun(sql) {
   execFileSync("sqlite3", [dbPath, sql], { encoding: "utf8", timeout: 120_000 });
+}
+
+function ensureAudioDurationColumn() {
+  const columns = sqliteRows("pragma table_info(transcription_jobs);");
+  if (!columns.some((column) => column.name === "audio_duration_ms")) {
+    sqliteRun("alter table transcription_jobs add column audio_duration_ms integer not null default 0;");
+  }
+}
+
+function durationMillis(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0;
 }
 
 function writeState(value) {

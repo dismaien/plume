@@ -25,41 +25,9 @@ func RewriteTranscriptJSON(jsonPath string, mappings map[string]string) error {
 		return fmt.Errorf("transcript_rewrite: read %s: %w", jsonPath, err)
 	}
 
-	// Unmarshal into a generic structure so we can preserve all existing fields.
-	var payload map[string]interface{}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return fmt.Errorf("transcript_rewrite: parse %s: %w", jsonPath, err)
-	}
-
-	// Update segments in-place.
-	if rawSegs, ok := payload["segments"]; ok {
-		if segs, ok := rawSegs.([]interface{}); ok {
-			for _, rawSeg := range segs {
-				seg, ok := rawSeg.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				speakerVal, hasSpeaker := seg["speaker"]
-				if !hasSpeaker {
-					continue
-				}
-				speakerStr, ok := speakerVal.(string)
-				if !ok {
-					continue
-				}
-				if displayName, mapped := mappings[speakerStr]; mapped {
-					seg["speaker_name"] = displayName
-				} else {
-					delete(seg, "speaker_name")
-				}
-			}
-		}
-	}
-
-	// Marshal with pretty-printing.
-	out, err := json.MarshalIndent(payload, "", "  ")
+	out, err := rewriteTranscriptJSON(raw, mappings, true)
 	if err != nil {
-		return fmt.Errorf("transcript_rewrite: marshal %s: %w", jsonPath, err)
+		return fmt.Errorf("transcript_rewrite: parse %s: %w", jsonPath, err)
 	}
 
 	// Atomic write: write to a sibling temp file, then rename.
@@ -89,6 +57,77 @@ func RewriteTranscriptJSON(jsonPath string, mappings map[string]string) error {
 	return nil
 }
 
+// RewriteTranscriptString applies speaker display names to the transcript JSON
+// stored in the database. Raw diarization labels remain intact so a rename can
+// always be reversed or changed later.
+func RewriteTranscriptString(raw string, mappings map[string]string) (string, error) {
+	out, err := rewriteTranscriptJSON([]byte(raw), mappings, false)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func rewriteTranscriptJSON(raw []byte, mappings map[string]string, pretty bool) ([]byte, error) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+
+	// Word-level speaker identity is used by downloads and playback tooling;
+	// segment identity is used by the transcript views.
+	applySpeakerNames(payload["segments"], mappings)
+	applySpeakerNames(payload["word_segments"], mappings)
+
+	if pretty {
+		return json.MarshalIndent(payload, "", "  ")
+	}
+	return json.Marshal(payload)
+}
+
+func applySpeakerNames(rawItems interface{}, mappings map[string]string) {
+	items, ok := rawItems.([]interface{})
+	if !ok {
+		return
+	}
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		speaker, ok := item["speaker"].(string)
+		if !ok {
+			continue
+		}
+		if displayName, mapped := mappings[speaker]; mapped {
+			item["speaker_name"] = displayName
+		} else {
+			delete(item, "speaker_name")
+		}
+	}
+}
+
+// ConfirmedSpeakerNameMap builds the original-label to display-name lookup
+// shared by transcript sidecars and the database transcript.
+func ConfirmedSpeakerNameMap(speakerMappings []models.SpeakerMapping) map[string]string {
+	mappings := make(map[string]string, len(speakerMappings))
+	canonicalNames := make(map[string]string, len(speakerMappings))
+	for _, mapping := range speakerMappings {
+		name := strings.TrimSpace(mapping.CustomName)
+		if !mapping.IsConfirmedIdentity() || name == "" {
+			continue
+		}
+		identityKey := strings.ToLower(name)
+		if canonical, exists := canonicalNames[identityKey]; exists {
+			name = canonical
+		} else {
+			canonicalNames[identityKey] = name
+		}
+		mappings[mapping.OriginalSpeaker] = name
+	}
+	return mappings
+}
+
 // transcriptSegmentForRewrite is the segment representation used when
 // reading JSON to regenerate the markdown file.
 type transcriptSegmentForRewrite struct {
@@ -102,6 +141,7 @@ type transcriptSegmentForRewrite struct {
 // transcriptPayloadForRewrite is the top-level JSON structure used when
 // regenerating the markdown file.
 type transcriptPayloadForRewrite struct {
+	Metadata map[string]string             `json:"metadata"`
 	Text     string                        `json:"text"`
 	Segments []transcriptSegmentForRewrite `json:"segments,omitempty"`
 }
@@ -127,7 +167,8 @@ func RewriteTranscriptMarkdown(mdPath string, jsonPath string, job *models.Trans
 	// Convert to the markdownTranscriptPayload used by renderMarkdownTranscript,
 	// applying display-name resolution.
 	mdPayload := &markdownTranscriptPayload{
-		Text: payload.Text,
+		Text:     payload.Text,
+		Metadata: payload.Metadata,
 	}
 	for _, seg := range payload.Segments {
 		displayName := resolveDisplayName(seg.Speaker, seg.SpeakerName, mappings)
@@ -197,13 +238,7 @@ func RewriteTranscriptFiles(job *models.TranscriptionJob, speakerMappings []mode
 		return fmt.Errorf("transcript_rewrite: TranscriptMarkdownPath is nil for job %s", job.ID)
 	}
 
-	// Build the lookup map.
-	mappings := make(map[string]string, len(speakerMappings))
-	for _, m := range speakerMappings {
-		if m.IsConfirmedIdentity() {
-			mappings[m.OriginalSpeaker] = m.CustomName
-		}
-	}
+	mappings := ConfirmedSpeakerNameMap(speakerMappings)
 
 	// Stamp UpdatedAt so the markdown front-matter stays current.
 	job.UpdatedAt = time.Now()

@@ -520,7 +520,6 @@ func recoverJobsFromVaultArtifacts(vault models.Vault) (int, error) {
 	return recoveredCount, nil
 }
 
-
 func isSupportedIngestExtension(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".wav", ".mp3", ".m4a", ".qta", ".aac", ".flac", ".ogg", ".opus", ".webm", ".mp4", ".mov", ".mkv":
@@ -609,7 +608,7 @@ func renderTranscriptMarkdown(job *models.TranscriptionJob, transcript *transcri
 	return b.String()
 }
 
-func writeTranscriptArtifactsForJob(job *models.TranscriptionJob) error {
+func writeTranscriptArtifactsForJob(job *models.TranscriptionJob, storageMode string) error {
 	if job.Transcript == nil || strings.TrimSpace(*job.Transcript) == "" {
 		return nil
 	}
@@ -619,18 +618,24 @@ func writeTranscriptArtifactsForJob(job *models.TranscriptionJob) error {
 		return err
 	}
 
+	baseDir := ""
+	if job.ArtifactDir != nil {
+		baseDir = strings.TrimSpace(*job.ArtifactDir)
+	}
+
 	var activeVault models.Vault
 	vaultErr := database.DB.Where("is_active = ?", true).First(&activeVault).Error
-
-	var baseDir string
-	if vaultErr == nil {
+	if baseDir == "" && vaultErr == nil {
 		title := "transcript"
 		if job.Title != nil && strings.TrimSpace(*job.Title) != "" {
 			title = *job.Title
 		}
 		baseDir = transcription.BundleTargetDir(activeVault.Path, title, job.ID)
+	}
+	if vaultErr == nil {
 		job.VaultID = &activeVault.ID
-	} else {
+	}
+	if baseDir == "" {
 		baseDir = filepath.Join("data", "transcripts", job.ID)
 	}
 
@@ -660,10 +665,14 @@ func writeTranscriptArtifactsForJob(job *models.TranscriptionJob) error {
 		return err
 	}
 
-	// Move audio file into the bundle directory for self-contained artifacts
+	// Reference mode preserves the canonical archive path. Copy mode retains the
+	// original self-contained bundle behavior.
 	if job.AudioPath != "" {
-		if newAudioPath, moveErr := transcription.MoveAudioToBundle(job.AudioPath, baseDir); moveErr == nil {
+		mode := transcription.NormalizeAudioStorageMode(storageMode)
+		if newAudioPath, moveErr := transcription.MaterializeAudioToBundle(job.AudioPath, baseDir, mode); moveErr == nil {
 			job.AudioPath = newAudioPath
+		} else {
+			return moveErr
 		}
 	}
 
@@ -1634,7 +1643,7 @@ func (h *Handler) GetOpenClawJob(c *gin.Context) {
 	}
 
 	if job.Status == models.StatusCompleted {
-		if writeErr := writeTranscriptArtifactsForJob(job); writeErr != nil {
+		if writeErr := writeTranscriptArtifactsForJob(job, h.config.AudioStorageMode); writeErr != nil {
 			logger.Warn("openclaw artifact materialization failed", "job_id", jobID, "error", writeErr)
 		}
 	}
@@ -1659,7 +1668,7 @@ func (h *Handler) GetOpenClawJobTranscriptJSON(c *gin.Context) {
 	}
 
 	if job.Status == models.StatusCompleted {
-		if writeErr := writeTranscriptArtifactsForJob(job); writeErr != nil {
+		if writeErr := writeTranscriptArtifactsForJob(job, h.config.AudioStorageMode); writeErr != nil {
 			logger.Warn("openclaw json artifact materialization failed", "job_id", jobID, "error", writeErr)
 		}
 	}
@@ -1689,7 +1698,7 @@ func (h *Handler) GetOpenClawJobTranscriptMarkdown(c *gin.Context) {
 	}
 
 	if job.Status == models.StatusCompleted {
-		if writeErr := writeTranscriptArtifactsForJob(job); writeErr != nil {
+		if writeErr := writeTranscriptArtifactsForJob(job, h.config.AudioStorageMode); writeErr != nil {
 			logger.Warn("openclaw markdown artifact materialization failed", "job_id", jobID, "error", writeErr)
 		}
 	}
@@ -1728,7 +1737,7 @@ func (h *Handler) MaterializeTranscriptArtifacts(c *gin.Context) {
 		return
 	}
 
-	if err := writeTranscriptArtifactsForJob(job); err != nil {
+	if err := writeTranscriptArtifactsForJob(job, h.config.AudioStorageMode); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to materialize transcript artifacts: " + err.Error()})
 		return
 	}

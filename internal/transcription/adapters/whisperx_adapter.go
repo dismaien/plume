@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,9 @@ type WhisperXAdapter struct {
 }
 
 const defaultWhisperXZipURL = "https://github.com/m-bain/WhisperX/archive/refs/tags/v3.8.0.zip"
+
+//go:embed py/whisper_full_audio.py
+var whisperFullAudioScript []byte
 
 func whisperXReadinessImportStatement() string {
 	return strings.Join([]string{
@@ -245,6 +249,43 @@ func NewWhisperXAdapter(envPath string) *WhisperXAdapter {
 			Description: "Beam search patience",
 			Group:       "quality",
 		},
+
+		{
+			Name: "condition_on_previous_text", Type: "bool", Default: false,
+			Description: "Condition decoding on the previous window", Group: "quality",
+		},
+		{
+			Name: "compression_ratio_threshold", Type: "float", Default: 2.4,
+			Description: "Compression ratio threshold for decoding fallback", Group: "quality",
+		},
+		{
+			Name: "logprob_threshold", Type: "float", Default: -1.0,
+			Description: "Log probability threshold for decoding fallback", Group: "quality",
+		},
+		{
+			Name: "no_speech_threshold", Type: "float", Default: 0.6,
+			Description: "No-speech probability threshold", Group: "quality",
+		},
+		{
+			Name: "chunk_size", Type: "int", Default: 30,
+			Min: &[]float64{1}[0], Max: &[]float64{30}[0],
+			Description: "Maximum merged VAD chunk duration in seconds", Group: "advanced",
+		},
+		{
+			Name: "whisper_full_audio", Type: "bool", Default: false,
+			Description: "Decode the complete input without VAD cuts", Group: "quality",
+		},
+		{
+			Name: "temperature_increment_on_fallback", Type: "float", Default: 0.2,
+			Description: "Temperature fallback step; zero disables fallback sampling", Group: "quality",
+		},
+		{Name: "model_cache_only", Type: "bool", Default: false, Group: "advanced"},
+		{Name: "model_dir", Type: "string", Default: "", Group: "advanced"},
+		{Name: "no_align", Type: "bool", Default: false, Group: "advanced"},
+		{Name: "suppress_numerals", Type: "bool", Default: false, Group: "quality"},
+		{Name: "length_penalty", Type: "float", Default: 1.0, Group: "quality"},
+		{Name: "initial_prompt", Type: "string", Default: "", Group: "quality"},
+		{Name: "suppress_tokens", Type: "string", Default: "-1", Group: "quality"},
 
 		// VAD settings
 		{
@@ -656,6 +697,11 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer w.CleanupTempDirectory(tempDir)
+	if w.GetBoolParameter(params, "whisper_full_audio") {
+		if err := os.WriteFile(filepath.Join(tempDir, "whisper_full_audio.py"), whisperFullAudioScript, 0o600); err != nil {
+			return nil, fmt.Errorf("failed to prepare full-audio decoder: %w", err)
+		}
+	}
 
 	// Build WhisperX command
 	args, err := w.buildWhisperXArgs(input, params, tempDir)
@@ -732,6 +778,16 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 			logger.Warn("Failed to read log tail", "error", readErr)
 		}
 
+		if w.GetBoolParameter(params, "whisper_full_audio") && ctx.Err() == nil {
+			if evidence, readErr := os.ReadFile(filepath.Join(tempDir, "decoding-diagnostics", "asr-0.json")); readErr == nil {
+				if recovered, recoverErr := recoverFullAudioTranscript(evidence); recoverErr == nil {
+					recovered.ModelUsed = w.GetStringParameter(params, "model")
+					recovered.ProcessingTime = time.Since(startTime)
+					logger.Warn("Returning decoded text after post-ASR failure; alignment needs review")
+					return recovered, nil
+				}
+			}
+		}
 		logger.Error("WhisperX execution failed", "error", err)
 		return nil, fmt.Errorf("WhisperX execution failed: %w\nLogs:\n%s", err, logTail)
 	}
@@ -745,6 +801,15 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = w.GetStringParameter(params, "model")
 	result.Metadata = w.CreateDefaultMetadata(params)
+	if w.GetBoolParameter(params, "whisper_full_audio") {
+		data, err := os.ReadFile(filepath.Join(tempDir, "decoding-diagnostics", "asr-0.json"))
+		if err != nil {
+			return nil, fmt.Errorf("missing full-audio decoding evidence: %w", err)
+		}
+		if err := applyFullAudioDiagnostics(result, data, w.GetStringParameter(params, "task")); err != nil {
+			return nil, err
+		}
+	}
 
 	logger.Info("WhisperX transcription completed",
 		"segments", len(result.Segments),
@@ -754,15 +819,42 @@ func (w *WhisperXAdapter) Transcribe(ctx context.Context, input interfaces.Audio
 	return result, nil
 }
 
+// WhisperX's CLI writes its initial alignment language into the final result,
+// even when ASR auto-detected another language. The bundled decoder records the
+// actual language before alignment; use that evidence for transcription output.
+func applyFullAudioDiagnostics(result *interfaces.TranscriptResult, data []byte, task string) error {
+	var diagnostics struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(data, &diagnostics); err != nil {
+		return fmt.Errorf("invalid full-audio decoding evidence: %w", err)
+	}
+	if strings.TrimSpace(diagnostics.Language) == "" {
+		return fmt.Errorf("full-audio decoding evidence has no detected language")
+	}
+	if task == "translate" {
+		result.Language = "en"
+	} else {
+		result.Language = diagnostics.Language
+	}
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]string)
+	}
+	result.Metadata["asr_diagnostics"] = string(data)
+	return nil
+}
+
 // buildWhisperXArgs builds the command arguments for WhisperX
 func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params map[string]interface{}, outputDir string) ([]string, error) {
 	whisperxPath := filepath.Join(w.envPath, "WhisperX")
 
-	args := []string{
-		"run", "--native-tls", "--project", whisperxPath, "python", "-m", "whisperx",
-		input.FilePath,
-		"--output_dir", outputDir,
+	args := []string{"run", "--native-tls", "--project", whisperxPath, "python"}
+	if w.GetBoolParameter(params, "whisper_full_audio") {
+		args = append(args, filepath.Join(outputDir, "whisper_full_audio.py"))
+	} else {
+		args = append(args, "-m", "whisperx")
 	}
+	args = append(args, input.FilePath, "--output_dir", outputDir)
 
 	// Core parameters
 	args = append(args, "--model", w.GetStringParameter(params, "model"))
@@ -770,6 +862,21 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 	args = append(args, "--device_index", strconv.Itoa(w.GetIntParameter(params, "device_index")))
 	args = append(args, "--batch_size", strconv.Itoa(w.GetIntParameter(params, "batch_size")))
 	args = append(args, "--compute_type", w.GetStringParameter(params, "compute_type"))
+	if w.GetBoolParameter(params, "model_cache_only") {
+		args = append(args, "--model_cache_only", "True")
+	}
+	for _, name := range []string{"model_dir", "initial_prompt", "suppress_tokens"} {
+		if value := w.GetStringParameter(params, name); value != "" {
+			args = append(args, "--"+name, value)
+		}
+	}
+	if w.GetBoolParameter(params, "no_align") {
+		args = append(args, "--no_align")
+	}
+	if w.GetBoolParameter(params, "suppress_numerals") {
+		args = append(args, "--suppress_numerals")
+	}
+	args = append(args, "--length_penalty", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "length_penalty")))
 
 	if threads := w.GetIntParameter(params, "threads"); threads > 0 {
 		args = append(args, "--threads", strconv.Itoa(threads))
@@ -789,6 +896,8 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 	args = append(args, "--vad_method", w.GetStringParameter(params, "vad_method"))
 	args = append(args, "--vad_onset", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "vad_onset")))
 	args = append(args, "--vad_offset", fmt.Sprintf("%.3f", w.GetFloatParameter(params, "vad_offset")))
+
+	args = append(args, "--chunk_size", strconv.Itoa(w.GetIntParameter(params, "chunk_size")))
 
 	// Custom alignment model
 	if alignModel := w.GetStringParameter(params, "align_model"); alignModel != "" {
@@ -818,6 +927,22 @@ func (w *WhisperXAdapter) buildWhisperXArgs(input interfaces.AudioInput, params 
 	args = append(args, "--best_of", strconv.Itoa(w.GetIntParameter(params, "best_of")))
 	args = append(args, "--beam_size", strconv.Itoa(w.GetIntParameter(params, "beam_size")))
 	args = append(args, "--patience", fmt.Sprintf("%.2f", w.GetFloatParameter(params, "patience")))
+	if w.GetBoolParameter(params, "whisper_full_audio") {
+		increment := "None"
+		if value := w.GetFloatParameter(params, "temperature_increment_on_fallback"); value > 0 {
+			increment = strconv.FormatFloat(value, 'f', -1, 64)
+		}
+		args = append(args, "--temperature_increment_on_fallback", increment)
+	}
+
+	previousText := "False"
+	if w.GetBoolParameter(params, "condition_on_previous_text") {
+		previousText = "True"
+	}
+	args = append(args, "--condition_on_previous_text", previousText)
+	for _, name := range []string{"compression_ratio_threshold", "logprob_threshold", "no_speech_threshold"} {
+		args = append(args, "--"+name, fmt.Sprintf("%.3f", w.GetFloatParameter(params, name)))
+	}
 
 	// HuggingFace token - use param first, then fall back to environment variable
 	hfToken := w.GetStringParameter(params, "hf_token")

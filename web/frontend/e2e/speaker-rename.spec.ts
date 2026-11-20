@@ -7,6 +7,124 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Speaker Rename Dialog', () => {
+  test('refreshes the detail and sidebar titles after speaker names change', async ({ page }) => {
+    let currentTitle = '260310 10:15 Team Standup March 10';
+    let savedMappings = [
+      { original_speaker: 'SPEAKER_00', custom_name: 'SPEAKER_00', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_01', custom_name: 'SPEAKER_01', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_02', custom_name: 'SPEAKER_02', match_source: 'manual' },
+    ];
+
+    await page.unroute('**/api/v1/transcription/list*');
+    await page.unroute(/\/api\/v1\/transcription\/\d+$/);
+    await page.unroute('**/api/v1/transcription/*/speakers');
+
+    await page.route('**/api/v1/transcription/list*', route => route.fulfill({
+      json: {
+        jobs: [{
+          id: '1',
+          title: currentTitle,
+          status: 'completed',
+          created_at: '2026-03-10T09:00:00Z',
+          recorded_at: '2026-03-10 09:00:00+00:00',
+          audio_path: '/data/uploads/standup-2026-03-10.wav',
+          diarization: true,
+          speakers: 3,
+          duration: 1823.5,
+        }],
+        pagination: { page: 1, limit: 30, total: 1, pages: 1 },
+      },
+    }));
+    await page.route(/\/api\/v1\/transcription\/1$/, route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      return route.fulfill({
+        json: {
+          id: '1',
+          title: currentTitle,
+          status: 'completed',
+          created_at: '2026-03-10T09:00:00Z',
+          recorded_at: '2026-03-10 09:00:00+00:00',
+          audio_path: '/data/uploads/standup-2026-03-10.wav',
+          diarization: true,
+          speakers: 3,
+          duration: 1823.5,
+        },
+      });
+    });
+    await page.route('**/api/v1/transcription/1/speakers', async route => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({ json: savedMappings });
+      }
+
+      const payload = route.request().postDataJSON() as { mappings: typeof savedMappings };
+      savedMappings = payload.mappings;
+      currentTitle = '260310 10:15 Team Standup March 10 [Leona, Andre]';
+      return route.fulfill({
+        json: {
+          mappings: savedMappings,
+          contact_bootstrap: { started_count: 0, created_count: 0, skipped_existing_count: 0 },
+        },
+      });
+    });
+
+    await page.goto('/audio/1');
+    const sidebar = page.getByRole('complementary', { name: 'Recordings list' });
+    await expect(sidebar).toContainText('Team Standup March 10');
+
+    await page.getByRole('button', { name: 'Rename Speakers' }).click();
+    await page.locator('#speaker-SPEAKER_00').fill('Leona');
+    await page.locator('#speaker-SPEAKER_01').fill('Andre');
+    await page.locator('#speaker-SPEAKER_02').fill('Andre');
+    await page.getByRole('dialog', { name: 'Rename Speakers' }).getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.locator('h1.recording-title')).toContainText('[Leona, Andre]');
+    await expect(sidebar.locator('button[aria-current="page"]')).toContainText('[Leona, Andre]');
+  });
+
+  test('consolidates multiple diarization labels renamed to one person', async ({ page }) => {
+    let savedMappings = [
+      { original_speaker: 'SPEAKER_00', custom_name: 'SPEAKER_00', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_01', custom_name: 'SPEAKER_01', match_source: 'manual' },
+      { original_speaker: 'SPEAKER_02', custom_name: 'SPEAKER_02', match_source: 'manual' },
+    ];
+
+    await page.route('**/api/v1/transcription/*/speakers', async (route) => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({ json: savedMappings });
+      }
+
+      const payload = route.request().postDataJSON() as { mappings: typeof savedMappings };
+      savedMappings = payload.mappings;
+      return route.fulfill({
+        json: {
+          mappings: savedMappings,
+          contact_bootstrap: { started_count: 0, created_count: 0, skipped_existing_count: 0 },
+        },
+      });
+    });
+
+    await page.goto('/audio/1');
+    await page.getByRole('button', { name: 'Rename Speakers' }).click();
+
+    for (const speaker of ['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02']) {
+      await page.locator(`#speaker-${speaker}`).fill('Leona');
+    }
+    const renameDialog = page.getByRole('dialog', { name: 'Rename Speakers' });
+    await renameDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(renameDialog).toBeHidden();
+
+    const moreMenu = page.getByRole('button').filter({
+      has: page.locator('svg.lucide-ellipsis-vertical'),
+    }).first();
+    await moreMenu.click();
+    await page.getByRole('menuitem', { name: 'Compacted View' }).click();
+
+    const transcript = page.locator('[data-transcript-text]');
+    await expect(transcript).toHaveCount(1);
+    await expect(transcript).toContainText('Good morning everyone');
+    await expect(page.getByText('Leona', { exact: true })).toHaveCount(1);
+  });
+
   test('opens speaker rename dialog and shows speakers', async ({ page }) => {
     await page.goto('/audio/1');
     await page.waitForLoadState('networkidle');
@@ -37,9 +155,9 @@ test.describe('Speaker Rename Dialog', () => {
       await expect(dialog).toContainText('Rename Speakers');
 
       // Should show speaker labels (SPEAKER_00, SPEAKER_01, SPEAKER_02)
-      await expect(dialog.locator('text=SPEAKER_00').first()).toBeVisible();
-      await expect(dialog.locator('text=SPEAKER_01').first()).toBeVisible();
-      await expect(dialog.locator('text=SPEAKER_02').first()).toBeVisible();
+      await expect(dialog.getByText('Speaker A', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Speaker B', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('Speaker C', { exact: true })).toBeVisible();
     }
   });
 
@@ -121,13 +239,13 @@ test.describe('Speaker Rename Dialog', () => {
       // SPEAKER_00 has match_source="auto" with 92% confidence
       const autoBadge = dialog.locator('[data-testid="badge-auto-SPEAKER_00"]');
       if (await autoBadge.isVisible().catch(() => false)) {
-        await expect(autoBadge).toContainText('Auto 92%');
+        await expect(autoBadge).toHaveAttribute('aria-label', 'Automatic voice match score 92%');
       }
 
       // SPEAKER_01 has match_source="suggestion_promoted" with 75% confidence
       const matchedBadge = dialog.locator('[data-testid="badge-matched-SPEAKER_01"]');
       if (await matchedBadge.isVisible().catch(() => false)) {
-        await expect(matchedBadge).toContainText('Matched 75%');
+        await expect(matchedBadge).toHaveAttribute('aria-label', 'Accepted voice match score 75%');
       }
 
       // SPEAKER_02 has match_source="manual" — no auto or matched badge
@@ -136,7 +254,7 @@ test.describe('Speaker Rename Dialog', () => {
     }
   });
 
-  test('auto-matched speaker inputs are read-only', async ({ page }) => {
+  test('automatic and accepted voice matches remain editable for human correction', async ({ page }) => {
     await page.goto('/audio/1');
     await page.waitForLoadState('networkidle');
 
@@ -156,11 +274,17 @@ test.describe('Speaker Rename Dialog', () => {
 
     const dialog = page.locator('[role="dialog"]');
     if (await dialog.isVisible().catch(() => false)) {
-      // SPEAKER_00 (auto-matched) should be read-only
+      // A model suggestion must never prevent a human correction.
       const autoInput = dialog.locator('input#speaker-SPEAKER_00');
       if (await autoInput.isVisible().catch(() => false)) {
-        await expect(autoInput).toHaveAttribute('readonly', '');
+        await expect(autoInput).toBeEditable();
         await expect(autoInput).toHaveValue('Alice');
+        await autoInput.fill('Corrected Alice');
+        await expect(autoInput).toHaveValue('Corrected Alice');
+        const promotedInput = dialog.locator('input#speaker-SPEAKER_01');
+        await expect(promotedInput).toBeEditable();
+        await promotedInput.fill('Corrected Bob');
+        await expect(promotedInput).toHaveValue('Corrected Bob');
       }
 
       // SPEAKER_02 (manual) should be editable
@@ -172,41 +296,13 @@ test.describe('Speaker Rename Dialog', () => {
     }
   });
 
-  test('save button is disabled when no speakers exist', async ({ page }) => {
-    // Override to return empty speakers
-    await page.route('**/api/v1/transcription/*/speakers', (route) => {
-      if (route.request().method() === 'GET') {
-        return route.fulfill({ json: [] });
-      }
-      return route.continue();
-    });
-
+  test('does not offer rename controls when no speaker identities exist', async ({ page }) => {
+    await page.route('**/api/v1/transcription/*/speakers', route => route.fulfill({ json: [] }));
+    await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+      available: true, transcript: { text: 'Speech without speaker identities.', segments: [{ start: 0, end: 5, text: 'Speech without speaker identities.' }] },
+    } }));
     await page.goto('/audio/1');
-    await page.waitForLoadState('networkidle');
-
-    // Open dialog
-    const triggers = [
-      page.locator('button:has-text("Rename")').first(),
-      page.locator('button:has-text("Speaker")').first(),
-    ];
-
-    for (const trigger of triggers) {
-      if (await trigger.isVisible().catch(() => false)) {
-        await trigger.click();
-        break;
-      }
-    }
-
-    const dialog = page.locator('[role="dialog"]');
-    if (await dialog.isVisible().catch(() => false)) {
-      // Save button should be disabled when no speakers
-      const saveButton = dialog.locator('button:has-text("Save")');
-      if (await saveButton.isVisible().catch(() => false)) {
-        await expect(saveButton).toBeDisabled();
-      }
-
-      // Should show "No speakers found" message
-      await expect(dialog.locator('text=No speakers found')).toBeVisible();
-    }
+    await expect(page.locator('h1.recording-title')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Rename Speakers', exact: true })).toHaveCount(0);
   });
 });

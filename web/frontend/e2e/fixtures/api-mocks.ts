@@ -5,9 +5,10 @@ import { Page } from '@playwright/test';
 export const AUDIO_FILES = [
   {
     id: '1',
-    title: 'Team Standup March 10',
+    title: '260310 10:15 Team Standup March 10',
     status: 'completed',
     created_at: '2026-03-10T09:00:00Z',
+    recorded_at: '2026-03-10 09:00:00+00:00',
     audio_path: '/data/uploads/standup-2026-03-10.wav',
     diarization: true,
     speakers: 3,
@@ -301,7 +302,7 @@ export async function installApiMocks(page: Page) {
   );
 
   // Upload
-  await page.route('**/api/v1/transcription/upload', (route) =>
+  await page.route(/\/api\/v1\/transcription\/upload(?:\?.*)?$/, (route) =>
     route.fulfill({
       json: {
         id: 5,
@@ -535,6 +536,16 @@ export async function installApiMocks(page: Page) {
       status: 200,
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
       body: 'data: {"type":"connected"}\n\n',
+    }),
+  );
+
+  await page.route('**/api/v1/transcription/*/waveform*', (route) =>
+    route.fulfill({
+      json: {
+        peaks: Array.from({ length: 420 }, (_, index) =>
+          index < 80 ? 0.02 : 0.15 + Math.abs(Math.sin(index / 19)) * 0.8,
+        ),
+      },
     }),
   );
 

@@ -121,8 +121,8 @@ class TestFilterGhostSpeakers:
         for seg in result:
             assert seg["speaker"] in ("speaker_0", "speaker_1")
 
-    def test_relative_threshold(self):
-        """Speaker below 5% of total time filtered even if > 1s absolute."""
+    def test_substantive_minority_speaker_is_preserved(self):
+        """A low-share speaker is not erased when their audio is substantive."""
         # 1000s total audio, speaker_2 has 2s (0.2% of total)
         segments = _make_segments([
             ("speaker_0", 0.0, 500.0),
@@ -133,16 +133,29 @@ class TestFilterGhostSpeakers:
         result = filter_ghost_speakers(segments)
         result_speakers = {seg["speaker"] for seg in result}
 
-        # 2s absolute passes the 1s floor, but 0.2% fails the 5% relative threshold
-        assert result_speakers == {"speaker_0", "speaker_1"}
+        # The 2s label is below 5%, but it may still be a real short participant.
+        assert result_speakers == {"speaker_0", "speaker_1", "speaker_2"}
 
-    def test_absolute_threshold(self):
-        """Speaker below absolute minimum filtered even if ratio looks ok."""
+    def test_short_but_meaningful_share_is_preserved(self):
+        """Relative evidence alone cannot justify deleting a speaker label."""
         # 10s total audio, speaker_2 has 0.5s (5% of total — passes ratio, fails absolute)
         segments = _make_segments([
             ("speaker_0", 0.0, 5.0),
             ("speaker_1", 5.0, 10.0),
             ("speaker_2", 3.0, 3.5),  # 0.5s = 5% ratio but below 1.0s absolute
+        ])
+
+        result = filter_ghost_speakers(segments)
+        result_speakers = {seg["speaker"] for seg in result}
+
+        assert result_speakers == {"speaker_0", "speaker_1", "speaker_2"}
+
+    def test_tiny_low_share_trace_is_filtered(self):
+        """Sub-second traces with negligible share are still treated as ghosts."""
+        segments = _make_segments([
+            ("speaker_0", 0.0, 50.0),
+            ("speaker_1", 50.0, 100.0),
+            ("speaker_2", 25.0, 25.2),
         ])
 
         result = filter_ghost_speakers(segments)
@@ -219,7 +232,7 @@ class TestFilterGhostSpeakers:
 
     def test_custom_thresholds(self):
         """Custom thresholds override defaults."""
-        # With stricter ratio (10%), speaker_2 should be filtered
+        # Ratio alone must not erase a substantive minority speaker.
         segments1 = _make_segments([
             ("speaker_0", 0.0, 100.0),
             ("speaker_1", 100.0, 200.0),
@@ -229,7 +242,20 @@ class TestFilterGhostSpeakers:
             segments1, min_activity_ratio=0.10, min_absolute_seconds=1.0
         )
         result_speakers = {seg["speaker"] for seg in result}
-        assert result_speakers == {"speaker_0", "speaker_1"}
+        assert result_speakers == {"speaker_0", "speaker_1", "speaker_2"}
+
+        # A caller may deliberately require both a larger absolute floor and a
+        # larger share before automatically preserving a label.
+        strict_result = filter_ghost_speakers(
+            _make_segments([
+                ("speaker_0", 0.0, 100.0),
+                ("speaker_1", 100.0, 200.0),
+                ("speaker_2", 50.0, 60.0),
+            ]),
+            min_activity_ratio=0.10,
+            min_absolute_seconds=15.0,
+        )
+        assert {seg["speaker"] for seg in strict_result} == {"speaker_0", "speaker_1"}
 
         # With lenient ratio (1%), speaker_2 should be kept (fresh segments)
         segments2 = _make_segments([

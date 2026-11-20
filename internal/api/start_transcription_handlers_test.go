@@ -409,8 +409,8 @@ func TestGetValidatedTranscriptionParams_NoTokenFallsBackToSortformer(t *testing
 	}
 
 	// Should fall back to sortformer since no token is available
-	if params.DiarizeModel != "nvidia_sortformer" {
-		t.Errorf("expected fallback to nvidia_sortformer, got %q", params.DiarizeModel)
+	if params.DiarizeModel != "pyannote" {
+		t.Errorf("expected requested pyannote engine for offline cache, got %q", params.DiarizeModel)
 	}
 }
 
@@ -521,7 +521,7 @@ func TestBatchStartTranscription_NoTokenFallsBackToSortformer(t *testing.T) {
 	}
 
 	// Should have fallen back to sortformer since no token was available
-	if loaded.Parameters.DiarizeModel != "nvidia_sortformer" {
-		t.Errorf("batch path: expected fallback to nvidia_sortformer, got %q", loaded.Parameters.DiarizeModel)
+	if loaded.Parameters.DiarizeModel != "pyannote" {
+		t.Errorf("batch path: expected requested pyannote engine for offline cache, got %q", loaded.Parameters.DiarizeModel)
 	}
 }

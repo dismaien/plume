@@ -1,4 +1,4 @@
-import { Plus, Ear } from "lucide-react";
+import { Plus, Ear, Pencil } from "lucide-react";
 import type { SelectionMenuState } from "@/features/transcription/hooks/useSelectionMenu";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 
@@ -6,12 +6,14 @@ interface TranscriptSelectionMenuProps {
     menuState: SelectionMenuState | null;
     onAddNote: () => void;
     onListenFromHere: () => void;
+    onEditSelection: () => void;
 }
 
 export function TranscriptSelectionMenu({
     menuState,
     onAddNote,
-    onListenFromHere
+    onListenFromHere,
+    onEditSelection
 }: TranscriptSelectionMenuProps) {
     const isDesktop = useIsDesktop();
 
@@ -44,6 +46,17 @@ export function TranscriptSelectionMenu({
                         }}
                     >
                         <Plus className="h-5 w-5" /> <span>Add Note</span>
+                    </button>
+                    <div className="w-px h-5 bg-[var(--border-subtle)]" />
+                    <button
+                        type="button"
+                        className="flex items-center gap-2 text-[var(--text-primary)] hover:text-[var(--brand-solid)] transition-colors font-medium text-sm px-2 py-1 active:scale-95"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onEditSelection();
+                        }}
+                    >
+                        <Pencil className="h-5 w-5" /> <span>Edit</span>
                     </button>
                     <div className="w-px h-5 bg-[var(--border-subtle)]" />
                     <button
@@ -92,6 +105,17 @@ export function TranscriptSelectionMenu({
                     className="flex items-center gap-1.5 text-[var(--text-primary)] hover:text-[var(--brand-solid)] transition-colors font-medium text-sm px-1 py-0.5 active:scale-95"
                     onClick={(e) => {
                         e.stopPropagation();
+                        onEditSelection();
+                    }}
+                >
+                    <Pencil className="h-4 w-4" /> <span>Edit</span>
+                </button>
+                <div className="w-px h-4 bg-[var(--border-subtle)]" />
+                <button
+                    type="button"
+                    className="flex items-center gap-1.5 text-[var(--text-primary)] hover:text-[var(--brand-solid)] transition-colors font-medium text-sm px-1 py-0.5 active:scale-95"
+                    onClick={(e) => {
+                        e.stopPropagation();
                         onListenFromHere();
                     }}
                 >
@@ -106,4 +130,3 @@ export function TranscriptSelectionMenu({
         </div>
     );
 }
-

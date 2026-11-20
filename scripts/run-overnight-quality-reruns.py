@@ -51,7 +51,8 @@ WHISPERX_PARAMS: dict[str, Any] = {
     "logprob_threshold": -1.0,
     "no_speech_threshold": 0.6,
     "diarize": True,
-    "diarize_model": "sherpa-onnx",
+    "diarize_model": "nvidia_sortformer",
+    "max_speakers": 4,
 }
 
 
@@ -293,11 +294,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--hours", type=float, default=12.0)
     parser.add_argument("--poll-seconds", type=int, default=60)
     parser.add_argument("--min-score", type=int, default=12)
-    parser.add_argument("--batch-limit", type=int, default=25)
-    parser.add_argument("--batch-max-hours", type=float, default=60.0)
+    parser.add_argument("--batch-limit", type=int, default=1)
+    parser.add_argument("--batch-max-hours", type=float, default=8.0)
     parser.add_argument("--min-free-gb", type=float, default=12.0)
     parser.add_argument("--retry-job", default=DEFAULT_RETRY_JOB)
     args = parser.parse_args(argv)
+    parser.error("Legacy controller is retired: it ignored failed quality gates. Use queue-archive-quality-rerun.py --apply-plan.")
 
     db_path = args.db.expanduser().resolve()
     runs_dir = args.runs_dir.expanduser().resolve()

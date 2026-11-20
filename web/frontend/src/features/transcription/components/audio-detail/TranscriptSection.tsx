@@ -1,9 +1,11 @@
+import { getTranscriptSpeakerOrder } from "@/lib/speaker-utils";
 import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { TranscriptView } from "@/components/transcript/TranscriptView";
 import { useNotes, useCreateNote, useUpdateNote, useDeleteNote } from "@/features/transcription/hooks/useTranscriptionNotes";
 import { useSelectionMenu } from "@/features/transcription/hooks/useSelectionMenu";
+import { TranscriptEditor, type TranscriptEditTarget } from "./TranscriptEditor";
 import { DownloadDialog } from "./DownloadDialog";
 import SpeakerRenameDialog from "./SpeakerRenameDialog";
 import { NotesSidebar } from "./NotesSidebar";
@@ -13,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { X, StickyNote } from "lucide-react";
 import { computeWordOffsets } from "@/features/transcription/hooks/useKaraokeHighlight";
-import type { Transcript } from "@/features/transcription/hooks/useAudioDetail";
+import { useAudioDetail, type Transcript } from "@/features/transcription/hooks/useAudioDetail";
 import type { SpeakerMapping } from "@/features/transcription/hooks/useTranscriptionSpeakers";
 import type { TranscriptMode } from "@/components/transcript/TranscriptView";
 import { cn } from "@/lib/utils";
@@ -40,7 +42,38 @@ interface TranscriptSectionProps {
     downloadFormat: 'txt' | 'json';
     searchOpen: boolean;
     setSearchOpen: (open: boolean) => void;
+    onReviewNavigationRequested?: () => void;
     onSpeakerMappingsSaved?: (mappings: SpeakerMapping[]) => void;
+}
+
+function computeSegmentSelectionOffsets(transcript: Transcript | undefined, mode: TranscriptMode) {
+    if (!transcript?.segments?.length) return [];
+
+    const texts = transcript.segments.map(segment =>
+        mode === 'compacted' ? segment.text.trim() : segment.text
+    );
+    const renderedText = mode === 'plain'
+        ? (transcript.text || texts.join(' '))
+        : texts.join(' ');
+    let cursor = 0;
+
+    return transcript.segments.map((segment, index) => {
+        const text = texts[index];
+        let startChar = renderedText.indexOf(text, cursor);
+        if (startChar < 0 && text !== text.trim()) {
+            startChar = renderedText.indexOf(text.trim(), cursor);
+        }
+        if (startChar < 0) startChar = cursor;
+        const endChar = Math.min(renderedText.length, startChar + text.length);
+        cursor = endChar + (index < transcript.segments!.length - 1 ? 1 : 0);
+
+        return {
+            startChar,
+            endChar,
+            startTime: segment.start,
+            endTime: segment.end,
+        };
+    });
 }
 
 export function TranscriptSection({
@@ -62,12 +95,14 @@ export function TranscriptSection({
     downloadFormat,
     searchOpen,
     setSearchOpen,
+    onReviewNavigationRequested,
     onSpeakerMappingsSaved,
     className
 }: TranscriptSectionProps & { className?: string }) {
     const isMobile = useIsMobile();
     const isDesktop = useIsDesktop();
     const queryClient = useQueryClient();
+    const { data: audio } = useAudioDetail(audioId);
 
     // Data hooks
     const { data: notes = [] } = useNotes(audioId);
@@ -78,6 +113,28 @@ export function TranscriptSection({
     // Refs
     const transcriptRef = useRef<HTMLDivElement>(null);
     const highlightedWordRef = useRef<HTMLSpanElement>(null);
+    const reviewRequestId = useRef(0);
+    const [editTarget, setEditTarget] = useState<TranscriptEditTarget | null>(null);
+    const [reviewTarget, setReviewTarget] = useState<{ time: number; requestId: number } | null>(null);
+
+    useEffect(() => {
+        if (!reviewTarget) return;
+
+        let innerFrame = 0;
+        const outerFrame = window.requestAnimationFrame(() => {
+            innerFrame = window.requestAnimationFrame(() => {
+                const target = transcriptRef.current?.querySelector<HTMLElement>('[data-review-target="true"]');
+                if (!target) return;
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.focus({ preventScroll: true });
+            });
+        });
+
+        return () => {
+            window.cancelAnimationFrame(outerFrame);
+            if (innerFrame) window.cancelAnimationFrame(innerFrame);
+        };
+    }, [reviewTarget, transcriptMode]);
 
     // Search
     const [searchQuery, setSearchQuery] = useState("");
@@ -105,14 +162,19 @@ export function TranscriptSection({
     // Compute offsets for selection logic
     const words = useMemo(() => transcript?.word_segments || [], [transcript?.word_segments]);
     const { offsets } = useMemo(() => computeWordOffsets(words), [words]);
+    const selectionOffsets = useMemo(
+        () => offsets.length > 0 ? offsets : computeSegmentSelectionOffsets(transcript, transcriptMode),
+        [offsets, transcript, transcriptMode]
+    );
 
     // Unified Selection Hook for both desktop and mobile
     const {
         menuState,
         showEditor,
         openEditor,
-        closeEditor
-    } = useSelectionMenu(transcriptRef, offsets);
+        closeEditor,
+        dismissMenu
+    } = useSelectionMenu(transcriptRef, selectionOffsets);
 
     // Auto-scroll logic
     useEffect(() => {
@@ -157,17 +219,7 @@ export function TranscriptSection({
     }, [onSeek, isDesktop]);
 
     // Helpers
-    const getDetectedSpeakers = () => {
-        // Safe check for segments array
-        if (!transcript?.segments) return [];
-        const speakers = new Set<string>();
-        // Using any for segment here if strict typing is an issue, or typed via Transcript
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        transcript.segments.forEach((segment: any) => {
-            if (segment.speaker) speakers.add(segment.speaker);
-        });
-        return Array.from(speakers).sort();
-    };
+    const detectedSpeakers = useMemo(() => getTranscriptSpeakerOrder(transcript), [transcript]);
 
     const handleSaveNote = (content: string) => {
         if (menuState) {
@@ -191,13 +243,85 @@ export function TranscriptSection({
         }
     };
 
+    const handleEditSelection = () => {
+        if (!menuState) return;
+        setEditTarget({
+            requestId: Date.now(),
+            startTime: menuState.startTime,
+            selectedText: menuState.selectedText,
+        });
+        dismissMenu();
+        window.getSelection()?.removeAllRanges();
+    };
+
+    const unclearPassages = useMemo(() => {
+        const items = transcript?.word_segments?.length ? transcript.word_segments : transcript?.segments ?? [];
+        const runs: { start: number; end: number }[] = [];
+        let inRun = false;
+        for (const item of items) {
+            if (item.speaker || !Number.isFinite(item.start) || !Number.isFinite(item.end)) {
+                inRun = false;
+                continue;
+            }
+            const previous = runs[runs.length - 1];
+            if (inRun && previous && item.start <= previous.end + 0.75) previous.end = Math.max(previous.end, item.end);
+            else runs.push({ start: item.start, end: item.end });
+            inRun = true;
+        }
+        const missingVoiceStart = Number(transcript?.metadata?.speaker_review_start ?? NaN);
+        if (Number.isFinite(missingVoiceStart) && missingVoiceStart >= 0) runs.push({ start: missingVoiceStart, end: missingVoiceStart });
+        return runs.sort((a, b) => a.start - b.start);
+    }, [transcript]);
+    const unlabelledWordCount = transcript?.word_segments?.filter(word => !word.speaker).length ?? 0;
+
+    const handleReviewNavigation = useCallback(() => {
+        const reviewCursor = Math.max(currentTime, reviewTarget?.time ?? 0);
+        const target = unclearPassages.find(passage => passage.start > reviewCursor + 0.25) ?? unclearPassages[0];
+        if (!target) return;
+
+        reviewRequestId.current += 1;
+        onReviewNavigationRequested?.();
+        setReviewTarget({ time: Math.max(0, target.start), requestId: reviewRequestId.current });
+        onSeek(Math.max(0, target.start));
+    }, [currentTime, onReviewNavigationRequested, onSeek, reviewTarget?.time, unclearPassages]);
+
     if (!transcript) return null;
 
     return (
         <div className="obsidian-pane p-4 md:p-5 min-h-[500px]">
-            {/* 
-                  TOOLBAR REMOVED -> Moved to Context Menu 
-                */}
+            {audio?.candidate_transcript_revision_id && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Rerun candidate ready. Your accepted transcript is shown below. Open Edit history to compare and accept the candidate.</p>
+            )}
+            {transcript.metadata?.text_status === 'needs_review' && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text needs review: no usable text was returned. This recording has not been verified as silence.</p>
+            )}
+            {transcript.metadata?.text_status !== 'needs_review' && ['uncertain', 'failed'].includes(transcript.metadata?.diarization_status || '') && (
+                <div role="status" className="mb-4 text-sm text-[var(--text-secondary)]">
+                    <p>Text ready · speakers need review. {unlabelledWordCount > 0
+                        ? `${unlabelledWordCount} of ${transcript.word_segments!.length} words have no speaker label. `
+                        : ''}Unattributed turns are marked “Speaker unclear”.</p>
+                    {transcript.metadata?.speaker_review_reason === 'detected_voice_has_no_attributed_words' && (
+                        <p>A detected voice has no attributed words. Review the overlapping or brief speech before trusting the speaker labels.</p>
+                    )}
+                    {Number(transcript.metadata?.word_refinement_unmatched_words) > 0 && (
+                        <p>{transcript.metadata?.word_refinement_unmatched_words} disputed words have been left open for speaker review.</p>
+                    )}
+                    {Number(transcript.metadata?.word_refinement_applied_words) > 0 && (
+                        <p>{Number(transcript.metadata?.word_refinement_applied_words || 0)} word speaker labels were refined around ambiguous speech. Review these passages.</p>
+                    )}
+                    {unclearPassages.length > 0 && (
+                        <button type="button" className="mt-2 underline underline-offset-4" onClick={handleReviewNavigation}>{transcript.metadata?.word_refinement_status === 'applied_needs_review' ? 'Review refined speaker labels' : 'Review next unclear passage'}</button>
+                    )}
+                </div>
+            )}
+            {transcript.metadata?.alignment_status === 'failed' && (
+                <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text recovered · alignment needs review. Word times come from the speech decoder.</p>
+            )}
+            <TranscriptEditor
+                audioId={audioId}
+                speakerMappings={speakerMappings}
+                contextualTarget={editTarget}
+            />
 
             {/* Transcript Content - Systematic Typography */}
             <div
@@ -239,6 +363,7 @@ export function TranscriptSection({
                             highlightedWordRef={highlightedWordRef}
                             speakerMappings={speakerMappings}
                             autoScrollEnabled={autoScrollEnabled}
+                            reviewTarget={reviewTarget}
                         />
                     </div>
                 </div>
@@ -257,7 +382,9 @@ export function TranscriptSection({
                 open={speakerRenameOpen}
                 onOpenChange={setSpeakerRenameOpen}
                 transcriptionId={audioId}
-                initialSpeakers={getDetectedSpeakers()}
+                initialSpeakers={detectedSpeakers}
+                priorConstraints={transcript.metadata?.speaker_constraints}
+                priorDiarizer={transcript.metadata?.diarization_engine}
                 onSpeakerMappingsUpdate={(mappings) => {
                     queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });
@@ -277,6 +404,7 @@ export function TranscriptSection({
                             menuState={menuState}
                             onAddNote={openEditor}
                             onListenFromHere={handleListenFromHere}
+                            onEditSelection={handleEditSelection}
                         />
                     )}
 

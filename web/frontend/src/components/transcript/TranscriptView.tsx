@@ -1,8 +1,9 @@
-import { forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { Fragment, forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex } from '@/features/transcription/hooks/useKaraokeHighlight';
+import { compactSpeakerPassages } from './compact-speaker-passages';
 import { cn } from '@/lib/utils';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { speakerIndexToLabel } from '@/lib/speaker-utils';
+import { formatSpeakerLabel } from '@/lib/speaker-utils';
 import type { Note } from '@/types/note';
 
 function formatSegmentTime(value: unknown): string {
@@ -35,20 +36,24 @@ function getCaretOffsetFromPoint(x: number, y: number) {
 }
 
 interface WordSegment {
+    speaker_review?: boolean;
     start: number;
     end: number;
     word: string;
     score: number;
     speaker?: string;
+    speaker_name?: string;
 }
 
 interface Transcript {
+    metadata?: Record<string, string>;
     text: string;
     segments?: Array<{
         start: number;
         end: number;
         text: string;
         speaker?: string;
+        speaker_name?: string;
     }>;
     word_segments?: WordSegment[];
 }
@@ -66,6 +71,7 @@ interface TranscriptViewProps {
     speakerMappings: Record<string, string>;
     autoScrollEnabled: boolean;
     onSeek: (time: number) => void;
+    reviewTarget?: { time: number; requestId: number } | null;
     className?: string;
 }
 
@@ -80,37 +86,16 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     speakerMappings,
     autoScrollEnabled,
     onSeek,
+    reviewTarget,
     className
 }, ref) => {
-    const defaultSpeakerLabels = useMemo(() => {
-        const orderedSpeakers: string[] = [];
+    const resolveSegmentSpeaker = (originalSpeaker?: string): string => originalSpeaker?.trim() || '';
 
-        transcript?.segments?.forEach(segment => {
-            if (!segment.speaker) return;
-            if (!orderedSpeakers.includes(segment.speaker)) {
-                orderedSpeakers.push(segment.speaker);
-            }
-        });
-
-        if (orderedSpeakers.length === 0) {
-            transcript?.word_segments?.forEach(word => {
-                if (!word.speaker) return;
-                if (!orderedSpeakers.includes(word.speaker)) {
-                    orderedSpeakers.push(word.speaker);
-                }
-            });
-        }
-
-        const labels: Record<string, string> = {};
-        orderedSpeakers.forEach((speaker, index) => {
-            labels[speaker] = speakerIndexToLabel(index);
-        });
-
-        return labels;
-    }, [transcript?.segments, transcript?.word_segments]);
-
-    const getDisplaySpeakerName = (originalSpeaker: string): string => {
-        return speakerMappings[originalSpeaker] || defaultSpeakerLabels[originalSpeaker] || originalSpeaker;
+    const getDisplaySpeakerName = (originalSpeaker: string, persistedName?: string): string => {
+        const resolvedSpeaker = resolveSegmentSpeaker(originalSpeaker);
+        if (!resolvedSpeaker && persistedName?.trim()) return persistedName.trim();
+        if (!resolvedSpeaker && transcript?.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') return 'Speaker unclear';
+        return speakerMappings[resolvedSpeaker] || persistedName || formatSpeakerLabel(resolvedSpeaker);
     };
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -167,11 +152,11 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     // 1. Precompute per-segment text and offsets
     const expandedData = useMemo(() => {
-        if (!transcript?.segments || !transcript.word_segments) return [];
+        if (!transcript?.segments) return [];
 
         return transcript.segments.map((segment) => {
             // Filter words belonging to this segment
-            const segmentWords = transcript.word_segments!.filter(
+            const segmentWords = (transcript.word_segments ?? []).filter(
                 word => word.start >= segment.start - 0.1 && word.end <= segment.end + 0.1
             );
 
@@ -195,6 +180,9 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         }
         return 0;
     }, [expandedData, currentTime]);
+
+    const isReviewTarget = (start: number, end: number) =>
+        reviewTarget !== null && reviewTarget !== undefined && reviewTarget.time >= start && reviewTarget.time < end;
 
     // Track previous active segment to only scroll on segment change
     const prevActiveSegmentRef = useRef<number>(-1);
@@ -282,6 +270,42 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         }
     }, [expandedData, onSeek]);
 
+    // Use the saved characters for reading and selection. Mark an uncertain
+    // word inside a known passage only when its timing and text both match.
+    const compactTexts = useMemo(() => {
+        const timed = transcript?.word_segments ?? [];
+        let index = 0;
+        return (transcript?.segments ?? []).map(segment => {
+            const text = segment.text.trim();
+            const marks: Array<{ start: number; end: number }> = [];
+            let cursor = 0;
+            let aligned = true;
+            while (index < timed.length) {
+                const word = timed[index];
+                const midpoint = (word.start + word.end) / 2;
+                if (midpoint > segment.end) break;
+                index++;
+                if (!aligned || !segment.speaker || midpoint < segment.start) continue;
+                const token = word.word.trim();
+                if (!token) continue;
+                const start = text.indexOf(token, cursor);
+                if (start < 0) {
+                    aligned = false;
+                    continue;
+                }
+                cursor = start + token.length;
+                if (!word.speaker) marks.push({ start, end: cursor });
+            }
+            if (!aligned || !marks.length) return text;
+            return <>{marks.map((mark, i) => (
+                <Fragment key={mark.start}>
+                    {text.slice(i ? marks[i - 1].end : 0, mark.start)}
+                    <abbr title="Speaker unclear" className="decoration-dotted underline underline-offset-4">{text.slice(mark.start, mark.end)}</abbr>
+                </Fragment>
+            ))}{text.slice(marks[marks.length - 1].end)}</>;
+        });
+    }, [transcript]);
+
     if (!transcript) {
         return (
             <div className="flex flex-col items-center justify-center h-64 text-carbon-400">
@@ -293,7 +317,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     // Render plain text with word-level highlighting (no speaker info)
     const renderPlainView = () => {
         if (!transcript.word_segments || transcript.word_segments.length === 0) {
-            return <p className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
+            return <p data-transcript-text className="text-lg leading-relaxed text-carbon-700 dark:text-carbon-300 whitespace-pre-wrap break-words">{transcript.text}</p>;
         }
 
         return (
@@ -317,6 +341,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                     WebkitTouchCallout: 'default'
                 }}
                 data-transcript-text
+                data-review-target={reviewTarget ? "true" : undefined}
+                tabIndex={reviewTarget ? -1 : undefined}
             >
                 {/* The hook returns the built text string, so we just render it directly */}
                 {fullText}
@@ -335,11 +361,16 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                 {expandedData.map((segment, i) => (
                     <div
                         key={i}
+                        data-transcript-start={segment.start}
+                        data-transcript-end={segment.end}
+                        data-review-target={isReviewTarget(segment.start, segment.end) ? "true" : undefined}
+                        tabIndex={isReviewTarget(segment.start, segment.end) ? -1 : undefined}
                         className={cn(
                             "group flex flex-col sm:flex-row items-start gap-4 p-3 rounded-lg transition-colors border",
                             i === activeSegmentIndex && isPlaying
                                 ? "bg-carbon-50 dark:bg-carbon-800/40 border-carbon-200 dark:border-carbon-700"
-                                : "hover:bg-carbon-50 dark:hover:bg-carbon-800/50 border-transparent hover:border-carbon-100 dark:hover:border-carbon-800"
+                                : "hover:bg-carbon-50 dark:hover:bg-carbon-800/50 border-transparent hover:border-carbon-100 dark:hover:border-carbon-800",
+                            isReviewTarget(segment.start, segment.end) && "bg-[var(--brand-light)]/20 border-[var(--brand-solid)]/50"
                         )}
                     >
                         {/* Timestamp & Speaker */}
@@ -347,12 +378,12 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             <span className="font-mono bg-carbon-100 dark:bg-carbon-800/80 px-1.5 py-0.5 rounded text-[10px] sm:text-xs">
                                 {formatSegmentTime(segment.start)}
                             </span>
-                            {segment.speaker && (
+                            {(resolveSegmentSpeaker(segment.speaker) || (transcript.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested')) && (
                                 <span
                                     className="font-medium text-carbon-700 dark:text-carbon-300 truncate max-w-full"
-                                    title={getDisplaySpeakerName(segment.speaker)}
+                                    title={getDisplaySpeakerName(resolveSegmentSpeaker(segment.speaker), segment.speaker_name)}
                                 >
-                                    {getDisplaySpeakerName(segment.speaker)}
+                                    {getDisplaySpeakerName(resolveSegmentSpeaker(segment.speaker), segment.speaker_name)}
                                 </span>
                             )}
                         </div>
@@ -386,35 +417,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     };
 
     // Compacted View: groups consecutive same-speaker segments into single paragraphs
-    const compactedGroups = useMemo(() => {
-        if (!transcript?.segments) return [];
-
-        const groups: Array<{
-            speaker: string;
-            startTime: number;
-            texts: string[];
-            segmentIndices: number[];
-        }> = [];
-
-        transcript.segments.forEach((segment, i) => {
-            const speaker = segment.speaker || '';
-            const lastGroup = groups[groups.length - 1];
-
-            if (lastGroup && lastGroup.speaker === speaker) {
-                lastGroup.texts.push(segment.text.trim());
-                lastGroup.segmentIndices.push(i);
-            } else {
-                groups.push({
-                    speaker,
-                    startTime: segment.start,
-                    texts: [segment.text.trim()],
-                    segmentIndices: [i],
-                });
-            }
-        });
-
-        return groups;
-    }, [transcript?.segments]);
+    const compactedGroups = compactSpeakerPassages(transcript.segments ?? [], getDisplaySpeakerName,
+        new Set(words.filter(word => word.speaker_review).map(word => word.start)));
 
     const renderCompactedView = () => {
         if (!transcript?.segments || compactedGroups.length === 0) {
@@ -424,10 +428,20 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         return (
             <div className="space-y-6">
                 {compactedGroups.map((group, gi) => (
-                    <div key={gi} className="space-y-1">
-                        {group.speaker && (
+                    <div
+                        key={gi}
+                        data-transcript-start={group.startTime}
+                        data-transcript-end={group.endTime}
+                        data-review-target={isReviewTarget(group.startTime, group.endTime) ? "true" : undefined}
+                        tabIndex={isReviewTarget(group.startTime, group.endTime) ? -1 : undefined}
+                        className={cn(
+                            "space-y-1 rounded-lg border border-transparent p-2 transition-colors",
+                            isReviewTarget(group.startTime, group.endTime) && "bg-[var(--brand-light)]/20 border-[var(--brand-solid)]/50"
+                        )}
+                    >
+                        {group.displaySpeaker && (
                             <div className="flex items-center gap-2 text-sm font-medium text-carbon-600 dark:text-carbon-400 select-none">
-                                <span>{getDisplaySpeakerName(group.speaker)}</span>
+                                <span>{group.displaySpeaker}</span>
                                 <span className="font-mono text-[10px] text-carbon-400 dark:text-carbon-500">
                                     {formatSegmentTime(group.startTime)}
                                 </span>
@@ -447,7 +461,11 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             }}
                             data-transcript-text
                         >
-                            {group.texts.join(' ')}
+                            {group.segmentIndices.map((index, part) => (
+                                <Fragment key={index}>{part > 0 ? ' ' : ''}{group.segmentIndices.length > 1 && !transcript.segments?.[index].speaker && !transcript.segments?.[index].speaker_name
+                                        ? <span><span role="img" aria-label="Speaker unclear" data-label="[Speaker unclear] " className="text-xs font-medium text-carbon-500 before:content-[attr(data-label)]" /><span title="Speaker unclear" className="underline decoration-dotted underline-offset-4">{compactTexts[index]}</span></span>
+                                        : compactTexts[index]}</Fragment>
+                            ))}
                         </p>
                     </div>
                 ))}

@@ -9,6 +9,8 @@ dependencies = [
     "torchaudio",
     "librosa",
     "soundfile",
+    "scipy",
+    "scikit-learn",
     "ml-dtypes>=0.3.1,<0.5.0",
     "onnx>=1.15.0,<1.18.0",
     # "pyannote.audio" # needed for sortformer or no?

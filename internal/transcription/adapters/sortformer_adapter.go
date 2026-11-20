@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -277,6 +278,15 @@ func (s *SortformerAdapter) copyDiarizationScript() error {
 		return fmt.Errorf("failed to write diarization script: %w", err)
 	}
 
+	reclusterContent, err := nvidiaScripts.ReadFile("py/nvidia/recluster_speakers.py")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded recluster_speakers.py: %w", err)
+	}
+	reclusterPath := filepath.Join(s.envPath, "recluster_speakers.py")
+	if err := os.WriteFile(reclusterPath, reclusterContent, 0755); err != nil {
+		return fmt.Errorf("failed to write speaker reclustering script: %w", err)
+	}
+
 	return nil
 }
 
@@ -363,9 +373,23 @@ func (s *SortformerAdapter) Diarize(ctx context.Context, input interfaces.AudioI
 		return nil, fmt.Errorf("failed to parse result: %w", err)
 	}
 
+	result.Metadata = s.CreateDefaultMetadata(params)
+	result.ModelUsed = "diar_streaming_sortformer_4spk-v2.1"
+	refined, err := s.reclusterSpeakerIdentities(ctx, audioInput, result, params, tempDir, procCtx)
+	if err != nil {
+		for i := range result.Segments {
+			result.Segments[i].Speaker = ""
+			result.Segments[i].Confidence = 0
+		}
+		result.SpeakerCount = 0
+		result.Speakers = nil
+		result.Metadata["speaker_identity_status"] = "failed"
+		return result, fmt.Errorf("speaker identity refinement failed; raw evidence retained: %w", err)
+	}
+	result = refined
+
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = "diar_streaming_sortformer_4spk-v2.1"
-	result.Metadata = s.CreateDefaultMetadata(params)
 
 	logger.Info("Sortformer diarization completed",
 		"segments", len(result.Segments),
@@ -390,6 +414,7 @@ func (s *SortformerAdapter) buildSortformerArgs(input interfaces.AudioInput, par
 		"run", "--native-tls", "--project", s.envPath, "python", scriptPath,
 		input.FilePath,
 		outputFile,
+		"--raw-heads",
 	}
 
 	// Add batch size
@@ -402,10 +427,9 @@ func (s *SortformerAdapter) buildSortformerArgs(input interfaces.AudioInput, par
 		args = append(args, "--device", device)
 	}
 
-	// Add max speakers
-	if maxSpeakers := s.GetIntParameter(params, "max_speakers"); maxSpeakers > 0 {
-		args = append(args, "--max-speakers", strconv.Itoa(maxSpeakers))
-	}
+	// Sortformer heads are not identities. Always retain all four activity
+	// tracks here; any requested cap is applied later in embedding space.
+	args = append(args, "--max-speakers", "4")
 
 	// Add output format
 	args = append(args, "--output-format", outputFormat)
@@ -419,6 +443,174 @@ func (s *SortformerAdapter) buildSortformerArgs(input interfaces.AudioInput, par
 	}
 
 	return args, nil
+}
+
+type speakerReclusterOutput struct {
+	Model           string            `json:"model"`
+	RuntimeVersions map[string]string `json:"runtime_versions"`
+	ScriptSHA256    string            `json:"script_sha256"`
+	Status          string            `json:"status"`
+	Reason          string            `json:"reason"`
+	Silhouette      float64           `json:"silhouette"`
+	IdentityCount   int               `json:"identity_count"`
+	SourceTurns     int               `json:"source_turns"`
+	EmbeddedTurns   int               `json:"embedded_turns"`
+	UnlabeledTurns  int               `json:"unlabeled_turns"`
+	Segments        []struct {
+		Start      float64 `json:"start"`
+		End        float64 `json:"end"`
+		Speaker    string  `json:"speaker"`
+		Confidence float64 `json:"confidence"`
+	} `json:"segments"`
+}
+
+// reclusterSpeakerIdentities converts Sortformer's activity heads into stable
+// voice identities. The four model heads are deliberately not published as
+// people. Unresolved turns retain boundaries without claiming a person identity.
+func (s *SortformerAdapter) reclusterSpeakerIdentities(
+	ctx context.Context,
+	input interfaces.AudioInput,
+	result *interfaces.DiarizationResult,
+	params map[string]interface{},
+	tempDir string,
+	procCtx interfaces.ProcessingContext,
+) (*interfaces.DiarizationResult, error) {
+	inputPath := filepath.Join(tempDir, "recluster-input.json")
+	outputPath := filepath.Join(tempDir, "recluster-output.json")
+	payload := struct {
+		Segments []interfaces.DiarizationSegment `json:"segments"`
+	}{Segments: result.Segments}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode raw Sortformer turns: %w", err)
+	}
+	// Persist the raw timeline before refinement so a crash cannot erase evidence.
+	artifactDir := filepath.Join(procCtx.OutputDirectory, "diarization", fmt.Sprint(time.Now().UnixNano()))
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "raw.json"), data, 0o600); err != nil {
+		return nil, err
+	}
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	result.Metadata["diarization_artifact_dir"] = artifactDir
+	result.Metadata["speaker_identity_confidence_kind"] = "embedding_margin_heuristic_uncalibrated"
+	if err := os.WriteFile(inputPath, data, 0o600); err != nil {
+		return nil, fmt.Errorf("write raw Sortformer turns: %w", err)
+	}
+
+	scriptPath := filepath.Join(s.envPath, "recluster_speakers.py")
+	args := []string{
+		"run", "--native-tls", "--project", s.envPath, "python", scriptPath,
+		input.FilePath, inputPath, outputPath,
+	}
+	if maxSpeakers, ok := explicitIntParameter(params, "max_speakers"); ok && maxSpeakers > 0 {
+		args = append(args, "--max-identities", strconv.Itoa(maxSpeakers))
+	}
+
+	cmd := exec.CommandContext(ctx, binaries.UV(), args...)
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "UV_PYTHON=3.11")
+	logPath := filepath.Join(procCtx.OutputDirectory, "transcription.log")
+	logFile, logErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if logErr == nil {
+		defer logFile.Close()
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	}
+
+	logger.Info("Reclustering Sortformer heads by voice identity", "args", strings.Join(args, " "))
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		logTail, _ := s.ReadLogTail(logPath, 2048)
+		return nil, fmt.Errorf("TitaNet reclustering: %w\nLogs:\n%s", err, logTail)
+	}
+
+	outputData, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("read reclustering result: %w", err)
+	}
+	var output speakerReclusterOutput
+	if err := json.Unmarshal(outputData, &output); err != nil {
+		return nil, fmt.Errorf("parse reclustering result: %w", err)
+	}
+
+	if result.Metadata == nil {
+		result.Metadata = map[string]string{}
+	}
+	result.Metadata["speaker_identity_refinement_model"] = output.Model
+	versions, _ := json.Marshal(output.RuntimeVersions)
+	result.Metadata["speaker_identity_runtime_versions"] = string(versions)
+	result.Metadata["speaker_identity_script_sha256"] = output.ScriptSHA256
+	result.Metadata["speaker_identity_status"] = output.Status
+	result.Metadata["speaker_identity_reason"] = output.Reason
+	result.Metadata["speaker_identity_silhouette"] = fmt.Sprintf("%.4f", output.Silhouette)
+	result.Metadata["speaker_identity_source_turns"] = strconv.Itoa(output.SourceTurns)
+	result.Metadata["speaker_identity_embedded_turns"] = strconv.Itoa(output.EmbeddedTurns)
+	result.Metadata["speaker_identity_unlabeled_turns"] = strconv.Itoa(output.UnlabeledTurns)
+
+	if err := os.WriteFile(filepath.Join(artifactDir, "refined.json"), outputData, 0o600); err != nil {
+		return nil, err
+	}
+	applySpeakerReclusterOutput(result, output)
+
+	logger.Info("Voice identity reclustering completed",
+		"status", output.Status,
+		"reason", output.Reason,
+		"silhouette", output.Silhouette,
+		"speakers", result.SpeakerCount,
+		"segments", len(result.Segments))
+	return result, nil
+}
+
+func applySpeakerReclusterOutput(result *interfaces.DiarizationResult, output speakerReclusterOutput) {
+	segments := make([]interfaces.DiarizationSegment, 0, len(output.Segments))
+	speakerSet := make(map[string]struct{})
+	for _, segment := range output.Segments {
+		if segment.End <= segment.Start {
+			continue
+		}
+		segments = append(segments, interfaces.DiarizationSegment{
+			Start: segment.Start, End: segment.End, Speaker: segment.Speaker, Confidence: segment.Confidence,
+		})
+		if strings.TrimSpace(segment.Speaker) != "" {
+			speakerSet[segment.Speaker] = struct{}{}
+		}
+	}
+	speakers := make([]string, 0, len(speakerSet))
+	for speaker := range speakerSet {
+		speakers = append(speakers, speaker)
+	}
+	sort.Strings(speakers)
+	result.Segments = segments
+	result.Speakers = speakers
+	result.SpeakerCount = len(speakers)
+
+}
+
+func explicitIntParameter(params map[string]interface{}, name string) (int, bool) {
+	value, ok := params[name]
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		parsed, err := strconv.Atoi(typed.String())
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // parseResult parses the Sortformer output

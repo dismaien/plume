@@ -20,7 +20,8 @@ test.describe('Settings Page', () => {
 
     // Check for tab triggers
     await expect(page.locator('[aria-label="Transcription"]')).toBeVisible();
-    await expect(page.locator('[aria-label="Account"]')).toBeVisible();
+    // Account controls are intentionally hidden in this desktop build.
+    await expect(page.locator('[aria-label="Account"]')).toHaveCount(0);
     await expect(page.locator('[aria-label="API Keys"]')).toBeVisible();
     await expect(page.locator('[aria-label="LLMs"]')).toBeVisible();
     await expect(page.locator('[aria-label="Summary"]')).toBeVisible();

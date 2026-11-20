@@ -26,6 +26,73 @@ type titleSpeakerPayload struct {
 	Segments []titleSpeakerSegment `json:"segments,omitempty"`
 }
 
+// TitleSpeakerEvidence summarizes acoustic labels and confirmed identities for
+// recording-type and title decisions. EffectiveNarratorCount collapses split
+// diarization labels only when every label has the same confirmed identity.
+type TitleSpeakerEvidence struct {
+	AcousticSpeakerCount   int
+	EffectiveNarratorCount int
+	UnresolvedSpeakerCount int
+	ConfirmedNames         []string
+}
+
+func TitleSpeakerEvidenceFromTranscript(rawTranscript string, mappings []models.SpeakerMapping) TitleSpeakerEvidence {
+	confirmedBySpeaker := make(map[string]string, len(mappings))
+	for _, mapping := range mappings {
+		original := strings.TrimSpace(mapping.OriginalSpeaker)
+		custom := strings.TrimSpace(mapping.CustomName)
+		if original == "" || custom == "" || !mapping.IsConfirmedIdentity() || isGenericSpeakerLabel(custom) {
+			continue
+		}
+		confirmedBySpeaker[original] = custom
+	}
+
+	var payload titleSpeakerPayload
+	if strings.TrimSpace(rawTranscript) == "" || json.Unmarshal([]byte(rawTranscript), &payload) != nil {
+		return TitleSpeakerEvidence{}
+	}
+
+	labels := map[string]struct{}{}
+	identities := map[string]struct{}{}
+	confirmedNames := []string{}
+	seenNames := map[string]struct{}{}
+	for _, segment := range payload.Segments {
+		if segment.Speaker == nil {
+			continue
+		}
+		label := strings.TrimSpace(*segment.Speaker)
+		if label == "" {
+			continue
+		}
+		labels[label] = struct{}{}
+		if name, ok := confirmedBySpeaker[label]; ok {
+			key := strings.ToLower(strings.TrimSpace(name))
+			identities[key] = struct{}{}
+			if _, seen := seenNames[key]; !seen {
+				seenNames[key] = struct{}{}
+				confirmedNames = append(confirmedNames, name)
+			}
+		}
+	}
+
+	unresolved := 0
+	for label := range labels {
+		if _, ok := confirmedBySpeaker[label]; !ok {
+			unresolved++
+		}
+	}
+	effective := len(labels)
+	if len(labels) > 0 && unresolved == 0 && len(identities) > 0 {
+		effective = len(identities)
+	}
+	return TitleSpeakerEvidence{
+		AcousticSpeakerCount:   len(labels),
+		EffectiveNarratorCount: effective,
+		UnresolvedSpeakerCount: unresolved,
+		ConfirmedNames:         confirmedNames,
+	}
+}
+
 // SpeakerTitleNamesFromTranscript returns title-friendly speaker names in
 // first-appearance order. Mappings win over stale speaker_name fields so a
 // re-rename immediately updates derived titles.

@@ -28,6 +28,7 @@ import (
 	"quill/internal/transcription"
 	"quill/internal/transcription/adapters"
 	"quill/internal/transcription/registry"
+	"quill/internal/voicememos"
 	"quill/pkg/logger"
 )
 
@@ -152,7 +153,7 @@ func main() {
 	}
 
 	unifiedProcessor.GetUnifiedService().SetPostMaterializeHook(func(job *models.TranscriptionJob) {
-		api.AutoPublishToObsidian(job)
+		// Publication is handled only by the gated completion hook.
 		if ftsManager != nil && job != nil {
 			title := ""
 			if job.Title != nil {
@@ -195,29 +196,42 @@ func main() {
 
 	// Initialize task queue
 	logger.Startup("queue", "Starting background processing")
-	taskQueue := queue.NewTaskQueue(2, unifiedProcessor, jobRepo) // 2 workers
+	// Local large-v3 transcription and diarization are both memory-heavy. A
+	// second concurrent job causes severe memory pressure and swap growth on
+	// desktop Macs, so process recordings sequentially.
+	taskQueue := queue.NewTaskQueue(1, unifiedProcessor, jobRepo)
 	taskQueue.Start()
 	defer taskQueue.Stop()
 
 	// Initialize desktop auto-import folder watcher service
 	folderWatchService := folderwatch.NewService(cfg, watchedFolderRepo, jobRepo, userRepo, profileRepo, taskQueue)
-	if err := folderWatchService.Start(context.Background()); err != nil {
-		logger.Warn("Some auto-import folders failed to initialize", "error", err)
+	voiceMemoSyncService := voicememos.NewService(cfg.DatabasePath)
+	skipStartupSyncManagers := strings.EqualFold(os.Getenv("QUILL_SKIP_STARTUP_SYNC_MANAGERS"), "true")
+	if !skipStartupSyncManagers {
+		if err := folderWatchService.Start(context.Background()); err != nil {
+			logger.Warn("Some auto-import folders failed to initialize", "error", err)
+		}
+		defer folderWatchService.Stop()
+	} else {
+		logger.Info("Skipping startup filesystem sync managers for this startup")
 	}
-	defer folderWatchService.Stop()
 
 	contactManager := contacts.NewManager(database.DB, contactRepo, cfg.WhisperXEnv)
 	contactManager.SetRetroactiveScanExtractor(api.BuildRetroactiveSpeakerExtractor(cfg.WhisperXEnv))
-	if err := contactManager.Start(context.Background()); err != nil {
-		logger.Warn("Contact file-sync manager failed to initialize", "error", err)
+	if !skipStartupSyncManagers {
+		if err := contactManager.Start(context.Background()); err != nil {
+			logger.Warn("Contact file-sync manager failed to initialize", "error", err)
+		}
+		defer contactManager.Stop()
 	}
-	defer contactManager.Stop()
 
 	bundleManager := transcription.NewBundleManager(database.DB)
-	if err := bundleManager.Start(context.Background()); err != nil {
-		logger.Warn("Bundle sync manager failed to initialize", "error", err)
+	if !skipStartupSyncManagers {
+		if err := bundleManager.Start(context.Background()); err != nil {
+			logger.Warn("Bundle sync manager failed to initialize", "error", err)
+		}
+		defer bundleManager.Stop()
 	}
-	defer bundleManager.Stop()
 
 	// Wire up self-write marking so materializeTranscriptArtifacts doesn't trigger
 	// destructive BundleWatcher re-imports (which delete summaries/notes).
@@ -264,6 +278,7 @@ func main() {
 		notifier,
 	)
 	handler.SetFolderWatchService(folderWatchService)
+	handler.SetVoiceMemoSyncService(voiceMemoSyncService)
 	handler.SetContactManager(contactManager)
 	handler.SetBundleManager(bundleManager)
 	handler.SetRuntimeWarmupManager(runtimeWarmup)
@@ -271,11 +286,20 @@ func main() {
 		handler.SetFTSManager(ftsManager)
 	}
 	taskQueue.SetOnJobCompleted(func(jobID string) {
+		job, err := jobRepo.FindByID(context.Background(), jobID)
+		if err != nil || job.CandidateTranscriptRevisionID != nil {
+			return
+		}
+		if !api.TranscriptAllowsAutomaticTextFollowups(job) {
+			return
+		}
 		// Step 1: Identify speakers first so title and summary can use real names.
 		labelCtx, labelCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer labelCancel()
-		if err := handler.AutoLabelSpeakersForJob(labelCtx, jobID); err != nil {
-			logger.Warn("Auto speaker identification after transcription completion failed", "job_id", jobID, "error", err)
+		if api.TranscriptAllowsAutomaticFollowups(job) {
+			if err := handler.AutoLabelSpeakersForJob(labelCtx, jobID); err != nil {
+				logger.Warn("Auto speaker identification after transcription completion failed", "job_id", jobID, "error", err)
+			}
 		}
 
 		// Step 2: Generate title (now has real speaker names if identified).
@@ -283,6 +307,9 @@ func main() {
 		defer titleCancel()
 		if err := handler.AutoGenerateTranscriptionTitleForJob(titleCtx, jobID); err != nil {
 			logger.Warn("Auto title generation after transcription completion failed", "job_id", jobID, "error", err)
+		}
+		if !api.TranscriptAllowsAutomaticFollowups(job) {
+			return
 		}
 
 		// Step 3: Generate summary (now has real speaker names if identified).
@@ -390,8 +417,8 @@ func registerAdapters(cfg *config.Config) {
 	// Shared environment path for NVIDIA models (NeMo-based)
 	nvidiaEnvPath := filepath.Join(cfg.WhisperXEnv, "parakeet")
 
-	// // Dedicated environment path for PyAnnote — commented out, pyannote disabled
-	// pyannoteEnvPath := filepath.Join(cfg.WhisperXEnv, "pyannote")
+	// Dedicated environment for Community-1.
+	pyannoteEnvPath := filepath.Join(cfg.WhisperXEnv, "pyannote")
 
 	// Dedicated environment path for Voxtral (Mistral AI model)
 	voxtralEnvPath := filepath.Join(cfg.WhisperXEnv, "voxtral")
@@ -417,8 +444,8 @@ func registerAdapters(cfg *config.Config) {
 		adapters.NewOpenAIAdapter(cfg.OpenAIAPIKey))
 
 	// Register diarization adapters
-	// registry.RegisterDiarizationAdapter("pyannote",
-	// 	adapters.NewPyAnnoteAdapter(pyannoteEnvPath)) // Dedicated environment — commented out, pyannote disabled
+	registry.RegisterDiarizationAdapter("pyannote",
+		adapters.NewPyAnnoteAdapter(pyannoteEnvPath))
 	registry.RegisterDiarizationAdapter("sortformer",
 		adapters.NewSortformerAdapter(nvidiaEnvPath)) // Shares with Parakeet
 

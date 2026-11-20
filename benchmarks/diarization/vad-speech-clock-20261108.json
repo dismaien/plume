@@ -1,0 +1,213 @@
+{
+  "kind": "VAD speech-clock bug fix; public manual-word regression plus scoped private repair",
+  "policy": "Only words crossing confirmed VAD cuts use unpadded speech support. Conflicting retained voices or regular overlap remain unclear. No solo-metadata fallback, text smoothing, timestamp rewriting or new identity inference.",
+  "public_results": [
+    {
+      "case": "two-speakers",
+      "baseline_cpwer": 0.03636363636363636,
+      "candidate_cpwer": 0.03636363636363636,
+      "before_attribution": {
+        "reference_words": 110,
+        "correctly_attributed": 108,
+        "wrong_person": 2,
+        "unattributed": 0,
+        "known_label_precision": 0.9818181818181818,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 110,
+        "correctly_attributed": 108,
+        "wrong_person": 2,
+        "unattributed": 0,
+        "known_label_precision": 0.9818181818181818,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "four-opening",
+      "baseline_cpwer": 0.1263537906137184,
+      "candidate_cpwer": 0.1263537906137184,
+      "before_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 257,
+        "wrong_person": 20,
+        "unattributed": 0,
+        "known_label_precision": 0.927797833935018,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 257,
+        "wrong_person": 20,
+        "unattributed": 0,
+        "known_label_precision": 0.927797833935018,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "four-middle",
+      "baseline_cpwer": 0.2986666666666667,
+      "candidate_cpwer": 0.296,
+      "before_attribution": {
+        "reference_words": 375,
+        "correctly_attributed": 306,
+        "wrong_person": 62,
+        "unattributed": 7,
+        "known_label_precision": 0.8315217391304348,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 375,
+        "correctly_attributed": 307,
+        "wrong_person": 62,
+        "unattributed": 6,
+        "known_label_precision": 0.8319783197831978,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "four-brief-speaker",
+      "baseline_cpwer": 0.20905923344947736,
+      "candidate_cpwer": 0.2073170731707317,
+      "before_attribution": {
+        "reference_words": 574,
+        "correctly_attributed": 502,
+        "wrong_person": 63,
+        "unattributed": 9,
+        "known_label_precision": 0.8884955752212389,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 574,
+        "correctly_attributed": 503,
+        "wrong_person": 63,
+        "unattributed": 8,
+        "known_label_precision": 0.8886925795053003,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "ES2004a-Mix-Headset-30-210",
+      "baseline_cpwer": 0.148014440433213,
+      "candidate_cpwer": 0.1444043321299639,
+      "before_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 248,
+        "wrong_person": 13,
+        "unattributed": 16,
+        "known_label_precision": 0.9501915708812261,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 248,
+        "wrong_person": 13,
+        "unattributed": 16,
+        "known_label_precision": 0.9501915708812261,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "ES2004a-Array1-01-30-210",
+      "baseline_cpwer": 0.1552346570397112,
+      "candidate_cpwer": 0.15162454873646208,
+      "before_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 241,
+        "wrong_person": 16,
+        "unattributed": 20,
+        "known_label_precision": 0.9377431906614786,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 277,
+        "correctly_attributed": 242,
+        "wrong_person": 16,
+        "unattributed": 19,
+        "known_label_precision": 0.937984496124031,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "TS3003a-Mix-Headset-30-210",
+      "baseline_cpwer": 0.15616438356164383,
+      "candidate_cpwer": 0.136986301369863,
+      "before_attribution": {
+        "reference_words": 365,
+        "correctly_attributed": 330,
+        "wrong_person": 24,
+        "unattributed": 11,
+        "known_label_precision": 0.9322033898305084,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 365,
+        "correctly_attributed": 338,
+        "wrong_person": 24,
+        "unattributed": 3,
+        "known_label_precision": 0.9337016574585635,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    },
+    {
+      "case": "TS3003a-Array1-01-30-210",
+      "baseline_cpwer": 0.16712328767123288,
+      "candidate_cpwer": 0.16164383561643836,
+      "before_attribution": {
+        "reference_words": 365,
+        "correctly_attributed": 325,
+        "wrong_person": 24,
+        "unattributed": 16,
+        "known_label_precision": 0.9312320916905444,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "after_attribution": {
+        "reference_words": 365,
+        "correctly_attributed": 327,
+        "wrong_person": 24,
+        "unattributed": 14,
+        "known_label_precision": 0.9316239316239316,
+        "policy": "one optimal global speaker permutation; fixed manual words/times; not ASR accuracy"
+      },
+      "text_and_timestamps": "identical",
+      "split": "existing public regression; no new held-out claim"
+    }
+  ],
+  "private_regression": {
+    "words": 581,
+    "unattributed_before": 28,
+    "unattributed_after": 7,
+    "label_changes": 21,
+    "changes": "Unattributed to existing primary anonymous speaker only",
+    "text_and_word_timestamps": "identical",
+    "original_retained_in_history": true,
+    "human_verified_speaker_accuracy": false
+  },
+  "validation": {
+    "go_generated_preprocessor": "Executed locally on the private regression; padded regions unchanged; unpadded regions match isolated reference stage",
+    "preprocessor_sha256": "8ae02fc44d3a376dbe0a22c030fee96d6c0c92137b211d8d956124edab3da7f4",
+    "unit_checks": "VAD cuts, unchanged ordinary clock, source immutability, competing voices, regular overlap, unsupported solo verdict, legacy contact preservation"
+  },
+  "limits": [
+    "Previously used public meetings; no new held-out claim.",
+    "Manual word timings isolate speaker attribution, not ASR text accuracy.",
+    "Paired microphones share speech; do not pool as independent meetings.",
+    "The rarest tuning speaker still has 9/11 words incorrectly attributed or missing; the extra recovered brief-clip word belongs to the dominant speaker.",
+    "Private transcript repair is supported by acoustic timing evidence; its speaker accuracy has not been independently hand-annotated.",
+    "Missing words during overlapping speech remain unresolved."
+  ]
+}

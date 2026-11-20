@@ -172,6 +172,43 @@ func TestResolveJobAudioPath_AbsolutePathOutsideVault_Rejected(t *testing.T) {
 	}
 }
 
+func TestResolveJobAudioPath_ImportedVoiceMemoInsideArchiveAllowed(t *testing.T) {
+	vault := t.TempDir()
+	archive := t.TempDir()
+	t.Setenv("VOICE_MEMO_ARCHIVE_ROOT", archive)
+	audioFile := filepath.Join(archive, "Recordings", "20261105 182328-E239E7F3.m4a")
+	mustMkdirAll(t, filepath.Dir(audioFile))
+	mustWriteFile(t, audioFile, []byte("audio"))
+
+	job := &models.TranscriptionJob{
+		ID:               "archive-f9b57a5d544b7c23debdb66c15ba7050",
+		AudioPath:        audioFile,
+		OriginalFilename: filepath.Base(audioFile),
+	}
+
+	got, err := resolveJobAudioPath(job, vault)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != audioFile {
+		t.Fatalf("expected %q, got %q", audioFile, got)
+	}
+}
+
+func TestResolveJobAudioPath_NonImportedFileInsideVoiceMemoArchiveRejected(t *testing.T) {
+	vault := t.TempDir()
+	archive := t.TempDir()
+	t.Setenv("VOICE_MEMO_ARCHIVE_ROOT", archive)
+	audioFile := filepath.Join(archive, "Recordings", "manual.m4a")
+	mustMkdirAll(t, filepath.Dir(audioFile))
+	mustWriteFile(t, audioFile, []byte("audio"))
+
+	job := &models.TranscriptionJob{ID: "manual-job", AudioPath: audioFile, OriginalFilename: "manual.m4a"}
+	if _, err := resolveJobAudioPath(job, vault); err == nil {
+		t.Fatal("non-imported files outside the vault must remain rejected")
+	}
+}
+
 func TestResolveJobAudioPath_DotDotTraversal_Rejected(t *testing.T) {
 	vault := t.TempDir()
 	// e.g. /tmp/vault/../../etc/passwd

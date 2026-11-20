@@ -144,3 +144,37 @@ func TestSileroVadPreprocessor_GetRequiredFormats(t *testing.T) {
 		t.Errorf("expected [wav], got %v", formats)
 	}
 }
+
+func TestEnsureSileroVadProjectRepairsStaleEnvironment(t *testing.T) {
+	envPath := t.TempDir()
+	pyprojectPath := filepath.Join(envPath, "pyproject.toml")
+	if err := os.WriteFile(pyprojectPath, []byte("[project]\nname='stale'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := ensureSileroVadProject(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected stale environment definition to be repaired")
+	}
+	content, err := os.ReadFile(pyprojectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "torchaudio>=2.1.0") {
+		t.Fatal("repaired environment is missing torchaudio")
+	}
+	if !strings.Contains(string(content), "packaging>=23.0") {
+		t.Fatal("repaired environment is missing packaging")
+	}
+
+	changed, err = ensureSileroVadProject(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("matching environment definition should not be rewritten")
+	}
+}

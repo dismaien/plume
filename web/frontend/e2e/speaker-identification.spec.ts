@@ -204,7 +204,7 @@ test.describe('Speaker Identification via SSE', () => {
       // Auto-assigned speaker should show "Auto 92%" badge
       const autoBadge = dialog.locator('[data-testid="badge-auto-SPEAKER_00"]');
       if (await autoBadge.isVisible().catch(() => false)) {
-        await expect(autoBadge).toContainText('Auto 92%');
+        await expect(autoBadge).toHaveAttribute('aria-label', 'Automatic voice match score 92%');
       }
 
       // Suggested speaker should show actionable chip "Bob Smith (72%)"

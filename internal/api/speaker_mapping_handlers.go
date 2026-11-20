@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"quill/internal/models"
 	"quill/internal/transcription"
@@ -192,6 +193,20 @@ func (h *Handler) UpdateSpeakerMappings(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated mappings"})
 		return
+	}
+
+	// Keep the database transcript aligned with the mappings. The API serves
+	// this copy, while RewriteTranscriptFiles below updates the open sidecars.
+	if job.Transcript != nil && strings.TrimSpace(*job.Transcript) != "" {
+		mappingLookup := transcription.ConfirmedSpeakerNameMap(updatedMappings)
+		if rewritten, rewriteErr := transcription.RewriteTranscriptString(*job.Transcript, mappingLookup); rewriteErr != nil {
+			logger.Warn("database transcript speaker rewrite failed", "job_id", jobID, "error", rewriteErr)
+		} else if rewritten != *job.Transcript {
+			job.Transcript = &rewritten
+			if updateErr := h.jobRepo.Update(c.Request.Context(), job); updateErr != nil {
+				logger.Warn("database transcript speaker update failed", "job_id", jobID, "error", updateErr)
+			}
+		}
 	}
 
 	// Best-effort derived title refresh: when a speaker name changes, keep the

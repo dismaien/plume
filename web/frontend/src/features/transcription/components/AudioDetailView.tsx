@@ -12,7 +12,6 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from "@/components/ui/input";
 import { EmberPlayer, type EmberPlayerRef } from "@/components/audio/EmberPlayer";
 import { cn } from "@/lib/utils";
-import { sanitizeInputValue } from "@/lib/filename-validation";
 
 // Custom Hooks
 import { useAudioDetail, useUpdateTitle, useTranscript, type AudioFile, type Transcript, type TranscriptSegment } from "@/features/transcription/hooks/useAudioDetail";
@@ -39,27 +38,36 @@ interface AudioDetailViewProps {
 }
 
 type AudioDetailTranscriptMode = "plain" | "timeline" | "compacted";
-const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar";
+const RECORDINGS_SIDEBAR_STORAGE_KEY = "plume-transcript-recordings-sidebar-v2";
+
+function defaultRecordingsSidebarOpen() {
+    const savedPreference = localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY);
+    if (savedPreference !== null) {
+        return savedPreference === "true";
+    }
+    return window.matchMedia("(min-width: 1024px)").matches;
+}
 
 function countDistinctDisplaySpeakers(
     transcript: Transcript | null | undefined,
     speakerMappings: Record<string, string>,
 ) {
     const speakers = new Set<string>();
-    const addSpeaker = (speaker?: string) => {
+    const addSpeaker = (speaker?: string, persistedName?: string) => {
         const rawSpeaker = speaker?.trim();
-        if (!rawSpeaker) return;
+        const storedName = persistedName?.trim();
+        if (!rawSpeaker && !storedName) return;
 
-        const displayName = (speakerMappings[rawSpeaker] || rawSpeaker).trim();
+        const displayName = ((rawSpeaker && speakerMappings[rawSpeaker]) || storedName || rawSpeaker || "").trim();
         if (displayName) {
             speakers.add(displayName.toLowerCase());
         }
     };
 
-    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker));
+    transcript?.segments?.forEach((segment) => addSpeaker(segment.speaker, segment.speaker_name));
 
     if (speakers.size === 0) {
-        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker));
+        transcript?.word_segments?.forEach((word) => addSpeaker(word.speaker, word.speaker_name));
     }
 
     return speakers.size;
@@ -90,9 +98,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
     const [downloadFormat, setDownloadFormat] = useState<'txt' | 'json' | 'md'>('txt');
     const [searchOpen, setSearchOpen] = useState(false);
-    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(
-        () => localStorage.getItem(RECORDINGS_SIDEBAR_STORAGE_KEY) === "true",
-    );
+    const [recordingsSidebarOpen, setRecordingsSidebarOpen] = useState(defaultRecordingsSidebarOpen);
 
     // Dialog States
     const [executionDialogOpen, setExecutionDialogOpen] = useState(false);
@@ -131,6 +137,17 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         sessionStorage.getItem("dashboard-list-location") ||
         "/";
 
+	// Evidence links from Review can open a recording at the cited moment.
+	useEffect(() => {
+		if (!audioFile || !audioPlayerRef.current) return;
+		const raw = new URLSearchParams(location.search).get("t");
+		if (!raw) return;
+		const seconds = Number(raw);
+		if (!Number.isFinite(seconds) || seconds < 0) return;
+		audioPlayerRef.current.seekTo(seconds);
+		setCurrentTime(seconds);
+	}, [audioFile, location.search]);
+
     // State for Split View
     const [chatOpen, setChatOpen] = useState(false);
     const [sidebarWidth, setSidebarWidth] = useState(400);
@@ -142,6 +159,11 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
         () => countDistinctDisplaySpeakers(transcript, speakerMappings),
         [transcript, speakerMappings],
     );
+    const audioUnavailableReason = audioFile?.has_audio === false
+        ? "Audio file is unavailable."
+        : typeof audioFile?.duration === "number" && audioFile.duration > 0 && audioFile.duration < 250
+            ? "Recording is too short to play."
+            : undefined;
 
     const setTranscriptModeFromUser = useCallback((mode: AudioDetailTranscriptMode) => {
         transcriptModeUserSelectedRef.current = true;
@@ -319,13 +341,14 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         if (!audioId || transcriptModeUserSelectedRef.current) return;
 
-        setTranscriptModeState(detectedSpeakerCount > 1 ? "compacted" : "plain");
-    }, [audioId, detectedSpeakerCount]);
+        setTranscriptModeState(detectedSpeakerCount > 1 || ["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") ? "compacted" : "plain");
+    }, [audioId, detectedSpeakerCount, transcript?.metadata?.diarization_status]);
 
     useEffect(() => {
         if (!audioId) return;
         if (!autoSummaryEnabled || llmReady !== true) return;
-        if (audioFile?.status !== "completed") return;
+        if (audioFile?.status !== "completed" || audioFile?.candidate_transcript_revision_id) return;
+        if (["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") || transcript?.metadata?.text_status === "needs_review") return;
         if (!transcript?.text?.trim()) return;
         if (existingSummaryLoading) return;
         if (existingSummary?.content?.trim()) return;
@@ -352,7 +375,8 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
     useEffect(() => {
         if (!audioId) return;
         if (!autoTitleEnabled || llmReady !== true) return;
-        if (audioFile?.status !== "completed") return;
+        if (audioFile?.status !== "completed" || audioFile?.candidate_transcript_revision_id) return;
+        if (["uncertain", "failed"].includes(transcript?.metadata?.diarization_status || "") || transcript?.metadata?.text_status === "needs_review") return;
         if (!transcript?.text?.trim()) return;
         if (autoTitleTriggeredRef.current === audioId) return;
 
@@ -534,40 +558,61 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                 <div className="sticky top-0 z-10 pt-1">
                                     {/* Title & Metadata */}
                                     <div className="space-y-4 obsidian-pane p-4 md:p-5 mb-4">
-                                    <div className="flex items-start justify-between gap-4">
                                         <div className="space-y-3 flex-1 min-w-0">
                                             {/* Title Edit Logic */}
-                                            {isEditingTitle ? (
-                                                <Input
-                                                    value={newTitle}
-                                                    onChange={(e) => setNewTitle(sanitizeInputValue(e.target.value))}
-                                                    onBlur={handleTitleBlur}
-                                                    onKeyDown={(e) => {
-                                                        if (e.key === 'Enter') {
-                                                            e.preventDefault();
-                                                            handleTitleSave();
-                                                        } else if (e.key === 'Escape') {
-                                                            e.preventDefault();
-                                                            handleTitleCancel();
-                                                        }
-                                                    }}
-                                                    className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
-                                                    autoFocus
-                                                />
-                                            ) : (
-                                                <div
-                                                    className="group flex items-center gap-3 cursor-text"
-                                                    onClick={handleStartTitleEdit}
-                                                >
-                                                    <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] truncate">
-                                                        {audioFile.title || "Untitled Recording"}
-                                                    </h1>
-                                                    <Edit2 className="h-4 w-4 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                </div>
-                                            )}
+                                            <div className="flex min-w-0 items-center gap-2">
 
-                                            {/* Badges */}
-                                            <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                                                <div className="min-w-0 flex-1">
+                                                    {isEditingTitle ? (
+                                                        <Input
+                                                            value={newTitle}
+                                                            onChange={(e) => setNewTitle(e.target.value)}
+                                                            onBlur={handleTitleBlur}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    handleTitleSave();
+                                                                } else if (e.key === 'Escape') {
+                                                                    e.preventDefault();
+                                                                    handleTitleCancel();
+                                                                }
+                                                            }}
+                                                            className="recording-title h-9 text-xl sm:text-2xl bg-transparent border-none focus:ring-0 focus:outline-none p-0 placeholder:text-[var(--text-tertiary)]"
+                                                            autoFocus
+                                                        />
+                                                    ) : (
+                                                        <div
+                                                            className="group flex min-w-0 items-start gap-3 cursor-text"
+                                                            onClick={handleStartTitleEdit}
+                                                        >
+                                                            <h1 className="recording-title text-xl sm:text-2xl text-[var(--text-primary)] min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">
+                                                                {audioFile.title || "Untitled Recording"}
+                                                            </h1>
+                                                            <Edit2 className="mt-1.5 h-4 w-4 shrink-0 text-[var(--text-tertiary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                                            {/* Dates, status, and navigation */}
+                                            <div className="flex flex-wrap items-center gap-3 text-xs font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            aria-label="Back to recordings"
+                                                            onClick={handleBackToRecordings}
+                                                            className="h-9 w-9 shrink-0 text-[var(--text-secondary)] hover:bg-[var(--bg-muted-pane)] hover:text-[var(--brand-solid)]"
+                                                        >
+                                                            <ArrowLeft className="h-5 w-5" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>Back to recordings</TooltipContent>
+                                                </Tooltip>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
                                                         <span className="cursor-help">{formattedDate}</span>
@@ -631,26 +676,25 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     )}
                                                 </div>
                                             </div>
-                                        </div>
 
                                         {/* Action Menu */}
-                                        {/* ... keeping existing Logic but updating Chat action ... */}
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex flex-wrap items-center gap-2">
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
                                                     <Button
                                                         type="button"
                                                         variant="outline"
-                                                        size="icon"
+                                                        size="sm"
                                                         aria-label={recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}
                                                         aria-pressed={recordingsSidebarOpen}
                                                         onClick={() => setRecordingsSidebar(!recordingsSidebarOpen)}
                                                         className={cn(
-                                                            "rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-sm hover:bg-[var(--bg-muted-pane)]",
+                                                            "gap-2 rounded-[var(--radius-btn)] border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 shadow-sm hover:bg-[var(--bg-muted-pane)]",
                                                             recordingsSidebarOpen && "border-[var(--brand-solid)]/50 text-[var(--brand-solid)]",
                                                         )}
                                                     >
                                                         <PanelLeft className="h-4 w-4" />
+                                                        <span className="hidden md:inline">List</span>
                                                     </Button>
                                                 </TooltipTrigger>
                                                 <TooltipContent>{recordingsSidebarOpen ? "Hide recordings list" : "Show recordings list"}</TooltipContent>
@@ -731,7 +775,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                                     >
                                                         <Layers className="mr-2 h-4 w-4 opacity-70" /> Compacted View
                                                     </DropdownMenuItem>
-                                                    {transcript?.word_segments && transcript.word_segments.length > 0 ? (
+                                                    {transcript?.segments?.some(segment => Number.isFinite(segment.start) && Number.isFinite(segment.end)) ? (
                                                         <DropdownMenuItem
                                                             onClick={() => setTranscriptModeFromUser('timeline')}
                                                             className={cn("rounded-[8px] cursor-pointer", transcriptMode === 'timeline' && "text-[var(--brand-solid)]")}
@@ -795,6 +839,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                         <EmberPlayer
                                             ref={audioPlayerRef}
                                             audioId={audioId}
+                                            unavailableReason={audioUnavailableReason}
                                             onTimeUpdate={handleTimeUpdate}
                                             onPlayStateChange={setIsPlaying}
                                         />
@@ -820,6 +865,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     isPlaying={isPlaying}
                                     searchOpen={searchOpen}
                                     setSearchOpen={setSearchOpen}
+                                    onReviewNavigationRequested={() => setTranscriptModeFromUser("compacted")}
                                     onSpeakerMappingsSaved={handleSpeakerMappingsSaved}
                                 />
                             </div>

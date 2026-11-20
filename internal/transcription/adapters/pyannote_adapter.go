@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ import (
 	"quill/pkg/logger"
 )
 
-//go:embed py/pyannote/*
+//go:embed py/pyannote/*.py py/pyannote/*.toml
 var pyannoteScripts embed.FS
 
 const OutputFormatJSON = "json"
@@ -44,7 +45,7 @@ func NewPyAnnoteAdapter(envPath string) *PyAnnoteAdapter {
 		Features: map[string]bool{
 			"speaker_detection":   true,
 			"speaker_constraints": true,
-			"confidence_scores":   true,
+			"confidence_scores":   false,
 			"rttm_output":         true,
 			"flexible_speakers":   true,
 		},
@@ -124,7 +125,7 @@ func NewPyAnnoteAdapter(envPath string) *PyAnnoteAdapter {
 			Type:        "string",
 			Required:    false,
 			Default:     "auto",
-			Options:     []string{"auto", "cpu", "cuda"},
+			Options:     []string{"auto", "cpu", "cuda", "mps"},
 			Description: "Device to use for computation (auto, cpu, or cuda)",
 			Group:       "advanced",
 		},
@@ -193,8 +194,8 @@ func (p *PyAnnoteAdapter) PrepareEnvironment(ctx context.Context) error {
 
 	// Verify PyAnnote is now available
 	testCmd := exec.Command(binaries.UV(), "run", "--native-tls", "--project", p.envPath, "python", "-c", "from pyannote.audio import Pipeline")
-	if testCmd.Run() != nil {
-		logger.Warn("PyAnnote environment test still failed after setup")
+	if out, err := testCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("PyAnnote environment verification failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	p.initialized = true
@@ -284,14 +285,14 @@ func (p *PyAnnoteAdapter) copyDiarizationScript() error {
 		return fmt.Errorf("failed to create pyannote directory: %w", err)
 	}
 
-	scriptContent, err := pyannoteScripts.ReadFile("py/pyannote/pyannote_diarize.py")
-	if err != nil {
-		return fmt.Errorf("failed to read embedded pyannote_diarize.py: %w", err)
-	}
-
-	scriptPath := filepath.Join(p.envPath, "pyannote_diarize.py")
-	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
-		return fmt.Errorf("failed to write diarization script: %w", err)
+	for _, name := range []string{"pyannote_diarize.py", "speaker_aliases.py"} {
+		content, err := pyannoteScripts.ReadFile("py/pyannote/" + name)
+		if err != nil {
+			return fmt.Errorf("read embedded %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(p.envPath, name), content, 0755); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 
 	return nil
@@ -320,9 +321,6 @@ func (p *PyAnnoteAdapter) Diarize(ctx context.Context, input interfaces.AudioInp
 	if hfToken == "" {
 		hfToken = os.Getenv("HF_TOKEN")
 	}
-	if hfToken == "" {
-		return nil, fmt.Errorf("HuggingFace token is required for PyAnnote diarization. Set HF_TOKEN environment variable or provide it in the UI")
-	}
 	// Store resolved token in params for buildPyAnnoteArgs
 	params["hf_token"] = hfToken
 
@@ -341,7 +339,7 @@ func (p *PyAnnoteAdapter) Diarize(ctx context.Context, input interfaces.AudioInp
 
 	// Execute PyAnnote
 	cmd := exec.CommandContext(ctx, binaries.UV(), args...)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "HF_TOKEN="+hfToken, "PYANNOTE_METRICS_ENABLED=0", "PYTORCH_ENABLE_MPS_FALLBACK=1")
 
 	// Setup log file — write diagnostic markers and capture stderr separately
 	// so we can see errors even when the Python process crashes.
@@ -389,7 +387,28 @@ func (p *PyAnnoteAdapter) Diarize(ctx context.Context, input interfaces.AudioInp
 
 	result.ProcessingTime = time.Since(startTime)
 	result.ModelUsed = p.GetStringParameter(params, "model")
-	result.Metadata = p.CreateDefaultMetadata(params)
+	defaults := p.CreateDefaultMetadata(params)
+	for k, v := range result.Metadata {
+		defaults[k] = v
+	}
+	delete(defaults, "hf_token")
+	result.Metadata = defaults
+	artifactDir := filepath.Join(procCtx.OutputDirectory, "diarization", fmt.Sprint(time.Now().UnixNano()))
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		return nil, err
+	}
+	outputName := "result.json"
+	if p.GetStringParameter(params, "output_format") != OutputFormatJSON {
+		outputName = "result.rttm"
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, outputName))
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, outputName), data, 0o600); err != nil {
+		return nil, err
+	}
+	result.Metadata["diarization_artifact_dir"] = artifactDir
 
 	logger.Info("PyAnnote diarization completed",
 		"segments", len(result.Segments),
@@ -414,7 +433,6 @@ func (p *PyAnnoteAdapter) buildPyAnnoteArgs(input interfaces.AudioInput, params 
 		"run", "--native-tls", "--project", p.envPath, "python", scriptPath,
 		input.FilePath,
 		"--output", outputFile,
-		"--hf-token", p.GetStringParameter(params, "hf_token"),
 	}
 
 	// Add model
@@ -433,7 +451,7 @@ func (p *PyAnnoteAdapter) buildPyAnnoteArgs(input interfaces.AudioInput, params 
 	// Add output format
 	args = append(args, "--output-format", outputFormat)
 
-	// Device is handled automatically by the script
+	args = append(args, "--device", p.GetStringParameter(params, "device"))
 
 	return args, nil
 }
@@ -458,18 +476,22 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 	}
 
 	var pyannoteResult struct {
-		AudioFile string `json:"audio_file"`
-		Model     string `json:"model"`
-		Segments  []struct {
+		MixedSegments        []interfaces.DiarizationSegment `json:"mixed_segments"`
+		MixedRegularSegments []interfaces.DiarizationSegment `json:"mixed_regular_segments"`
+		Metadata             map[string]string               `json:"metadata"`
+		AudioFile            string                          `json:"audio_file"`
+		Model                string                          `json:"model"`
+		Segments             []struct {
 			Start      float64 `json:"start"`
 			End        float64 `json:"end"`
 			Speaker    string  `json:"speaker"`
 			Confidence float64 `json:"confidence"`
 			Duration   float64 `json:"duration"`
 		} `json:"segments"`
-		Speakers      []string `json:"speakers"`
-		SpeakerCount  int      `json:"speaker_count"`
-		TotalDuration float64  `json:"total_duration"`
+		RegularSegments []interfaces.DiarizationSegment `json:"regular_segments"`
+		Speakers        []string                        `json:"speakers"`
+		SpeakerCount    int                             `json:"speaker_count"`
+		TotalDuration   float64                         `json:"total_duration"`
 	}
 
 	if err := json.Unmarshal(data, &pyannoteResult); err != nil {
@@ -478,9 +500,13 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 
 	// Convert to standard format
 	result := &interfaces.DiarizationResult{
-		Segments:     make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
-		SpeakerCount: pyannoteResult.SpeakerCount,
-		Speakers:     pyannoteResult.Speakers,
+		MixedSegments:        pyannoteResult.MixedSegments,
+		MixedRegularSegments: pyannoteResult.MixedRegularSegments,
+		Segments:             make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
+		SpeakerCount:         pyannoteResult.SpeakerCount,
+		Metadata:             pyannoteResult.Metadata,
+		RegularSegments:      pyannoteResult.RegularSegments,
+		Speakers:             pyannoteResult.Speakers,
 	}
 
 	for i, seg := range pyannoteResult.Segments {
@@ -489,6 +515,31 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 			End:        seg.End,
 			Speaker:    seg.Speaker,
 			Confidence: seg.Confidence,
+		}
+	}
+	// Defend against cached scripts that counted only the exclusive timeline.
+	// A quiet person speaking only in overlap is still a distinct speaker.
+	if len(result.RegularSegments) > 0 {
+		identities := map[string]bool{}
+		for _, timeline := range [][]interfaces.DiarizationSegment{result.Segments, result.RegularSegments} {
+			for _, segment := range timeline {
+				if strings.TrimSpace(segment.Speaker) != "" && segment.End > segment.Start {
+					identities[segment.Speaker] = true
+				}
+			}
+		}
+		result.Speakers = nil
+		for speaker := range identities {
+			result.Speakers = append(result.Speakers, speaker)
+		}
+		sort.Strings(result.Speakers)
+		result.SpeakerCount = len(result.Speakers)
+		if result.Metadata == nil {
+			result.Metadata = map[string]string{}
+		}
+		result.Metadata["speaker_count_source"] = "regular_and_exclusive_tracks"
+		if result.SpeakerCount > 1 && result.Metadata["speaker_identity_status"] == "solo" {
+			result.Metadata["speaker_identity_status"] = "accepted"
 		}
 	}
 

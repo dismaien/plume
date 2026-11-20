@@ -5,6 +5,8 @@ import path from "path"
 
 import { VitePWA } from 'vite-plugin-pwa'
 
+const backendTarget = process.env.PLUME_DEV_BACKEND_URL || 'http://localhost:8080'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -66,23 +68,23 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/swagger': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/install.sh': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/install-cli.sh': {
-        target: 'http://localhost:8080',
+        target: backendTarget,
         changeOrigin: true,
       }
     }
