@@ -285,14 +285,14 @@ func (p *PyAnnoteAdapter) copyDiarizationScript() error {
 		return fmt.Errorf("failed to create pyannote directory: %w", err)
 	}
 
-	scriptContent, err := pyannoteScripts.ReadFile("py/pyannote/pyannote_diarize.py")
-	if err != nil {
-		return fmt.Errorf("failed to read embedded pyannote_diarize.py: %w", err)
-	}
-
-	scriptPath := filepath.Join(p.envPath, "pyannote_diarize.py")
-	if err := os.WriteFile(scriptPath, scriptContent, 0755); err != nil {
-		return fmt.Errorf("failed to write diarization script: %w", err)
+	for _, name := range []string{"pyannote_diarize.py", "speaker_aliases.py"} {
+		content, err := pyannoteScripts.ReadFile("py/pyannote/" + name)
+		if err != nil {
+			return fmt.Errorf("read embedded %s: %w", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(p.envPath, name), content, 0755); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 
 	return nil
@@ -476,10 +476,12 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 	}
 
 	var pyannoteResult struct {
-		Metadata  map[string]string `json:"metadata"`
-		AudioFile string            `json:"audio_file"`
-		Model     string            `json:"model"`
-		Segments  []struct {
+		MixedSegments        []interfaces.DiarizationSegment `json:"mixed_segments"`
+		MixedRegularSegments []interfaces.DiarizationSegment `json:"mixed_regular_segments"`
+		Metadata             map[string]string               `json:"metadata"`
+		AudioFile            string                          `json:"audio_file"`
+		Model                string                          `json:"model"`
+		Segments             []struct {
 			Start      float64 `json:"start"`
 			End        float64 `json:"end"`
 			Speaker    string  `json:"speaker"`
@@ -498,11 +500,13 @@ func (p *PyAnnoteAdapter) parseJSONResult(tempDir string) (*interfaces.Diarizati
 
 	// Convert to standard format
 	result := &interfaces.DiarizationResult{
-		Segments:        make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
-		SpeakerCount:    pyannoteResult.SpeakerCount,
-		Metadata:        pyannoteResult.Metadata,
-		RegularSegments: pyannoteResult.RegularSegments,
-		Speakers:        pyannoteResult.Speakers,
+		MixedSegments:        pyannoteResult.MixedSegments,
+		MixedRegularSegments: pyannoteResult.MixedRegularSegments,
+		Segments:             make([]interfaces.DiarizationSegment, len(pyannoteResult.Segments)),
+		SpeakerCount:         pyannoteResult.SpeakerCount,
+		Metadata:             pyannoteResult.Metadata,
+		RegularSegments:      pyannoteResult.RegularSegments,
+		Speakers:             pyannoteResult.Speakers,
 	}
 
 	for i, seg := range pyannoteResult.Segments {

@@ -17,7 +17,7 @@ import (
 	"quill/pkg/binaries"
 )
 
-const wordRefinementPolicy = "primary_speakers_review_unmatched_v2"
+const wordRefinementPolicy = "primary_mixed_track_local_support_v3"
 
 const wordRefinementRevision = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
 
@@ -56,9 +56,9 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	if !profile.Enabled {
 		return result, nil
 	}
-	// Existing v1 profiles pin the same model. The embedded scripts and Go
+	// Existing profiles pin the same model. The embedded scripts and Go
 	// validator always apply the current policy to fresh outputs.
-	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "known_machine_labels_v1") {
+	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "primary_speakers_review_unmatched_v2" && profile.Policy != "known_machine_labels_v1") {
 		return result, fmt.Errorf("unverified native word-refinement profile")
 	}
 	if result == nil || result.Diarization == nil || len(result.WordSegments) == 0 {
@@ -115,9 +115,9 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 		return result, err
 	}
 	var proposals struct {
-		InputSHA256   string                `json:"input_sha256"`
-		ModelRevision string                `json:"model_revision"`
-		Proposals     []SpeakerWordProposal `json:"proposals"`
+		InputSHA256   string `json:"input_sha256"`
+		ModelRevision string `json:"model_revision"`
+		AcousticWordRefinement
 	}
 	if err = json.Unmarshal(output, &proposals); err != nil {
 		return result, err
@@ -126,14 +126,14 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	if proposals.InputSHA256 != hex.EncodeToString(sum[:]) || proposals.ModelRevision != wordRefinementRevision {
 		return result, fmt.Errorf("native proposal source/model mismatch")
 	}
-	refined, err := ApplySpeakerWordProposals(result, proposals.Proposals)
+	refined, err := ApplyAcousticWordRefinement(result, proposals.AcousticWordRefinement)
 	if err != nil {
 		return result, err
 	}
 	if refined.Metadata == nil {
 		refined.Metadata = map[string]string{}
 	}
-	if len(proposals.Proposals) == 0 {
+	if len(proposals.Proposals) == 0 && len(proposals.MixedActivity.Exclusive)+len(proposals.MixedActivity.Regular) == 0 {
 		refined.Metadata["word_refinement_status"] = "completed_no_changes"
 	}
 	refined.Metadata["word_refinement_policy"] = wordRefinementPolicy

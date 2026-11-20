@@ -7,6 +7,7 @@ import json
 import os
 import time
 import wave
+import warnings
 from pathlib import Path
 
 
@@ -73,8 +74,48 @@ def diarize_audio(audio_path, output_file, hf_token='',
     exclusive = getattr(result, 'exclusive_speaker_diarization', regular)
     segments = annotation_segments(exclusive)
     regular_segments = annotation_segments(regular)
+    raw_speakers = speaker_inventory(regular_segments, segments)
+    aliases = {}
+    votes = []
+    mixed = {}
+    check_status = "skipped"
+    check_hash = ""
+    if not params and model == 'pyannote/speaker-diarization-community-1':
+        import speaker_aliases
+        check_hash = hashlib.sha256(Path(speaker_aliases.__file__).read_bytes()).hexdigest()
+
+        def sample(start, end):
+            rate = audio['sample_rate']
+            return audio['waveform'][:, round(start * rate):round(end * rate)], rate
+        try:
+            aliases, votes = speaker_aliases.check_aliases(segments, regular_segments, sample, pipeline)
+            mixed = speaker_aliases.mixed_tracks(votes, aliases, regular_segments)
+            check_status = "tested" if votes else "insufficient_reference_turns"
+        except (RuntimeError, ValueError) as err:
+            # The original diarization succeeded. A failed optional reference
+            # panel must not discard its timeline or apply a partial decision.
+            aliases, votes, mixed = {}, [], {}
+            check_status = "failed_primary_retained"
+            warnings.warn(f"Speaker reference check failed: {err}")
+        if aliases:
+            original = {str(label).lower(): label for label in set(regular.labels()) | set(exclusive.labels())}
+            mapping = {original[s]: original[target] for s, target in aliases.items()}
+            regular = regular.rename_labels(mapping=mapping)
+            exclusive = exclusive.rename_labels(mapping=mapping)
+            segments = annotation_segments(exclusive)
+            regular_segments = annotation_segments(regular)
+    mixed_exclusive = [r for r in segments if r['speaker'] in mixed]
+    mixed_regular = [r for r in regular_segments if r['speaker'] in mixed]
+    if mixed:
+        segments = [r for r in segments if r['speaker'] not in mixed]
+        regular_segments = [r for r in regular_segments if r['speaker'] not in mixed]
     speakers = speaker_inventory(regular_segments, segments)
     metadata = {
+        'speaker_alias_check_status': check_status, 'speaker_alias_check_sha256': check_hash,
+        'speaker_count_before_alias_check': str(len(raw_speakers)),
+        'speaker_aliases': json.dumps(aliases, sort_keys=True),
+        'speaker_mixed_tracks': json.dumps(mixed, sort_keys=True),
+        'speaker_alias_panel_votes': json.dumps(votes, sort_keys=True),
         'diarization_engine': model, 'diarization_device': actual_device,
         'pyannote_audio_version': importlib.metadata.version('pyannote.audio'),
         'torch_version': torch.__version__, 'speaker_identity_status': ('solo' if len(speakers)==1 else 'accepted') if speakers else 'uncertain',
@@ -90,9 +131,14 @@ def diarize_audio(audio_path, output_file, hf_token='',
         'diarization_script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'mps_fallback_enabled': os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK','0'),
     }
+    if mixed:
+        metadata.update(speaker_identity_status='uncertain',
+                        speaker_identity_reason='mixed_track_needs_turn_review')
     payload = {'audio_file': str(audio_path), 'model': model, 'segments': segments,
                'regular_segments': regular_segments, 'speakers': speakers,
                'speaker_count': len(speakers), 'metadata': metadata}
+    if mixed:
+        payload.update(mixed_segments=mixed_exclusive, mixed_regular_segments=mixed_regular)
     try:
         from huggingface_hub import hf_hub_download
         checkpoint=Path(hf_hub_download(model,'config.yaml',local_files_only=True))
@@ -104,7 +150,10 @@ def diarize_audio(audio_path, output_file, hf_token='',
     path.parent.mkdir(parents=True, exist_ok=True)
     if output_format == 'rttm':
         with path.open('w') as handle:
-            regular.write_rttm(handle)
+            # RTTM has no review-track field. Retain the timed evidence under
+            # an explicitly mixed track name instead of claiming another person.
+            regular.rename_labels(mapping={s: 'MIXED_' + str(s) for s in regular.labels()
+                                           if str(s).lower() in mixed}).write_rttm(handle)
     else:
         path.write_text(json.dumps(payload, indent=2, allow_nan=False))
     print(f'Community-1 completed on {actual_device}: {len(speakers)} speakers, {len(segments)} turns')

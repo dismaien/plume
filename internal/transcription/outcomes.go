@@ -13,6 +13,9 @@ func annotateOutcomes(result *interfaces.TranscriptResult, requested bool, diar 
 	}
 	m := result.Metadata
 	m["speaker_assignment_policy"] = "overlap_union_majority_v1"
+	if m["word_edge_policy"] != "" {
+		m["speaker_assignment_policy"] = "overlap_union_majority_with_unopposed_edges_v2"
+	}
 	if m["word_assignment_timeline"] == "regular_overlap_aware" {
 		m["speaker_assignment_policy"] = "overlap_union_majority_v2_regular_tracks_experimental"
 	}

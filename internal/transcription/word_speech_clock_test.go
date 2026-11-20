@@ -65,3 +65,42 @@ func TestModelSoloVerdictDoesNotConfirmUnobservedWords(t *testing.T) {
 		t.Fatal("model solo claim filled unsupported speech")
 	}
 }
+
+func TestUnopposedWordEdgeRequiresBothTimelinesAndKeepsReplies(t *testing.T) {
+	word := interfaces.TranscriptWord{Start: 1, End: 1.4, Word: "yeah"}
+	a := interfaces.DiarizationSegment{Start: 1.25, End: 2, Speaker: "reply"}
+	sole := []interfaces.DiarizationSegment{a}
+	if got := unopposedWordEdge(word, sole, sole); got != "reply" {
+		t.Fatalf("lost positive evidence for brief reply: %q", got)
+	}
+	competing := append([]interfaces.DiarizationSegment{a}, interfaces.DiarizationSegment{Start: 1.01, End: 1.03, Speaker: "other"})
+	for _, tracks := range [][][]interfaces.DiarizationSegment{{sole, competing}, {competing, sole}, {sole, nil}, {nil, sole}} {
+		if got := unopposedWordEdge(word, tracks[0], tracks[1]); got != "" {
+			t.Fatalf("claimed disputed or missing support: %q", got)
+		}
+	}
+}
+
+func TestWordEdgeUnionsTouchingRestoredTurnsWithinFrameResolution(t *testing.T) {
+	reply := interfaces.TranscriptWord{Start: 1, End: 1.402, Word: "yes"}
+	turns := []interfaces.DiarizationSegment{{Start: 1.319, End: 1.56, Speaker: "respondent"}, {Start: 1.302, End: 1.319, Speaker: "respondent"}}
+	if got := unopposedWordEdge(reply, turns, turns); got != "respondent" {
+		t.Fatalf("lost the split acoustic edge: %q", got)
+	}
+}
+
+func TestIsolatedBackchannelNeedsAnUncontestedTurnOfItsOwn(t *testing.T) {
+	a := "A"
+	base := []interfaces.TranscriptWord{{Start: 0, End: 1, Word: "here", Speaker: &a}, {Start: 1.4, End: 2.1, Word: "yeah"}, {Start: 2.11, End: 2.4, Word: "again", Speaker: &a}}
+	turns := []interfaces.DiarizationSegment{{Start: 0, End: 1.28, Speaker: "A"}, {Start: 1.29, End: 1.62, Speaker: "B"}, {Start: 1.94, End: 2.4, Speaker: "A"}}
+	words := append([]interfaces.TranscriptWord(nil), base...)
+	restoreIsolatedReplies(words, turns, turns)
+	if words[1].Speaker == nil || *words[1].Speaker != "B" {
+		t.Fatal("lost reply across the restart")
+	}
+	both := append(append([]interfaces.DiarizationSegment{}, turns...), interfaces.DiarizationSegment{Start: 1.35, End: 1.4, Speaker: "C"})
+	restoreIsolatedReplies(base, turns, both)
+	if base[1].Speaker != nil {
+		t.Fatal("hid overlap")
+	}
+}

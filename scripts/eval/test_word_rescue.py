@@ -60,3 +60,25 @@ def test_unmatched_channel_can_confirm_an_existing_overlap_only_voice(tmp_path):
     primary['regular_segments'].append(dict(start=1.2, end=1.3, speaker='C'))
     proposal, = module.propose(primary, native, words)['proposals']
     assert proposal['proposed'] == '' and proposal['review_channel'] == 'speaker_1'
+
+
+def test_mixed_activity_preserves_unsupported_music_and_competing_replies():
+    primary = {'metadata': {'speaker_mixed_tracks': '{"X":["A","B"]}'},
+               'mixed_segments': [dict(start=0,end=1,speaker='X'),dict(start=4,end=5,speaker='X')]}
+    native = {'segments': [dict(start=.1,end=.6,speaker='c'),dict(start=.7,end=.9,speaker='d')]}
+    got = module.recover_mixed_activity(primary, native, {'c':'A','d':'B'})
+    assert [(r['speaker'],r['start'],r['end']) for r in got['mixed_segments']] == [
+        ('A', .1, .6), ('B', .7, .9)]
+    assert all(r['index'] == 0 for r in got['mixed_segments'])
+
+
+def test_two_simultaneous_known_voices_remain_in_regular_activity():
+    region = dict(start=0, end=1, speaker='X')
+    primary = {'metadata': {'speaker_mixed_tracks': '{"X":["A","B"]}'},
+               'mixed_segments': [region], 'mixed_regular_segments': [region]}
+    native = {'segments': [dict(start=0,end=1,speaker='c'),dict(start=.5,end=.8,speaker='d')]}
+    result = module.recover_mixed_activity(primary, native, {'c':'A','d':'B'})
+    summarize = lambda rows: {(r['start'], r['end'], r['speaker']) for r in rows}
+    solo = {(0,.5,'A'),(.8,1,'A')}
+    assert summarize(result['mixed_segments']) == solo
+    assert summarize(result['mixed_regular_segments']) == solo | {(.5,.8,'A'),(.5,.8,'B')}

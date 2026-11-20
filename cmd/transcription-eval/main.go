@@ -58,12 +58,10 @@ func main() {
 		result = transcription.AssembleWithOverlapReview(&t, &d)
 	}
 	if *proposals != "" {
-		var payload struct {
-			Proposals []transcription.SpeakerWordProposal `json:"proposals"`
-		}
+		var payload transcription.AcousticWordRefinement
 		read(*proposals, &payload)
 		var err error
-		result, err = transcription.ApplySpeakerWordProposals(result, payload.Proposals)
+		result, err = transcription.ApplyAcousticWordRefinement(result, payload)
 		if err != nil {
 			panic(err)
 		}

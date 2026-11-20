@@ -1,16 +1,17 @@
 """Conservative word proposals, never transcript edits or accepted-name writes.
 
-Frozen policy: keep explicit unknowns; question an existing machine label only
-when the primary regular timeline is ambiguous and the independent activity
-model has a strong winner. Activity is not calibrated identity confidence.
+Word proposals question an existing machine label only when the primary
+regular timeline is ambiguous. Mixed-track recovery returns independent
+acoustic spans for fresh assembly on the original clock.
 """
 import hashlib
+import json
 import math
 from pathlib import Path
 
 POLICY = dict(activity_probability=.9,activity_margin=.25,mapping_jaccard=.25,
               other_regular_support=.25,primary_regular_support=.5,
-              preserve_unknown=True,mapping_activity_threshold=.4,version='primary_speakers_review_unmatched_v2')
+              preserve_unknown=True,mapping_activity_threshold=.4,version='primary_mixed_track_local_support_v3')
 
 
 def annotation(payload):
@@ -85,7 +86,8 @@ def propose(primary,native,words):
         support=({person:primary_support[person].crop(Segment(start,end)).support().duration()/duration for person in people}
                  if duration else {person:float(any(t.start<=start<t.end for t in primary_support[person])) for person in people})
         if (support.get(current,0)>=POLICY['primary_regular_support']
-                and max([v for person,v in support.items() if person!=current],default=0)<POLICY['other_regular_support']):continue
+                and max([v for person,v in support.items() if person!=current],default=0)<POLICY['other_regular_support']):
+            continue
         proposed = mapping.get(channel)
         if proposed is None:
             supported = [person for person in brief_matches.get(channel, [])
@@ -99,4 +101,59 @@ def propose(primary,native,words):
             proposal['review_channel'] = channel
         proposals.append(proposal)
     return dict(policy=POLICY,proposals=proposals,mapping=mapping,
+                mixed_activity=recover_mixed_activity(primary, native, mapping),
                 confidence_kind='uncalibrated frame activity; not person identity probability')
+
+
+def recover_mixed_activity(primary, native, mapping):
+    """Project independently recognized turns onto disputed primary regions."""
+    from bisect import bisect_left
+    from collections import Counter, defaultdict
+
+    mixed = json.loads((primary.get('metadata') or {}).get('speaker_mixed_tracks', '{}'))
+    if not mixed:
+        return {}
+    channels = sorted(native.get('segments', []), key=lambda r: r['start'])
+    starts = [r['start'] for r in channels]
+    # Native tracks can overlap. Prefix maxima keep the seek correct even
+    # when one long-running channel contains many shorter turns.
+    ends = []
+    for r in channels:
+        ends.append(max(r['end'], ends[-1] if ends else 0))
+    result = {}
+    for field in ('mixed_segments', 'mixed_regular_segments'):
+        recovered = []
+        for index, region in enumerate(primary.get(field, [])):
+            start, end = region['start'], region['end']
+            targets = mixed.get(region['speaker'], [])
+            spans = [(max(start, r['start']), min(end, r['end']), r['speaker'])
+                     for r in channels[bisect_left(ends, start):bisect_left(starts, end)]
+                     if r['end'] > start]
+            if not spans:
+                continue
+            by_channel = defaultdict(float)
+            for a, b, channel in spans:
+                by_channel[channel] += b - a
+            if len(by_channel) == 1:
+                channel, seconds = next(iter(by_channel.items()))
+                gaps = [spans[0][0] - start, end - spans[-1][1]]
+                gaps.extend(b[0] - a[1] for a, b in zip(spans, spans[1:]))
+                if seconds >= .35 * (end - start) and max(gaps) <= .35:
+                    spans = [(start, end, channel)]
+            events = defaultdict(Counter)
+            for a, b, channel in spans:
+                events[a][channel] += 1
+                events[b][channel] -= 1
+            active = Counter()
+            previous = start
+            for boundary, changes in sorted(events.items()):
+                channels_here = [c for c, count in active.items() if count > 0]
+                if boundary > previous and (field == 'mixed_regular_segments' or len(channels_here) == 1):
+                    for channel in channels_here:
+                        person = mapping.get(channel)
+                        if person in targets:
+                            recovered.append(dict(index=index, start=previous, end=boundary, speaker=person))
+                active.update(changes)
+                previous = boundary
+        result[field] = recovered
+    return result

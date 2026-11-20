@@ -1239,6 +1239,9 @@ func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *in
 
 	// Also assign speakers to words if available
 	if len(transcript.WordSegments) > 0 {
+		if len(diarization.RegularSegments) > 0 {
+			mergedTranscript.Metadata["word_edge_policy"] = "unopposed_both_timelines_v1"
+		}
 		retainedSpeech := retainedSpeechRegions(transcript.Metadata["vad_retained_speech_regions"])
 		assignmentSpeech := retainedSpeechRegions(transcript.Metadata["vad_assignment_speech_regions"])
 		if len(assignmentSpeech) == 0 {
@@ -1260,6 +1263,10 @@ func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *in
 				word.Speaker = &bestSpeaker
 			}
 		}
+
+		// A short reply can be acoustically distinct while its aligned word
+		// also runs into the restart of the previous speaker.
+		restoreIsolatedReplies(mergedTranscript.WordSegments, assignmentTurns, diarization.RegularSegments)
 
 		// Keep the acoustic model's timing decisions. Text-based smoothing
 		// cannot establish who actually spoke an ambiguous word.

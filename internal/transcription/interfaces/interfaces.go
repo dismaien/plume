@@ -97,13 +97,17 @@ type DiarizationSegment struct {
 
 // DiarizationResult represents the output of speaker diarization
 type DiarizationResult struct {
-	RegularSegments []DiarizationSegment `json:"regular_segments,omitempty"`
-	Segments        []DiarizationSegment `json:"segments"`
-	SpeakerCount    int                  `json:"speaker_count"`
-	Speakers        []string             `json:"speakers"`
-	ProcessingTime  time.Duration        `json:"processing_time"`
-	ModelUsed       string               `json:"model_used"`
-	Metadata        map[string]string    `json:"metadata"`
+	// Acoustic regions that repeatedly matched different people. Preserve the
+	// original tracks without advertising a mixed label as a participant.
+	MixedSegments        []DiarizationSegment `json:"mixed_segments,omitempty"`
+	MixedRegularSegments []DiarizationSegment `json:"mixed_regular_segments,omitempty"`
+	RegularSegments      []DiarizationSegment `json:"regular_segments,omitempty"`
+	Segments             []DiarizationSegment `json:"segments"`
+	SpeakerCount         int                  `json:"speaker_count"`
+	Speakers             []string             `json:"speakers"`
+	ProcessingTime       time.Duration        `json:"processing_time"`
+	ModelUsed            string               `json:"model_used"`
+	Metadata             map[string]string    `json:"metadata"`
 }
 
 // ProcessingContext contains context information for processing
