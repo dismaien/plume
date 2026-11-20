@@ -52,3 +52,10 @@ func TestCandidateRejectsUnconstrainedOrFallbackDiarization(t *testing.T) {
 		}
 	}
 }
+
+func TestCandidateProtectsEditedBoundariesEvenWithLegacyWordTimes(t *testing.T) {
+	edited := strings.Replace(acceptedFixture, `"language":"en"`, `"manually_edited":true,"language":"en"`, 1)
+	if _, _, err := candidateTranscript(edited, []byte(diarizationFixture)); err == nil {
+		t.Fatal("rebuilt a manually edited transcript")
+	}
+}

@@ -95,10 +95,10 @@ policy explicitly. Use a separate plan directory for independent validation
 cases so their receipts remain separate from tuning results.
 
 The application now shares the inference core and frozen
-`known_machine_labels_v1` proposal policy with evaluation. A separately prepared
+`primary_speakers_review_unmatched_v2` proposal policy with evaluation. A separately prepared
 local runtime can refine existing machine labels where Community-1's regular
 tracks are ambiguous and Nemotron has a strong activity winner. Explicit unknown
-words stay unknown. Go checks the complete proposal batch against the source,
+words stay unknown. A strongly disputed word on an unmatched channel keeps a reviewable boundary. Only identities supported by the primary timelines can be assigned. Go checks the complete proposal batch against the source,
 preserves exact text/timing and rebuilds displayed speaker boundaries. Changed
 labels require review; automatic identity naming/publication remains gated.
 

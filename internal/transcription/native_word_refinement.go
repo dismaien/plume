@@ -17,6 +17,8 @@ import (
 	"quill/pkg/binaries"
 )
 
+const wordRefinementPolicy = "primary_speakers_review_unmatched_v2"
+
 const wordRefinementRevision = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
 
 // RefineWithNativeWordRuntime exercises the full application stage without
@@ -54,7 +56,9 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	if !profile.Enabled {
 		return result, nil
 	}
-	if profile.Revision != wordRefinementRevision || profile.Policy != "known_machine_labels_v1" {
+	// Existing v1 profiles pin the same model. The embedded scripts and Go
+	// validator always apply the current policy to fresh outputs.
+	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "known_machine_labels_v1") {
 		return result, fmt.Errorf("unverified native word-refinement profile")
 	}
 	if result == nil || result.Diarization == nil || len(result.WordSegments) == 0 {
@@ -132,6 +136,7 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	if len(proposals.Proposals) == 0 {
 		refined.Metadata["word_refinement_status"] = "completed_no_changes"
 	}
+	refined.Metadata["word_refinement_policy"] = wordRefinementPolicy
 	refined.Metadata["word_refinement_engine"] = "nvidia/Nemotron-3-Diarization"
 	refined.Metadata["word_refinement_model_revision"] = wordRefinementRevision
 	refined.Metadata["word_refinement_artifact_dir"] = directory

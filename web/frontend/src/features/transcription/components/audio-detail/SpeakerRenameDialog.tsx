@@ -28,6 +28,8 @@ interface SpeakerRenameDialogProps {
   onOpenChange: (open: boolean) => void;
   transcriptionId: string;
   onSpeakerMappingsUpdate: (mappings: SpeakerMapping[]) => void;
+  priorConstraints?: string;
+  priorDiarizer?: string;
   initialSpeakers?: string[]; // Detected speakers from transcript
 }
 
@@ -64,6 +66,18 @@ function getModelsForFamily(family: string): string[] {
   }
 }
 
+// Reuse an explicit count supplied to the accepted run. A detected cluster
+// count is a model estimate and cannot serve as the input to the next run.
+function priorExactCount(constraints?: string): string {
+  try {
+    const bounds = JSON.parse(constraints ?? "{}");
+    const count = bounds?.min_speakers;
+    return Number.isInteger(count) && count >= 1 && count <= 20 && count === bounds.max_speakers ? String(count) : "";
+  } catch {
+    return "";
+  }
+}
+
 function normalize(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
 }
@@ -74,6 +88,8 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
   transcriptionId,
   onSpeakerMappingsUpdate,
   initialSpeakers = [],
+  priorConstraints,
+  priorDiarizer,
 }) => {
   const [dialogContainer, setDialogContainer] = useState<HTMLDivElement | null>(null);
   const { getAuthHeaders } = useAuth();
@@ -118,12 +134,14 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
 
   // Inputs can change on every playback render. Capture them only at the start
   // of an editing session; reloading while typing would discard the user's draft.
-  const initializationInputs = useRef({ initialSpeakers, getAuthHeaders });
-  initializationInputs.current = { initialSpeakers, getAuthHeaders };
+  const initializationInputs = useRef({ initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer });
+  initializationInputs.current = { initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer };
   useEffect(() => {
     if (!open || !transcriptionId) return;
     let cancelled = false;
-    const { initialSpeakers, getAuthHeaders } = initializationInputs.current;
+    const { initialSpeakers, getAuthHeaders, priorConstraints, priorDiarizer } = initializationInputs.current;
+    setRetranscribeNumSpeakers(priorExactCount(priorConstraints));
+    setRetranscribeDiarizeMode(priorDiarizer === "pyannote/speaker-diarization-community-1" ? "pyannote" : "sherpa-onnx");
     const fetchSpeakerMappings = async () => {
       setIsLoading(true);
       setError(null);
@@ -518,8 +536,6 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
       // close animation because speakers briefly shift to the suggestion category
       // when details are empty. fetchSpeakerMappings resets it on next open.
       setRetranscribeOpen(false);
-      setRetranscribeNumSpeakers("");
-      setRetranscribeDiarizeMode("sherpa-onnx");
     }
   }, [open]);
 
@@ -944,13 +960,13 @@ const SpeakerRenameDialog: React.FC<SpeakerRenameDialogProps> = ({
                     <SelectContent>
                       <SelectItem value="sherpa-onnx">sherpa-onnx</SelectItem>
                       <SelectItem value="local">NVIDIA Sortformer</SelectItem>
-                      {/* <SelectItem value="pyannote">Pyannote</SelectItem> */}
+                      <SelectItem value="pyannote">Pyannote Community-1</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-[var(--text-tertiary)]">
                     {retranscribeDiarizeMode === "sherpa-onnx" && "sherpa-onnx runs locally via ONNX Runtime. No Hugging Face token needed. Supports up to 20 speakers."}
                     {retranscribeDiarizeMode === "local" && "NVIDIA Sortformer runs locally without a Hugging Face token (up to 4 speakers)."}
-                    {/* {retranscribeDiarizeMode === "pyannote" && "Pyannote supports up to 20 speakers. Configure your Hugging Face token in Settings → Transcription."} */}
+                    {retranscribeDiarizeMode === "pyannote" && "Community-1 runs locally and supports an exact speaker count."}
                   </p>
                 </div>
 

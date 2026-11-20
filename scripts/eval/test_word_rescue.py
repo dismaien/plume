@@ -29,11 +29,34 @@ def test_only_ambiguous_existing_machine_labels_are_proposed(tmp_path):
     assert words[1]['speaker']=='speaker_00' and 'speaker' not in words[2]
 
 
-def test_supplemental_numeric_ids_do_not_reuse_primary_letters(tmp_path):
+def test_unmatched_channel_is_only_a_review_suggestion(tmp_path):
     primary={'regular_segments':[dict(start=0,end=3,speaker='speaker_00'),dict(start=1,end=2,speaker='speaker_01')]}
     # The new short channel has no strong identity match in the primary system.
     native={'regular_segments':[dict(start=0,end=3,speaker='speaker_0'),dict(start=1.2,end=1.3,speaker='speaker_1')]}
     logits=np.tile([6.,-6.],(300,1));logits[120:130]=[-6.,6.]
     native['activity_artifact']=save_activity(tmp_path/'new.npz',logits,np.ones(300),.01,3.)
     result=module.propose(primary,native,[dict(start=1.21,end=1.29,word='reply',speaker='speaker_00')])
-    assert result['proposals'][0]['proposed']=='speaker_2'
+    proposal, = result['proposals']
+    assert proposal['index'] == 0 and proposal['proposed'] == ''
+    assert proposal['review_channel'] == 'speaker_1'
+    assert 'speaker_1' not in result['mapping']
+
+
+def test_unmatched_channel_can_confirm_an_existing_overlap_only_voice(tmp_path):
+    primary = {
+        'segments': [dict(start=0, end=3, speaker='A')],
+        'regular_segments': [dict(start=0, end=3, speaker='A'), dict(start=1.2, end=1.3, speaker='B')],
+    }
+    native = {'regular_segments': [dict(start=0, end=3, speaker='speaker_0'),
+                                   dict(start=1, end=2, speaker='speaker_1')]}
+    logits = np.tile([6., -6.], (300, 1))
+    logits[120:130] = [-6., 6.]
+    native['activity_artifact'] = save_activity(tmp_path/'brief.npz', logits, np.ones(300), .01, 3.)
+    words = [dict(start=1.21, end=1.29, word='reply', speaker='A')]
+    proposal, = module.propose(primary, native, words)['proposals']
+    assert proposal['proposed'] == 'B' and 'review_channel' not in proposal
+
+    # Two indistinguishable overlapping voices cannot identify this reply.
+    primary['regular_segments'].append(dict(start=1.2, end=1.3, speaker='C'))
+    proposal, = module.propose(primary, native, words)['proposals']
+    assert proposal['proposed'] == '' and proposal['review_channel'] == 'speaker_1'

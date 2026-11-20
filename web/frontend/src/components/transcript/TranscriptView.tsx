@@ -1,5 +1,6 @@
-import { forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { Fragment, forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useKaraokeHighlight, computeWordOffsets, findActiveWordIndex } from '@/features/transcription/hooks/useKaraokeHighlight';
+import { compactSpeakerPassages } from './compact-speaker-passages';
 import { cn } from '@/lib/utils';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { formatSpeakerLabel } from '@/lib/speaker-utils';
@@ -35,6 +36,7 @@ function getCaretOffsetFromPoint(x: number, y: number) {
 }
 
 interface WordSegment {
+    speaker_review?: boolean;
     start: number;
     end: number;
     word: string;
@@ -267,6 +269,42 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
         }
     }, [expandedData, onSeek]);
 
+    // Use the saved characters for reading and selection. Mark an uncertain
+    // word inside a known passage only when its timing and text both match.
+    const compactTexts = useMemo(() => {
+        const timed = transcript?.word_segments ?? [];
+        let index = 0;
+        return (transcript?.segments ?? []).map(segment => {
+            const text = segment.text.trim();
+            const marks: Array<{ start: number; end: number }> = [];
+            let cursor = 0;
+            let aligned = true;
+            while (index < timed.length) {
+                const word = timed[index];
+                const midpoint = (word.start + word.end) / 2;
+                if (midpoint > segment.end) break;
+                index++;
+                if (!aligned || !segment.speaker || midpoint < segment.start) continue;
+                const token = word.word.trim();
+                if (!token) continue;
+                const start = text.indexOf(token, cursor);
+                if (start < 0) {
+                    aligned = false;
+                    continue;
+                }
+                cursor = start + token.length;
+                if (!word.speaker) marks.push({ start, end: cursor });
+            }
+            if (!aligned || !marks.length) return text;
+            return <>{marks.map((mark, i) => (
+                <Fragment key={mark.start}>
+                    {text.slice(i ? marks[i - 1].end : 0, mark.start)}
+                    <abbr title="Speaker unclear" className="decoration-dotted underline underline-offset-4">{text.slice(mark.start, mark.end)}</abbr>
+                </Fragment>
+            ))}{text.slice(marks[marks.length - 1].end)}</>;
+        });
+    }, [transcript]);
+
     if (!transcript) {
         return (
             <div className="flex flex-col items-center justify-center h-64 text-carbon-400">
@@ -378,44 +416,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
     };
 
     // Compacted View: groups consecutive same-speaker segments into single paragraphs
-    const compactedGroups = (() => {
-        if (!transcript?.segments) return [];
-
-        const groups: Array<{
-            speaker: string;
-            displaySpeaker: string;
-            identityKey: string;
-            startTime: number;
-            endTime: number;
-            texts: string[];
-            segmentIndices: number[];
-        }> = [];
-
-        transcript.segments.forEach((segment, i) => {
-            const speaker = resolveSegmentSpeaker(segment.speaker);
-            const displaySpeaker = getDisplaySpeakerName(speaker, segment.speaker_name).trim();
-            const identityKey = displaySpeaker.toLocaleLowerCase();
-            const lastGroup = groups[groups.length - 1];
-
-            if (speaker && lastGroup && lastGroup.identityKey === identityKey) {
-                lastGroup.texts.push(segment.text.trim());
-                lastGroup.segmentIndices.push(i);
-                lastGroup.endTime = Math.max(lastGroup.endTime, segment.end);
-            } else {
-                groups.push({
-                    speaker,
-                    displaySpeaker,
-                    identityKey,
-                    startTime: segment.start,
-                    endTime: segment.end,
-                    texts: [segment.text.trim()],
-                    segmentIndices: [i],
-                });
-            }
-        });
-
-        return groups;
-    })();
+    const compactedGroups = compactSpeakerPassages(transcript.segments ?? [], getDisplaySpeakerName,
+        new Set(words.filter(word => word.speaker_review).map(word => word.start)));
 
     const renderCompactedView = () => {
         if (!transcript?.segments || compactedGroups.length === 0) {
@@ -458,7 +460,11 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             }}
                             data-transcript-text
                         >
-                            {group.texts.join(' ')}
+                            {group.segmentIndices.map((index, part) => (
+                                <Fragment key={index}>{part > 0 ? ' ' : ''}{group.segmentIndices.length > 1 && !transcript.segments?.[index].speaker
+                                        ? <abbr title="Speaker unclear" className="decoration-dotted underline underline-offset-4">{compactTexts[index]}</abbr>
+                                        : compactTexts[index]}</Fragment>
+                            ))}
                         </p>
                     </div>
                 ))}

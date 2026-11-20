@@ -1254,6 +1254,7 @@ func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *in
 		for i := range mergedTranscript.WordSegments {
 			word := &mergedTranscript.WordSegments[i]
 			word.Speaker = nil
+			word.SpeakerReview = false
 			bestSpeaker := u.findWordSpeakerWithSpeechClock(*word, assignmentTurns, diarization.RegularSegments, assignmentSpeech, retainedSpeech)
 			if bestSpeaker != "" {
 				word.Speaker = &bestSpeaker
@@ -1267,9 +1268,10 @@ func (u *UnifiedTranscriptionService) mergeDiarizationUsingPolicy(transcript *in
 		// only the segment's dominant speaker hides diarization boundaries that
 		// were correctly detected at word level, so split mixed segments into
 		// speaker-homogeneous runs for display and exported transcripts.
-		mergedTranscript.Segments = splitSegmentsAtWordSpeakerChanges(
+		mergedTranscript.Segments = machineSpeakerPassages(
 			mergedTranscript.Segments,
 			mergedTranscript.WordSegments,
+			diarization,
 		)
 	}
 

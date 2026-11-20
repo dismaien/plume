@@ -303,8 +303,11 @@ export function TranscriptSection({
                     {transcript.metadata?.speaker_review_reason === 'detected_voice_has_no_attributed_words' && (
                         <p>A detected voice has no attributed words. Review the overlapping or brief speech before trusting the speaker labels.</p>
                     )}
-                    {transcript.metadata?.word_refinement_status === 'applied_needs_review' && (
-                        <p>{Number(transcript.metadata.word_refinement_applied_words || 0)} word speaker labels were refined around ambiguous speech. Review these passages.</p>
+                    {Number(transcript.metadata?.word_refinement_unmatched_words) > 0 && (
+                        <p>{transcript.metadata?.word_refinement_unmatched_words} disputed words have been left open for speaker review.</p>
+                    )}
+                    {Number(transcript.metadata?.word_refinement_applied_words) > 0 && (
+                        <p>{Number(transcript.metadata?.word_refinement_applied_words || 0)} word speaker labels were refined around ambiguous speech. Review these passages.</p>
                     )}
                     {unclearPassages.length > 0 && (
                         <button type="button" className="mt-2 underline underline-offset-4" onClick={handleReviewNavigation}>{transcript.metadata?.word_refinement_status === 'applied_needs_review' ? 'Review refined speaker labels' : 'Review next unclear passage'}</button>
@@ -380,6 +383,8 @@ export function TranscriptSection({
                 onOpenChange={setSpeakerRenameOpen}
                 transcriptionId={audioId}
                 initialSpeakers={detectedSpeakers}
+                priorConstraints={transcript.metadata?.speaker_constraints}
+                priorDiarizer={transcript.metadata?.diarization_engine}
                 onSpeakerMappingsUpdate={(mappings) => {
                     queryClient.invalidateQueries({ queryKey: ["speakerMappings", audioId] });
                     queryClient.invalidateQueries({ queryKey: ["transcript", audioId] });

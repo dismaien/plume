@@ -9,6 +9,7 @@ import (
 func proposalFixture() (*interfaces.TranscriptResult, SpeakerWordProposal) {
 	a := "speaker_0"
 	source := &interfaces.TranscriptResult{Text: "Hello,  yeah.", Segments: []interfaces.TranscriptSegment{{Start: 0, End: 1, Text: "Hello,  yeah.", Speaker: &a}}, WordSegments: []interfaces.TranscriptWord{{Start: 0, End: .8, Word: "Hello,", Speaker: &a}, {Start: .8, End: 1, Word: "yeah.", Speaker: &a}}, Metadata: map[string]string{"corrected_text": "Saved correction stays exactly."}}
+	source.Diarization = &interfaces.DiarizationResult{RegularSegments: []interfaces.DiarizationSegment{{Start: 0, End: 1, Speaker: a}, {Start: .8, End: 1, Speaker: "speaker_1"}}}
 	p := SpeakerWordProposal{Index: 1, Start: .8, End: 1, Word: "yeah.", Previous: a, Proposed: "speaker_1", Activity: .99, Margin: .8}
 	return source, p
 }
@@ -38,13 +39,15 @@ func TestWordProposalPreservesExactTextAndSplitsTheDisplayedSpeaker(t *testing.T
 }
 
 func TestWordProposalRejectsUnknownsAndAtomicSnapshotMismatch(t *testing.T) {
-	for _, variant := range []string{"unknown", "timing", "text", "low_activity", "duplicate"} {
+	for _, variant := range []string{"unknown", "timing", "text", "low_activity", "duplicate", "invented"} {
 		t.Run(variant, func(t *testing.T) {
 			source, p := proposalFixture()
 			batch := []SpeakerWordProposal{p}
 			switch variant {
 			case "unknown":
 				source.WordSegments[1].Speaker = nil
+			case "invented":
+				batch[0].Proposed = "speaker_5"
 			case "timing":
 				batch[0].End = 2
 			case "text":
@@ -61,5 +64,20 @@ func TestWordProposalRejectsUnknownsAndAtomicSnapshotMismatch(t *testing.T) {
 				t.Fatal("partial changes escaped")
 			}
 		})
+	}
+}
+
+func TestUnmatchedChannelPreservesAReviewableTurnWithoutAddingAPerson(t *testing.T) {
+	source, p := proposalFixture()
+	p.Proposed, p.ReviewChannel = "", "native_3"
+	result, err := ApplySpeakerWordProposals(source, []SpeakerWordProposal{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.WordSegments[1].SpeakerReview || result.WordSegments[1].Speaker != nil || len(result.Segments) != 2 || result.Segments[1].Speaker != nil {
+		t.Fatal("disputed reply must keep its own reviewable boundary")
+	}
+	if result.Metadata["speaker_attributed_count"] != "1" || result.Metadata["speaker_unattributed_units"] != "1" || result.Metadata["word_refinement_unmatched_words"] != "1" {
+		t.Fatalf("incorrect review accounting: %v", result.Metadata)
 	}
 }

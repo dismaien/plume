@@ -10,7 +10,7 @@ from pathlib import Path
 
 POLICY = dict(activity_probability=.9,activity_margin=.25,mapping_jaccard=.25,
               other_regular_support=.25,primary_regular_support=.5,
-              preserve_unknown=True,mapping_activity_threshold=.4,version='known_machine_labels_v1')
+              preserve_unknown=True,mapping_activity_threshold=.4,version='primary_speakers_review_unmatched_v2')
 
 
 def annotation(payload):
@@ -42,9 +42,18 @@ def propose(primary,native,words):
             weights[i,j]=intersection/union if union else 0
     rows,cols=linear_sum_assignment(weights,maximize=True)
     mapping={channels[j]:people[i] for i,j in zip(rows,cols) if weights[i,j]>=POLICY['mapping_jaccard']}
-    # Supplemental anonymous IDs must not collide with primary IDs/letters.
-    used={int(p.split('_')[-1]) for p in people if p.startswith('speaker_') and p.split('_')[-1].isdigit()}
-    next_id=max(used,default=-1)+1
+    # A voice heard only during overlap may be too brief for global Jaccard.
+    # Keep it eligible when the same native channel covers its entire activity
+    # and supports it locally on the word. Never allocate another identity.
+    exclusive_people = {turn['speaker'] for turn in primary.get('segments', [])}
+    overlap_only = set(people) - exclusive_people - set(mapping.values()) if exclusive_people else set()
+    brief_matches = {
+        channel: [person for person in overlap_only
+                  if primary_support[person].duration() > 0 and
+                  primary_support[person].crop(native_support[channel]).support().duration()
+                  >= .9 * primary_support[person].duration()]
+        for channel in set(channels) - set(mapping)
+    }
     artifact=native['activity_artifact'];path=Path(artifact['path'])
     with path.open('rb') as stream:
         if hashlib.file_digest(stream,'sha256').hexdigest()!=artifact['sha256']:
@@ -77,11 +86,17 @@ def propose(primary,native,words):
                  if duration else {person:float(any(t.start<=start<t.end for t in primary_support[person])) for person in people})
         if (support.get(current,0)>=POLICY['primary_regular_support']
                 and max([v for person,v in support.items() if person!=current],default=0)<POLICY['other_regular_support']):continue
-        if channel not in mapping:
-            mapping[channel]=f'speaker_{next_id}';next_id+=1
-        proposed=mapping[channel]
-        if proposed!=current:
-            proposals.append(dict(index=index,start=start,end=end,word=word['word'],previous=current,
-                                  proposed=proposed,activity=activity,margin=margin))
+        proposed = mapping.get(channel)
+        if proposed is None:
+            supported = [person for person in brief_matches.get(channel, [])
+                         if support.get(person, 0) >= POLICY['primary_regular_support']]
+            proposed = supported[0] if len(supported) == 1 else None
+        if proposed == current:
+            continue
+        proposal = dict(index=index, start=start, end=end, word=word['word'],
+                        previous=current, proposed=proposed or '', activity=activity, margin=margin)
+        if proposed is None:
+            proposal['review_channel'] = channel
+        proposals.append(proposal)
     return dict(policy=POLICY,proposals=proposals,mapping=mapping,
                 confidence_kind='uncalibrated frame activity; not person identity probability')

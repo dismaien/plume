@@ -10,14 +10,15 @@ import (
 // SpeakerWordProposal is a bounded correction to a fresh machine transcript.
 // Activity and Margin are model activity evidence, not identity probabilities.
 type SpeakerWordProposal struct {
-	Index    int     `json:"index"`
-	Start    float64 `json:"start"`
-	End      float64 `json:"end"`
-	Word     string  `json:"word"`
-	Previous string  `json:"previous"`
-	Proposed string  `json:"proposed"`
-	Activity float64 `json:"activity"`
-	Margin   float64 `json:"margin"`
+	ReviewChannel string  `json:"review_channel,omitempty"`
+	Index         int     `json:"index"`
+	Start         float64 `json:"start"`
+	End           float64 `json:"end"`
+	Word          string  `json:"word"`
+	Previous      string  `json:"previous"`
+	Proposed      string  `json:"proposed"`
+	Activity      float64 `json:"activity"`
+	Margin        float64 `json:"margin"`
 }
 
 // ApplySpeakerWordProposals validates the whole batch before changing a copy.
@@ -28,6 +29,14 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 	}
 	if len(proposals) == 0 {
 		return source, nil
+	}
+	known := map[string]bool{}
+	if source.Diarization != nil {
+		for _, turns := range [][]interfaces.DiarizationSegment{source.Diarization.Segments, source.Diarization.RegularSegments} {
+			for _, turn := range turns {
+				known[turn.Speaker] = true
+			}
+		}
 	}
 	seen := map[int]bool{}
 	for _, p := range proposals {
@@ -42,7 +51,11 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		if word.Speaker == nil || strings.TrimSpace(*word.Speaker) == "" || strings.EqualFold(strings.TrimSpace(*word.Speaker), "unknown") || strings.EqualFold(strings.TrimSpace(*word.Speaker), "Speaker unclear") || *word.Speaker != p.Previous || word.Word != p.Word || word.Start != p.Start || word.End != p.End {
 			return nil, fmt.Errorf("word proposal does not match source snapshot")
 		}
-		if strings.TrimSpace(p.Proposed) == "" || strings.EqualFold(p.Proposed, "unknown") || strings.EqualFold(p.Proposed, "Speaker unclear") || p.Proposed == p.Previous {
+		if p.ReviewChannel != "" {
+			if p.Proposed != "" {
+				return nil, fmt.Errorf("unmatched channel cannot assign an identity")
+			}
+		} else if !known[p.Proposed] || strings.TrimSpace(p.Proposed) == "" || strings.EqualFold(p.Proposed, "unknown") || strings.EqualFold(p.Proposed, "Speaker unclear") || p.Proposed == p.Previous {
 			return nil, fmt.Errorf("invalid proposed identity")
 		}
 		if math.IsNaN(p.Activity) || math.IsInf(p.Activity, 0) || math.IsNaN(p.Margin) || math.IsInf(p.Margin, 0) || p.Activity < 0.9 || p.Activity > 1 || p.Margin < 0.25 || p.Margin > 1 {
@@ -57,12 +70,19 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		result.Metadata[key] = value
 	}
 	first := math.Inf(1)
+	unmatched := 0
 	for _, p := range proposals {
 		speaker := p.Proposed
-		result.WordSegments[p.Index].Speaker = &speaker
+		if p.ReviewChannel != "" {
+			result.WordSegments[p.Index].Speaker = nil
+			result.WordSegments[p.Index].SpeakerReview = true
+			unmatched++
+		} else {
+			result.WordSegments[p.Index].Speaker = &speaker
+		}
 		first = math.Min(first, p.Start)
 	}
-	result.Segments = splitSegmentsAtWordSpeakerChanges(result.Segments, result.WordSegments)
+	result.Segments = machineSpeakerPassages(result.Segments, result.WordSegments, source.Diarization)
 	var before, after strings.Builder
 	for _, segment := range source.Segments {
 		before.WriteString(segment.Text)
@@ -73,20 +93,18 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 	if before.String() != after.String() {
 		return nil, fmt.Errorf("word refinement changed source segment text")
 	}
+	// Recalculate coverage after reserving genuinely disputed turns for review.
+	annotateOutcomes(&result, true, result.Diarization, nil)
+	if unmatched > 0 {
+		result.Metadata["word_refinement_unmatched_words"] = fmt.Sprint(unmatched)
+	}
 	result.Metadata["word_refinement_status"] = "applied_needs_review"
-	result.Metadata["word_refinement_policy"] = "known_machine_labels_v1"
-	result.Metadata["word_refinement_applied_words"] = fmt.Sprint(len(proposals))
+	result.Metadata["word_refinement_policy"] = wordRefinementPolicy
+	result.Metadata["word_refinement_applied_words"] = fmt.Sprint(len(proposals) - unmatched)
 	result.Metadata["word_refinement_confidence_kind"] = "uncalibrated frame activity; not person identity probability"
 	result.Metadata["diarization_status"] = "uncertain"
 	result.Metadata["diarization_reason"] = "independent_model_disagreement"
 	result.Metadata["speaker_review_reason"] = "refined_speaker_words"
 	result.Metadata["speaker_review_start"] = fmt.Sprintf("%.6f", first)
-	people := map[string]bool{}
-	for _, word := range result.WordSegments {
-		if word.Speaker != nil && *word.Speaker != "" {
-			people[*word.Speaker] = true
-		}
-	}
-	result.Metadata["speaker_attributed_count"] = fmt.Sprint(len(people))
 	return &result, nil
 }

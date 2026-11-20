@@ -66,11 +66,12 @@ type TranscriptSegment struct {
 
 // TranscriptWord represents word-level timing information
 type TranscriptWord struct {
-	Start   float64 `json:"start"`
-	End     float64 `json:"end"`
-	Word    string  `json:"word"`
-	Score   float64 `json:"score"`
-	Speaker *string `json:"speaker,omitempty"`
+	SpeakerReview bool    `json:"speaker_review,omitempty"`
+	Start         float64 `json:"start"`
+	End           float64 `json:"end"`
+	Word          string  `json:"word"`
+	Score         float64 `json:"score"`
+	Speaker       *string `json:"speaker,omitempty"`
 }
 
 // TranscriptResult represents the output of transcription

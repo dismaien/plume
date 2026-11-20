@@ -371,3 +371,63 @@ test('a model solo verdict does not rename an unclear phrase', async ({ page }) 
   await expect(page.getByText('Speaker unclear', { exact: true })).toHaveCount(1);
   await expect(page.getByText('Quiet reply.', { exact: true })).toBeVisible();
 });
+
+test('keeps an uncertain word visible inside a continuous speaker passage', async ({ page }) => {
+  const transcript = {
+    text: 'Open the door.',
+    metadata: { text_status: 'ready', diarization_status: 'uncertain' },
+    segments: [{ start: 0, end: 1, speaker: 'SPEAKER_00', text: 'Open the door.' }],
+    word_segments: [
+      { start: 0, end: 0.3, speaker: 'SPEAKER_00', word: 'Open' },
+      { start: 0.3, end: 0.5, word: 'the' },
+      { start: 0.5, end: 1, speaker: 'SPEAKER_00', word: 'door.' },
+    ],
+  };
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: { available: true, transcript } }));
+  await page.goto('/audio/1');
+  const passage = page.locator('[data-transcript-text]');
+  await expect(passage).toHaveCount(1);
+  await expect(passage).toHaveText('Open the door.');
+  await expect(passage.getByTitle('Speaker unclear')).toHaveText('the');
+  await page.getByRole('button', { name: 'Review next unclear passage' }).click();
+  await expect(page.locator('[data-review-target="true"]')).toContainText('Open the door.');
+});
+
+test('speaker rerun reuses the accepted exact count and allows auto-detect', async ({ page }) => {
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: {
+    available: true, transcript: {
+      text: 'First. Second.',
+      metadata: { diarization_engine: 'pyannote/speaker-diarization-community-1', speaker_constraints: '{"min_speakers":2,"max_speakers":2}' },
+      segments: [{ start: 0, end: 1, text: 'First.', speaker: 'A' }, { start: 1, end: 2, text: 'Second.', speaker: 'B' }],
+    },
+  } }));
+  await page.goto('/audio/1');
+  await page.getByRole('button', { name: 'Rename Speakers' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Rename Speakers' });
+  await dialog.getByRole('button', { name: 'Re-transcribe with different settings' }).click();
+  await expect(dialog.getByRole('spinbutton')).toHaveValue('2');
+  await expect(dialog.getByRole('combobox').filter({ hasText: 'Pyannote Community-1' })).toBeVisible();
+  await dialog.getByRole('spinbutton').fill('');
+  await expect(dialog.getByRole('spinbutton')).toHaveValue('');
+});
+
+test('existing edited sections remain reviewable inline without timed words', async ({ page }) => {
+  const transcript = {
+    text: 'Open the door. Hi.',
+    manually_edited: true,
+    metadata: { diarization_status: 'uncertain' },
+    segments: [
+      { start: 0, end: .3, text: 'Open', speaker: 'SPEAKER_00' },
+      { start: .3, end: .5, text: 'the' },
+      { start: .5, end: 1, text: 'door.', speaker: 'SPEAKER_00' },
+      { start: 1, end: 1.5, text: 'Hi.', speaker: 'SPEAKER_01' },
+    ],
+  };
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: { available: true, transcript } }));
+  await page.goto('/audio/1');
+  const passages = page.locator('[data-transcript-text]');
+  await expect(passages).toHaveCount(2);
+  await expect(passages.first()).toHaveText('Open the door.');
+  await expect(passages.first().getByTitle('Speaker unclear')).toHaveText('the');
+  await expect(passages.last()).toHaveText('Hi.');
+});

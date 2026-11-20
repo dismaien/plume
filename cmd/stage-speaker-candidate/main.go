@@ -32,10 +32,17 @@ type diarizationArtifact struct {
 }
 
 func candidateTranscript(accepted string, artifact []byte) (string, int, error) {
-	var base interfaces.TranscriptResult
-	if err := json.Unmarshal([]byte(accepted), &base); err != nil {
+	var snapshot struct {
+		interfaces.TranscriptResult
+		ManuallyEdited bool `json:"manually_edited"`
+	}
+	if err := json.Unmarshal([]byte(accepted), &snapshot); err != nil {
 		return "", 0, fmt.Errorf("accepted transcript: %w", err)
 	}
+	if snapshot.ManuallyEdited {
+		return "", 0, errors.New("accepted transcript has manual corrections; its edited passages cannot be rebuilt from machine timings")
+	}
+	base := snapshot.TranscriptResult
 	if len(base.WordSegments) == 0 || strings.TrimSpace(base.Text) == "" {
 		return "", 0, errors.New("accepted transcript has no timed words or text")
 	}
