@@ -1,8 +1,8 @@
 """Conservative word proposals, never transcript edits or accepted-name writes.
 
-Word proposals question an existing machine label only when the primary
-regular timeline is ambiguous. Mixed-track recovery returns independent
-acoustic spans for fresh assembly on the original clock.
+Word proposals use independent activity to resolve missing labels and
+ambiguous primary turns. Mixed-track recovery returns acoustic spans for
+fresh assembly on the original clock.
 """
 import hashlib
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 
 POLICY = dict(activity_probability=.9,activity_margin=.25,mapping_jaccard=.25,
               other_regular_support=.25,primary_regular_support=.5,
-              preserve_unknown=True,mapping_activity_threshold=.4,version='primary_mixed_track_local_support_v3')
+              preserve_explicit_unknown=True,mapping_activity_threshold=.4,version='anchored_native_word_gaps_v4')
 
 
 def annotation(payload):
@@ -24,7 +24,7 @@ def annotation(payload):
     return result
 
 
-def propose(primary,native,words):
+def propose(primary,native,words,metadata=None):
     import numpy as np
     from scipy.optimize import linear_sum_assignment
     from scipy.special import expit
@@ -100,12 +100,20 @@ def propose(primary,native,words):
         if proposed is None:
             proposal['review_channel'] = channel
         proposals.append(proposal)
+    from gap_evidence import gap_proposals, local_voice_evidence, unmapped_spans
+    evidence = local_voice_evidence(primary, probabilities, mask, step)
+    already_proposed = {p['index'] for p in proposals}
+    proposals.extend(p for p in gap_proposals(evidence, probabilities, step, words, metadata or {})
+                     if p['index'] not in already_proposed)
+    local_spans = {}
+    if primary.get('mixed_segments') or primary.get('mixed_regular_segments'):
+        local_spans = unmapped_spans(evidence, probabilities, mapping, step)
     return dict(policy=POLICY,proposals=proposals,mapping=mapping,
-                mixed_activity=recover_mixed_activity(primary, native, mapping),
+                mixed_activity=recover_mixed_activity(primary, native, mapping, local_spans),
                 confidence_kind='uncalibrated frame activity; not person identity probability')
 
 
-def recover_mixed_activity(primary, native, mapping):
+def recover_mixed_activity(primary, native, mapping, local_spans=None):
     """Project independently recognized turns onto disputed primary regions."""
     from bisect import bisect_left
     from collections import Counter, defaultdict
@@ -153,6 +161,15 @@ def recover_mixed_activity(primary, native, mapping):
                         person = mapping.get(channel)
                         if person in targets:
                             recovered.append(dict(index=index, start=previous, end=boundary, speaker=person))
+                        elif local_spans and channel in local_spans:
+                            ends_local, local_rows = local_spans[channel]
+                            j = bisect_left(ends_local, previous)
+                            while j < len(local_rows) and local_rows[j][0] < boundary:
+                                a, b, person = local_rows[j]
+                                a, b = max(a, previous), min(b, boundary)
+                                if b > a and person in targets:
+                                    recovered.append(dict(index=index, start=a, end=b, speaker=person))
+                                j += 1
                 active.update(changes)
                 previous = boundary
         result[field] = recovered

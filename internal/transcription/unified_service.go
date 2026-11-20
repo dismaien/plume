@@ -1487,13 +1487,27 @@ func splitSegmentsAtWordSpeakerChanges(
 	result := make([]interfaces.TranscriptSegment, 0, len(segments))
 	wordIndex := 0
 	for _, segment := range segments {
-		for wordIndex < len(words) && wordMidpoint(words[wordIndex]) < segment.Start {
-			wordIndex++
-		}
-
+		// Overlapping decoder segments may share a timestamp. Consume matching
+		// source words in transcript order before using midpoints as a fallback.
 		endIndex := wordIndex
-		for endIndex < len(words) && wordMidpoint(words[endIndex]) <= segment.End {
+		rest := strings.TrimSpace(segment.Text)
+		for rest != "" && endIndex < len(words) {
+			w := words[endIndex]
+			token := strings.TrimSpace(w.Word)
+			if token == "" || w.End < segment.Start-.01 || w.Start > segment.End+.01 || !strings.HasPrefix(rest, token) {
+				break
+			}
+			rest = strings.TrimSpace(rest[len(token):])
 			endIndex++
+		}
+		if rest != "" || endIndex == wordIndex {
+			for wordIndex < len(words) && wordMidpoint(words[wordIndex]) < segment.Start {
+				wordIndex++
+			}
+			endIndex = wordIndex
+			for endIndex < len(words) && wordMidpoint(words[endIndex]) <= segment.End {
+				endIndex++
+			}
 		}
 		segmentWords := words[wordIndex:endIndex]
 		wordIndex = endIndex

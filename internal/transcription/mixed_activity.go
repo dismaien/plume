@@ -77,6 +77,12 @@ func ApplyAcousticWordRefinement(source *interfaces.TranscriptResult, batch Acou
 	var remaining []SpeakerWordProposal
 	for _, p := range batch.Proposals {
 		current := result.WordSegments[p.Index].Speaker
+		if p.GapEvidence {
+			if current == nil && !result.WordSegments[p.Index].SpeakerReview {
+				remaining = append(remaining, p)
+			}
+			continue
+		}
 		if current == nil || (*current == p.Proposed && p.ReviewChannel == "") {
 			continue
 		}

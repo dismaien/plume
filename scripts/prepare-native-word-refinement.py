@@ -46,7 +46,7 @@ def prepare(args):
     for name,expected in provenance['files'].items():
         if sha(model/name)!=expected:raise ValueError('Installed model differs from pinned source')
     shutil.copy2(lock,root/'requirements.lock.txt')
-    profile=dict(enabled=args.enable,model_revision=REVISION,policy='primary_mixed_track_local_support_v3',
+    profile=dict(enabled=args.enable,model_revision=REVISION,policy='anchored_native_word_gaps_v4',
                  requirements_sha256=lock_hash,model_provenance_sha256=sha(model/'provenance.json'),
                  device='mps',cpu_threads=1,network_inference=False,
                  limitations='Conservative ambiguous-word refinement; not a standalone engine winner or proof of personal-memo accuracy')

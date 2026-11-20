@@ -431,3 +431,23 @@ test('existing edited sections remain reviewable inline without timed words', as
   await expect(passages.first().getByTitle('Speaker unclear')).toHaveText('the');
   await expect(passages.last()).toHaveText('Hi.');
 });
+
+test('marks a sentence onset inline and keeps a short reply on its own', async ({ page }) => {
+  const transcript = {
+    text: 'Before we left. Yeah. Later.',
+    metadata: { diarization_status: 'uncertain' },
+    segments: [
+      { start: 0, end: .4, text: 'Before' },
+      { start: .4, end: 1, text: 'we left.', speaker: 'A' },
+      { start: 1.1, end: 1.4, text: 'Yeah.', speaker: 'B' },
+      { start: 1.5, end: 2, text: 'Later.', speaker: 'A' },
+    ],
+  };
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: { available: true, transcript } }));
+  await page.goto('/audio/1');
+  const passages = page.locator('[data-transcript-text]');
+  await expect(passages).toHaveCount(3);
+  await expect(passages.first()).toHaveText('Before we left.');
+  await expect(passages.first().getByTitle('Speaker unclear')).toHaveText('Before');
+  await expect(passages.nth(1)).toHaveText('Yeah.');
+});

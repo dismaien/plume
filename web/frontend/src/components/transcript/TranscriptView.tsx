@@ -93,6 +93,7 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
 
     const getDisplaySpeakerName = (originalSpeaker: string, persistedName?: string): string => {
         const resolvedSpeaker = resolveSegmentSpeaker(originalSpeaker);
+        if (!resolvedSpeaker && persistedName?.trim()) return persistedName.trim();
         if (!resolvedSpeaker && transcript?.metadata?.diarization_status && transcript.metadata.diarization_status !== 'not_requested') return 'Speaker unclear';
         return speakerMappings[resolvedSpeaker] || persistedName || formatSpeakerLabel(resolvedSpeaker);
     };
@@ -461,8 +462,8 @@ export const TranscriptView = forwardRef<HTMLDivElement, TranscriptViewProps>(({
                             data-transcript-text
                         >
                             {group.segmentIndices.map((index, part) => (
-                                <Fragment key={index}>{part > 0 ? ' ' : ''}{group.segmentIndices.length > 1 && !transcript.segments?.[index].speaker
-                                        ? <abbr title="Speaker unclear" className="decoration-dotted underline underline-offset-4">{compactTexts[index]}</abbr>
+                                <Fragment key={index}>{part > 0 ? ' ' : ''}{group.segmentIndices.length > 1 && !transcript.segments?.[index].speaker && !transcript.segments?.[index].speaker_name
+                                        ? <span><span role="img" aria-label="Speaker unclear" data-label="[Speaker unclear] " className="text-xs font-medium text-carbon-500 before:content-[attr(data-label)]" /><span title="Speaker unclear" className="underline decoration-dotted underline-offset-4">{compactTexts[index]}</span></span>
                                         : compactTexts[index]}</Fragment>
                             ))}
                         </p>

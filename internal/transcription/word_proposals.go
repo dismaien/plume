@@ -10,15 +10,17 @@ import (
 // SpeakerWordProposal is a bounded correction to a fresh machine transcript.
 // Activity and Margin are model activity evidence, not identity probabilities.
 type SpeakerWordProposal struct {
-	ReviewChannel string  `json:"review_channel,omitempty"`
-	Index         int     `json:"index"`
-	Start         float64 `json:"start"`
-	End           float64 `json:"end"`
-	Word          string  `json:"word"`
-	Previous      string  `json:"previous"`
-	Proposed      string  `json:"proposed"`
-	Activity      float64 `json:"activity"`
-	Margin        float64 `json:"margin"`
+	PrimaryFraction float64 `json:"primary_fraction,omitempty"`
+	GapEvidence     bool    `json:"gap_evidence,omitempty"`
+	ReviewChannel   string  `json:"review_channel,omitempty"`
+	Index           int     `json:"index"`
+	Start           float64 `json:"start"`
+	End             float64 `json:"end"`
+	Word            string  `json:"word"`
+	Previous        string  `json:"previous"`
+	Proposed        string  `json:"proposed"`
+	Activity        float64 `json:"activity"`
+	Margin          float64 `json:"margin"`
 }
 
 // ApplySpeakerWordProposals validates the whole batch before changing a copy.
@@ -48,7 +50,11 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		if math.IsNaN(p.Start) || math.IsInf(p.Start, 0) || math.IsNaN(p.End) || math.IsInf(p.End, 0) || p.Start < 0 || p.End < p.Start {
 			return nil, fmt.Errorf("invalid proposal timeline")
 		}
-		if word.Speaker == nil || strings.TrimSpace(*word.Speaker) == "" || strings.EqualFold(strings.TrimSpace(*word.Speaker), "unknown") || strings.EqualFold(strings.TrimSpace(*word.Speaker), "Speaker unclear") || *word.Speaker != p.Previous || word.Word != p.Word || word.Start != p.Start || word.End != p.End {
+		matches := word.Speaker != nil && *word.Speaker == p.Previous && strings.TrimSpace(p.Previous) != "" && !strings.EqualFold(strings.TrimSpace(p.Previous), "unknown") && !strings.EqualFold(strings.TrimSpace(p.Previous), "Speaker unclear")
+		if p.GapEvidence {
+			matches = word.Speaker == nil && !word.SpeakerReview && p.Previous == "" && p.ReviewChannel == ""
+		}
+		if !matches || word.Word != p.Word || word.Start != p.Start || word.End != p.End {
 			return nil, fmt.Errorf("word proposal does not match source snapshot")
 		}
 		if p.ReviewChannel != "" {
@@ -58,7 +64,14 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		} else if !known[p.Proposed] || strings.TrimSpace(p.Proposed) == "" || strings.EqualFold(p.Proposed, "unknown") || strings.EqualFold(p.Proposed, "Speaker unclear") || p.Proposed == p.Previous {
 			return nil, fmt.Errorf("invalid proposed identity")
 		}
-		if math.IsNaN(p.Activity) || math.IsInf(p.Activity, 0) || math.IsNaN(p.Margin) || math.IsInf(p.Margin, 0) || p.Activity < 0.9 || p.Activity > 1 || p.Margin < 0.25 || p.Margin > 1 {
+		if math.IsNaN(p.PrimaryFraction) || p.PrimaryFraction < 0 || p.PrimaryFraction > 1 {
+			return nil, fmt.Errorf("invalid primary coverage")
+		}
+		minActivity := 0.9
+		if p.GapEvidence && p.PrimaryFraction >= 0.8 && p.Margin >= 0.4 {
+			minActivity = 0.65
+		}
+		if math.IsNaN(p.Activity) || math.IsInf(p.Activity, 0) || math.IsNaN(p.Margin) || math.IsInf(p.Margin, 0) || p.Activity < minActivity || p.Activity > 1 || p.Margin < 0.25 || p.Margin > 1 {
 			return nil, fmt.Errorf("insufficient or invalid activity evidence")
 		}
 	}
@@ -70,7 +83,7 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		result.Metadata[key] = value
 	}
 	first := math.Inf(1)
-	unmatched := 0
+	unmatched, gaps := 0, 0
 	for _, p := range proposals {
 		speaker := p.Proposed
 		if p.ReviewChannel != "" {
@@ -80,7 +93,11 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 		} else {
 			result.WordSegments[p.Index].Speaker = &speaker
 		}
-		first = math.Min(first, p.Start)
+		if p.GapEvidence {
+			gaps++
+		} else {
+			first = math.Min(first, p.Start)
+		}
 	}
 	result.Segments = machineSpeakerPassages(result.Segments, result.WordSegments, source.Diarization)
 	var before, after strings.Builder
@@ -102,6 +119,13 @@ func ApplySpeakerWordProposals(source *interfaces.TranscriptResult, proposals []
 	result.Metadata["word_refinement_policy"] = wordRefinementPolicy
 	result.Metadata["word_refinement_applied_words"] = fmt.Sprint(len(proposals) - unmatched)
 	result.Metadata["word_refinement_confidence_kind"] = "uncalibrated frame activity; not person identity probability"
+	if gaps > 0 {
+		result.Metadata["word_refinement_gap_words"] = fmt.Sprint(gaps)
+	}
+	if gaps == len(proposals) {
+		result.Metadata["word_refinement_status"] = "applied"
+		return &result, nil
+	}
 	result.Metadata["diarization_status"] = "uncertain"
 	result.Metadata["diarization_reason"] = "independent_model_disagreement"
 	result.Metadata["speaker_review_reason"] = "refined_speaker_words"

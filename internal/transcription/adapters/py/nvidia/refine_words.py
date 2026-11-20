@@ -23,7 +23,7 @@ def run(args):
     native['regular_segments']=replay(native['activity_artifact'],POLICY['mapping_activity_threshold'])
     primary=transcript.get('diarization_result')
     if not primary:raise ValueError('Primary acoustic timeline is required')
-    result=propose(primary,native,transcript.get('word_segments',[]))
+    result=propose(primary,native,transcript.get('word_segments',[]),transcript.get('metadata',{}))
     result.update(input_sha256=hashlib.sha256(original).hexdigest(),
                   script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                   model_revision=native.get('metadata',{}).get('model_revision',''),

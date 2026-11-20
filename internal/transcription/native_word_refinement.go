@@ -17,7 +17,7 @@ import (
 	"quill/pkg/binaries"
 )
 
-const wordRefinementPolicy = "primary_mixed_track_local_support_v3"
+const wordRefinementPolicy = "anchored_native_word_gaps_v4"
 
 const wordRefinementRevision = "f667ed73aee57d40cc39428eb768b4fd87a0a29e"
 
@@ -58,7 +58,7 @@ func (u *UnifiedTranscriptionService) refineNativeWords(ctx context.Context, inp
 	}
 	// Existing profiles pin the same model. The embedded scripts and Go
 	// validator always apply the current policy to fresh outputs.
-	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "primary_speakers_review_unmatched_v2" && profile.Policy != "known_machine_labels_v1") {
+	if profile.Revision != wordRefinementRevision || (profile.Policy != wordRefinementPolicy && profile.Policy != "primary_mixed_track_local_support_v3" && profile.Policy != "primary_speakers_review_unmatched_v2" && profile.Policy != "known_machine_labels_v1") {
 		return result, fmt.Errorf("unverified native word-refinement profile")
 	}
 	if result == nil || result.Diarization == nil || len(result.WordSegments) == 0 {

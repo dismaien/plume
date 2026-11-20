@@ -81,3 +81,37 @@ func TestUnmatchedChannelPreservesAReviewableTurnWithoutAddingAPerson(t *testing
 		t.Fatalf("incorrect review accounting: %v", result.Metadata)
 	}
 }
+
+func TestGapProposalRequiresAFreshUnassignedWordAndKnownIdentity(t *testing.T) {
+	src, p := proposalFixture()
+	src.WordSegments[1].Speaker = nil
+	p.GapEvidence, p.Previous = true, ""
+	p.Activity, p.PrimaryFraction = .71, .95
+	result, err := ApplyAcousticWordRefinement(src, AcousticWordRefinement{Proposals: []SpeakerWordProposal{p}})
+	if err != nil || result.WordSegments[1].Speaker == nil || *result.WordSegments[1].Speaker != p.Proposed || src.WordSegments[1].Speaker != nil {
+		t.Fatal("failed to recover an independently supported gap on a copy", err)
+	}
+	src.WordSegments[1].SpeakerReview = true
+	if _, err := ApplySpeakerWordProposals(src, []SpeakerWordProposal{p}); err == nil {
+		t.Fatal("filled a disputed word")
+	}
+	src.WordSegments[1].SpeakerReview = false
+	p.Proposed = "unseen"
+	if _, err := ApplySpeakerWordProposals(src, []SpeakerWordProposal{p}); err == nil {
+		t.Fatal("invented a voice")
+	}
+	p.Proposed, p.PrimaryFraction = "speaker_1", .2
+	if _, err := ApplySpeakerWordProposals(src, []SpeakerWordProposal{p}); err == nil {
+		t.Fatal("weak activity without primary support")
+	}
+}
+
+func TestOverlappingWordTimesDoNotConsumeTheNextReply(t *testing.T) {
+	a, b := "A", "B"
+	words := []interfaces.TranscriptWord{{Start: 0, End: .4, Word: "I", Speaker: &a}, {Start: .4, End: 1, Word: "think.", Speaker: &a}, {Start: .92, End: 1, Word: "Yes.", Speaker: &b}}
+	rows := []interfaces.TranscriptSegment{{Start: 0, End: 1, Text: " I think."}, {Start: .92, End: 1, Text: " Yes."}}
+	got := splitSegmentsAtWordSpeakerChanges(rows, words)
+	if len(got) != 2 || got[0].Speaker == nil || *got[0].Speaker != a || got[1].Speaker == nil || *got[1].Speaker != b || got[0].Text+got[1].Text != " I think. Yes." {
+		t.Fatal("overlapping word consumed another utterance", got)
+	}
+}

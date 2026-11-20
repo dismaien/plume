@@ -82,3 +82,51 @@ def test_two_simultaneous_known_voices_remain_in_regular_activity():
     solo = {(0,.5,'A'),(.8,1,'A')}
     assert summarize(result['mixed_segments']) == solo
     assert summarize(result['mixed_regular_segments']) == solo | {(.5,.8,'A'),(.5,.8,'B')}
+
+
+def test_local_channel_identity_can_change_without_filling_silence_or_disputes():
+    from gap_evidence import local_voice_evidence, gap_proposals
+    # A globally identical channel carries different voices in distant excerpts.
+    turns = [dict(start=0, end=2, speaker='A'), dict(start=122, end=124, speaker='B')]
+    primary = dict(segments=turns, regular_segments=turns)
+    p = np.zeros((12500, 2))
+    p[:250, 0] = .99
+    p[12150:12400, 0] = .99
+    words = [dict(start=2, end=2.5, word='first'), dict(start=60, end=60.3, word='silence'),
+             dict(start=121.5, end=122, word='reply'),
+             dict(start=121.5, end=122, word='disputed', speaker_review=True),
+             dict(start=121.5, end=122, word='saved', speaker='A')]
+    evidence = local_voice_evidence(primary, p, np.ones(len(p), dtype=bool), .01)
+    proposals = gap_proposals(evidence, p, .01, words, {})
+    assert [(w['word'], w['proposed']) for w in proposals] == [('first', 'A'), ('reply', 'B')]
+
+
+def test_decoder_window_matches_word_end_across_restored_pause():
+    import json
+    from gap_evidence import decoder_windows
+    metadata = dict(vad_retained_speech_regions='[{"start":0,"end":3},{"start":12,"end":15}]')
+    words = [dict(word='the', start=.8, end=1), dict(word='key', start=1, end=13)]
+    tokens = [dict(word=' the', start=.8, end=1, probability=.99),
+              dict(word=' key', start=3.65, end=4, probability=.99)]
+    data = dict(decoder='faster_whisper_full_audio', input_duration_seconds=6, segments=[dict(words=tokens)])
+    metadata['asr_diagnostics'] = json.dumps(data)
+    assert decoder_windows(metadata, words)[1] == (12.65, 13)
+    data['input_duration_seconds'] = 15
+    metadata['asr_diagnostics'] = json.dumps(data)
+    assert decoder_windows(metadata, words) == {}
+    assert decoder_windows(dict(asr_diagnostics='{'), words) == {}
+
+
+def test_clipped_syllable_on_overlap_preserves_a_separate_acknowledgement():
+    from gap_evidence import local_voice_evidence, clipped_word_proposal
+    primary = dict(segments=[dict(start=0, end=2, speaker='A'), dict(start=2, end=2.16, speaker='B'),
+                             dict(start=2.16, end=3, speaker='A')],
+                   regular_segments=[dict(start=0, end=3, speaker='A'), dict(start=1.95, end=2.21, speaker='B')])
+    p = np.tile([.99, .01], (300, 1))
+    p[195:221, 1] = .95
+    evidence = local_voice_evidence(primary, p, np.ones(300, dtype=bool), .01)
+    words = [dict(word='the', start=1.24, end=1.36, speaker='A'),
+             dict(word='decision.', start=1.99, end=2.17, speaker='B', score=.1)]
+    assert clipped_word_proposal(1, words, (1.36, 2.16), evidence, p)['proposed'] == 'A'
+    words[1]['word'] = 'Yeah.'
+    assert clipped_word_proposal(1, words, (1.36, 2.16), evidence, p) is None
