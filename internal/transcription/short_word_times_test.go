@@ -34,3 +34,27 @@ func TestExcerptCannotLendOneReplyToTwoASRTokens(t *testing.T) {
 		t.Fatal("one decoded sound was attributed to both saved words")
 	}
 }
+
+func TestObservedWordAtHandoffNeedsIndependentSpeakerWitness(t *testing.T) {
+	src, _ := proposalFixture()
+	w := &src.WordSegments[1]
+	w.Speaker = nil
+	w.Start, w.End = .5, 1.5
+	track := []interfaces.DiarizationSegment{{Start: .4, End: .9, Speaker: "speaker_0"}, {Start: 1, End: 1.7, Speaker: "speaker_1"}}
+	src.Diarization.RegularSegments = track
+	src.Diarization.Segments = track
+	for _, tc := range []struct{ witness, want string }{{"", ""}, {"speaker_0", ""}, {"speaker_1", "speaker_1"}} {
+		obs := WordTimeObservations{Observed: []WordTimeObservation{{Index: 1, Word: w.Word, Start: w.Start, End: w.End, Onset: 1.05, Offset: 1.35, NativeSpeaker: tc.witness}}}
+		got, err := ApplyObservedWordTimes(src, obs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := ""
+		if speaker := got.WordSegments[1].Speaker; speaker != nil {
+			id = *speaker
+		}
+		if id != tc.want || w.Speaker != nil {
+			t.Fatalf("witness %q gave %q, want %q", tc.witness, id, tc.want)
+		}
+	}
+}

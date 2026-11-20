@@ -23,12 +23,13 @@ import (
 // Onset and Offset locate speech for attribution only. They are never stored
 // in place of the user's original alignment or used to rewrite source text.
 type WordTimeObservation struct {
-	Index  int     `json:"index"`
-	Word   string  `json:"word"`
-	Start  float64 `json:"start"`
-	End    float64 `json:"end"`
-	Onset  float64 `json:"onset"`
-	Offset float64 `json:"offset"`
+	NativeSpeaker string  `json:"native_speaker,omitempty"`
+	Index         int     `json:"index"`
+	Word          string  `json:"word"`
+	Start         float64 `json:"start"`
+	End           float64 `json:"end"`
+	Onset         float64 `json:"onset"`
+	Offset        float64 `json:"offset"`
 }
 
 type WordTimeObservations struct {
@@ -112,7 +113,13 @@ func ApplyObservedWordTimes(source *interfaces.TranscriptResult, batch WordTimeO
 			continue
 		}
 		person := soleObservedSpeaker(o.Onset, o.Offset, source.Diarization.RegularSegments, .65)
-		if person != "" && soleObservedSpeaker(o.Onset, o.Offset, source.Diarization.Segments, .65) == person && soleObservedSpeaker(w.Start, w.End, source.Diarization.RegularSegments, 0) == person {
+		if person == "" || soleObservedSpeaker(o.Onset, o.Offset, source.Diarization.Segments, .65) != person {
+			continue
+		}
+		original := soleObservedSpeaker(w.Start, w.End, source.Diarization.RegularSegments, 0)
+		// At a handoff the forced alignment may span both voices, or start in
+		// silence. Moving attribution requires a separate local acoustic witness.
+		if original == person || (original == "" && o.NativeSpeaker == person) {
 			w.Speaker = &person
 			applied++
 		}
@@ -145,7 +152,7 @@ func ApplyObservedWordTimes(source *interfaces.TranscriptResult, batch WordTimeO
 }
 
 func (u *UnifiedTranscriptionService) checkShortWordTimes(ctx context.Context, result *interfaces.TranscriptResult, audio, directory, scripts string) (*interfaces.TranscriptResult, error) {
-	if result.Language != "en" || !slices.ContainsFunc(result.WordSegments, func(w interfaces.TranscriptWord) bool { return w.Speaker == nil && !w.SpeakerReview }) {
+	if (result.Language != "en" && result.Language != "de") || !slices.ContainsFunc(result.WordSegments, func(w interfaces.TranscriptWord) bool { return w.Speaker == nil && !w.SpeakerReview }) {
 		return result, nil
 	}
 	python := filepath.Join(u.envPath, "mlx-whisper", "mlx-whisper", ".venv", "bin", "python")
@@ -164,7 +171,7 @@ func (u *UnifiedTranscriptionService) checkShortWordTimes(ctx context.Context, r
 	}
 	run, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(run, python, filepath.Join(scripts, "short_word_times.py"), "--audio", audio, "--input", input, "--out", output)
+	cmd := exec.CommandContext(run, python, filepath.Join(scripts, "short_word_times.py"), "--audio", audio, "--input", input, "--out", output, "--native", filepath.Join(directory, "native-result.json"))
 	cmd.Env = nativeWordEnvironment()
 	logFile, err := os.OpenFile(filepath.Join(directory, "word-times.log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

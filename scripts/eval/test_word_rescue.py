@@ -7,6 +7,7 @@ import numpy as np
 from activity_timeline import save_activity
 
 DIRECTORY=Path(__file__).resolve().parents[2]/'internal/transcription/adapters/py/nvidia'
+sys.path.insert(0, str(DIRECTORY))
 spec=importlib.util.spec_from_file_location('word_rescue',DIRECTORY/'word_rescue.py')
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
@@ -193,3 +194,38 @@ def test_short_decode_needs_word_and_an_independent_timed_neighbor():
     assert matches(words,0,observed,1) == [(1.02,1.19)]
     observed[1]['start'],observed[1]['end']=1.3,1.55
     assert not matches(words,0,observed,1)
+
+
+def test_short_excerpt_competing_native_activity_vetoes_identity():
+    from short_word_times import NativeWordClock, native_witness
+    frames = (np.arange(20) + .5) * .01
+    voice = np.zeros(20, dtype=int)
+    disputed = np.zeros(20, dtype=bool)
+    clock = NativeWordClock(['speaker_a', 'speaker_b'], frames, voice, disputed, np.zeros(20, dtype=int), .01)
+    assert native_witness(clock, 0., .15) == 'speaker_a'
+    assert native_witness(clock, 0., .04) is None
+    disputed[6] = True
+    assert native_witness(clock, 0., .15) is None
+    disputed[6] = False
+    voice[8] = 1
+    assert native_witness(clock, 0., .15) is None
+    voice[8] = 0
+    voice[:5] = -1
+    clock.channels[:5] = -1
+    assert native_witness(clock, 0., .15) == 'speaker_a'
+    clock.channels[4] = 1
+    assert native_witness(clock, 0., .15) is None
+
+
+def test_extra_excerpt_targets_preserve_original_clip_context():
+    from short_word_times import NativeWordClock, windows
+    turns = [dict(start=2., end=4., speaker='A'), dict(start=4., end=5., speaker='B')]
+    t = dict(word_segments=[dict(word='one', start=2.4, end=2.6),
+                            dict(word='two', start=3.9, end=4.2)],
+             diarization_result=dict(regular_segments=turns))
+    frames = (np.arange(600) + .5) * .01
+    clock = NativeWordClock(['A', 'B'], frames, np.zeros(600, dtype=int), np.zeros(600, dtype=bool), np.zeros(600, dtype=int), .01)
+    original = windows(t, 6.)
+    expanded = windows(t, 6., clock)
+    assert expanded[:len(original)] == original
+    assert expanded[len(original):] and all(ids == {1} for _, _, ids in expanded[len(original):])
