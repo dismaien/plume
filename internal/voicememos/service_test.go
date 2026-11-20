@@ -11,24 +11,33 @@ import (
 )
 
 type fakeRunner struct {
-	mu    sync.Mutex
-	calls [][]string
-	block chan struct{}
+	mu         sync.Mutex
+	calls      [][]string
+	block      chan struct{}
+	failImport bool
+	emptyScan  bool
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{name}, args...))
-	call := len(r.calls)
+	failImport := r.failImport
 	r.mu.Unlock()
 
 	if r.block != nil {
 		<-r.block
 	}
-	if call == 1 {
+	if argumentValue(args, "--report") != "" {
 		reportPath := argumentValue(args, "--report")
-		data, _ := json.Marshal(syncReport{CopiedAudio: []string{"20261011 204855.m4a"}})
+		report := syncReport{}
+		if !r.emptyScan {
+			report.CopiedAudio = []string{"20261011 204855.m4a"}
+		}
+		data, _ := json.Marshal(report)
 		return nil, os.WriteFile(reportPath, data, 0600)
+	}
+	if failImport {
+		return nil, context.Canceled
 	}
 	statePath := argumentValue(args, "--state")
 	return nil, os.WriteFile(statePath, []byte(`{"jobs":[{"id":"archive-test"}]}`), 0600)
@@ -54,6 +63,34 @@ func TestSyncAndStartRunsArchiveThenImporter(t *testing.T) {
 	}
 	if got := filepath.Base(runner.calls[1][1]); got != "import-voice-memo-archive.mjs" {
 		t.Fatalf("second script = %q", got)
+	}
+}
+
+func TestSyncAndStartResumesInterruptedImportAfterRestart(t *testing.T) {
+	opts := testOptions(t, t.TempDir())
+	runner := &fakeRunner{failImport: true}
+	if _, err := newService(opts, runner).SyncAndStart(context.Background(), "http://localhost:1234"); err == nil {
+		t.Fatal("expected interrupted import")
+	}
+	firstReport := argumentValue(runner.calls[1], "--sync-report")
+	runner.failImport = false
+	runner.emptyScan = true
+	result, err := newService(opts, runner).SyncAndStart(context.Background(), "http://localhost:5678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.QueuedJobs != 1 || result.ReportPath != firstReport || len(runner.calls) != 4 {
+		t.Fatalf("unexpected resumed batch: %+v, %d calls", result, len(runner.calls))
+	}
+	retry := runner.calls[2]
+	if argumentValue(retry, "--sync-report") != firstReport || argumentValue(retry, "--api-base") != "http://localhost:5678" {
+		t.Fatal("retry must resume the archived batch on the current backend")
+	}
+	if _, err := newService(opts, runner).SyncAndStart(context.Background(), "http://localhost:5678"); err != nil {
+		t.Fatal(err)
+	}
+	if argumentValue(runner.calls[len(runner.calls)-1], "--report") == "" {
+		t.Fatal("next sync did not scan for new recordings")
 	}
 }
 

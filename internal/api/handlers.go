@@ -2643,7 +2643,7 @@ func (h *Handler) GetAudioFile(c *gin.Context) {
 		return
 	}
 
-	playbackPath, err := localPlaybackPath(h.config.TempDir, audioPath)
+	playbackPath, err := localPlaybackPath(h.config.TempDir, audioPath, job.ArtifactDir)
 	if err != nil {
 		logger.Error("failed to prepare audio for playback", "job_id", jobID, "path", audioPath, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare audio for playback"})

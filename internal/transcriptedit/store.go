@@ -133,7 +133,7 @@ func (s Store) Save(ctx context.Context, jobID string, request Request) (Documen
 				return err
 			}
 			if r.Kind == "candidate" {
-				if previous != r.BaseTranscript || r.SpeakerMappings == nil || *r.SpeakerMappings != mappingSnapshot {
+				if previous != r.BaseTranscript || r.SpeakerMappings == nil || !sameMappingEvidence(*r.SpeakerMappings, mappingSnapshot) {
 					return ErrConflict
 				}
 				empty := "[]"

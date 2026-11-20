@@ -82,7 +82,7 @@ func (h *Handler) GetAudioWaveform(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Audio file path not found"})
 		return
 	}
-	audioPath, err = localPlaybackPath(h.config.TempDir, audioPath)
+	audioPath, err = localPlaybackPath(h.config.TempDir, audioPath, job.ArtifactDir)
 	if err != nil {
 		logger.Error("failed to prepare audio for waveform", "job_id", jobID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare audio for waveform"})

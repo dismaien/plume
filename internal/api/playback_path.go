@@ -15,7 +15,7 @@ import (
 // Documents while indefinitely blocking open(2) and link(2) for a helper
 // process. The terminal-side archive importer prepares zero-copy hard links;
 // this lookup fails promptly when one is missing instead of hanging playback.
-func localPlaybackPath(tempDir, sourcePath string) (string, error) {
+func localPlaybackPath(tempDir, sourcePath string, bundleDir *string) (string, error) {
 	sourcePath = strings.TrimSpace(sourcePath)
 	if sourcePath == "" {
 		return "", errors.New("audio source path is empty")
@@ -32,6 +32,16 @@ func localPlaybackPath(tempDir, sourcePath string) (string, error) {
 	dataDir := filepath.Clean(filepath.Dir(tempDir))
 	if pathIsWithin(sourcePath, dataDir) {
 		return sourcePath, nil
+	}
+
+	// Audio copied into a vault bundle already has its own playback file.
+	// Resolve links before treating a stored path as bundle-owned.
+	if bundleDir != nil && strings.TrimSpace(*bundleDir) != "" && pathIsWithin(sourcePath, *bundleDir) {
+		bundle, bundleErr := filepath.EvalSymlinks(*bundleDir)
+		audio, audioErr := filepath.EvalSymlinks(sourcePath)
+		if bundleErr == nil && audioErr == nil && pathIsWithin(audio, bundle) {
+			return sourcePath, nil
+		}
 	}
 
 	cachePath := playbackLinkPath(tempDir, sourcePath)

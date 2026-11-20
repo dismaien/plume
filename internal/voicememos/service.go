@@ -100,30 +100,83 @@ func (s *Service) SyncAndStart(ctx context.Context, apiBase string) (*Result, er
 		}
 	}
 
-	syncScript := filepath.Join(s.options.RepositoryRoot, "scripts", "sync-apple-voice-memos-archive.mjs")
-	importScript := filepath.Join(s.options.RepositoryRoot, "scripts", "import-voice-memo-archive.mjs")
+	syncScript := s.script("sync-apple-voice-memos-archive.mjs")
+	importScript := s.script("import-voice-memo-archive.mjs")
 	for _, required := range []string{syncScript, importScript, s.options.LiveRoot, s.options.ArchiveRoot, s.options.ReportsRoot, s.options.DatabasePath} {
 		if _, err := os.Stat(required); err != nil {
 			return nil, fmt.Errorf("Voice Memos sync prerequisite is unavailable at %q: %w", required, err)
 		}
 	}
 
-	stamp := time.Now().UTC().Format("2006-01-02T15-04-05.000Z")
-	reportPath := filepath.Join(s.options.ReportsRoot, "archive-sync-"+stamp+".json")
-	statePath := filepath.Join(s.options.ReportsRoot, "plume-import-archive-sync-"+stamp+".json")
-	sinceDate := time.Now().AddDate(0, 0, -14).Format("20060102")
+	// The archive script writes its report atomically. Remember its name before
+	// starting, so a restart between archiving and queuing can replay it.
+	const stampFormat = "2006-01-02T15-04-05.000000000Z"
+	pending := filepath.Join(s.options.ReportsRoot, ".plume-pending-import")
+	var recovered *Result
+	previous, err := os.Readlink(pending)
+	if err == nil {
+		if _, err := time.Parse("archive-sync-"+stampFormat+".json", previous); err != nil {
+			return nil, fmt.Errorf("invalid pending Voice Memos report name")
+		}
+		recovered, err = s.finishBatch(ctx, node, apiBase, previous)
+		if err != nil {
+			return nil, err
+		}
+		if err = os.Remove(pending); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 
-	output, err := s.runner.Run(ctx, node,
-		syncScript,
-		"--live-root", s.options.LiveRoot,
-		"--archive-root", s.options.ArchiveRoot,
-		"--reports-root", s.options.ReportsRoot,
-		"--report", reportPath,
-		"--since-date", sinceDate,
-		"--minimum-free-gb", "12",
-	)
+	name := "archive-sync-" + time.Now().UTC().Format(stampFormat) + ".json"
+	if err = os.Symlink(name, pending); err != nil {
+		return nil, err
+	}
+	fresh, err := s.finishBatch(ctx, node, apiBase, name)
 	if err != nil {
-		return nil, commandError("archive sync", err, output)
+		return nil, err
+	}
+	if err = os.Remove(pending); err != nil {
+		return nil, err
+	}
+	if recovered != nil {
+		if fresh.CopiedFiles+fresh.ReconciledFiles == 0 {
+			fresh.ReportPath = recovered.ReportPath
+		}
+		fresh.CopiedFiles += recovered.CopiedFiles
+		fresh.ReconciledFiles += recovered.ReconciledFiles
+		fresh.DuplicateFiles += recovered.DuplicateFiles
+		fresh.QueuedJobs += recovered.QueuedJobs
+		fresh.JobIDs = append(recovered.JobIDs, fresh.JobIDs...)
+	}
+	return fresh, nil
+}
+
+func (s *Service) script(name string) string {
+	return filepath.Join(s.options.RepositoryRoot, "scripts", name)
+}
+
+func (s *Service) finishBatch(ctx context.Context, node, apiBase, name string) (*Result, error) {
+	reportPath := filepath.Join(s.options.ReportsRoot, name)
+	statePath := filepath.Join(s.options.ReportsRoot, "plume-import-"+name)
+	if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+		sinceDate := time.Now().AddDate(0, 0, -14).Format("20060102")
+
+		output, err := s.runner.Run(ctx, node,
+			s.script("sync-apple-voice-memos-archive.mjs"),
+			"--live-root", s.options.LiveRoot,
+			"--archive-root", s.options.ArchiveRoot,
+			"--reports-root", s.options.ReportsRoot,
+			"--report", reportPath,
+			"--since-date", sinceDate,
+			"--minimum-free-gb", "12",
+		)
+		if err != nil {
+			return nil, commandError("archive sync", err, output)
+		}
+	} else if err != nil {
+		return nil, err
 	}
 
 	reportBytes, err := os.ReadFile(reportPath)
@@ -145,8 +198,8 @@ func (s *Service) SyncAndStart(ctx context.Context, apiBase string) (*Result, er
 		return result, nil
 	}
 
-	output, err = s.runner.Run(ctx, node,
-		importScript,
+	output, err := s.runner.Run(ctx, node,
+		s.script("import-voice-memo-archive.mjs"),
 		"--archive-root", s.options.ArchiveRoot,
 		"--db", s.options.DatabasePath,
 		"--playback-link-dir", s.options.PlaybackLinkDir,

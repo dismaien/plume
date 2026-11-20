@@ -38,6 +38,12 @@ func TestRerunCandidateAcceptAndMappingRollback(t *testing.T) {
 	if err := s.DB.Where("kind = ?", "before_rerun").First(&before).Error; err != nil {
 		t.Fatal(err)
 	}
+	// Bundle sync may recreate unchanged speaker mappings before review.
+	if err := repository.NewSpeakerMappingRepository(s.DB).UpdateMappings(ctx, "one", []models.SpeakerMapping{
+		{TranscriptionJobID: "one", OriginalSpeaker: mapping.OriginalSpeaker, CustomName: mapping.CustomName, MatchSource: mapping.MatchSource},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	doc := current(t, s, "one")
 	if _, err := s.Save(ctx, "one", Request{ExpectedVersion: doc.Version, RestoreID: &candidateID}); err != nil {
 		t.Fatal(err)
