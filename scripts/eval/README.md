@@ -119,3 +119,23 @@ The production policy was selected on IS1009a; ES2004a became development data
 when an unknown-filling variant failed. Frozen validation on TS3003a abstained,
 so independent accuracy gains remain unproven. Do not call the manual-word
 attribution results new ASR accuracy or claim a global engine winner.
+
+### Compare conflicting speaker labels on a saved machine candidate
+
+Use the Parakeet Python environment and a local TitaNet model. Supply the same
+mono 16 kHz WAV used to generate the native activity. For a production job this
+is the waveform produced by the job's FFmpeg conversion. The mapping comes from
+the corresponding word-refinement proposals file.
+
+```sh
+"$PARAKEET_PYTHON" scripts/eval/compare_assigned_voices.py \
+  --transcript assembled.json --audio input.wav --native native-result.json \
+  --mapping proposals.json --model "$TITANET_MODEL" --out voice-evidence.json
+go run ./cmd/transcription-eval -transcript assembled.json \
+  -voice-comparison voice-evidence.json -out comparison.json
+```
+
+Both commands create a new file. The second verifies the source transcript hash
+and uses the app's word and paragraph assembly code. This comparison runs offline
+on machine candidates. A newly introduced speaker boundary needs independent
+activity on the adjacent word, and an isolated acknowledgement can veto a merge.

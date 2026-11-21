@@ -24,7 +24,20 @@ func main() {
 	nativeRuntime := flag.String("native-runtime", "", "Optional configured local runtime for the real application refinement stage")
 	audio := flag.String("audio", "", "Full original-clock WAV for native-runtime preflight")
 	vadEvidence := flag.String("vad-evidence", "", "Retained VAD manifest for original-clock words; no timestamp edits")
+	voiceComparison := flag.String("voice-comparison", "", "Replay verified speaker changes on an already assembled machine transcript")
 	flag.Parse()
+
+	if *voiceComparison != "" {
+		if *asr == "" || *output == "" || *diar != "" || *overlapReview || *nativeRuntime != "" || *audio != "" || *proposals != "" || *observations != "" || *vadEvidence != "" {
+			panic("-voice-comparison takes only -transcript and -out")
+		}
+		result, err := replayVoiceComparison(*asr, *voiceComparison)
+		if err != nil {
+			panic(err)
+		}
+		writeResult(*output, result)
+		return
+	}
 	if *asr == "" || *diar == "" || *output == "" {
 		flag.Usage()
 		os.Exit(2)
@@ -86,11 +99,16 @@ func main() {
 			panic(err)
 		}
 	}
+	writeResult(*output, result)
+	fmt.Printf("Assembled %d frozen words with %s; attribution coverage=%s (not accuracy)\n", len(t.WordSegments), d.ModelUsed, result.Metadata["speaker_labelled_coverage"])
+}
+
+func writeResult(output string, result *interfaces.TranscriptResult) {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		panic(err)
 	}
-	file, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		panic(err)
 	}
@@ -101,5 +119,4 @@ func main() {
 	if err = file.Close(); err != nil {
 		panic(err)
 	}
-	fmt.Printf("Assembled %d frozen words with %s; attribution coverage=%s (not accuracy)\n", len(t.WordSegments), d.ModelUsed, result.Metadata["speaker_labelled_coverage"])
 }
