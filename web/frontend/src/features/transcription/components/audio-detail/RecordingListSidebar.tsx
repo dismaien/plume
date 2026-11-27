@@ -223,7 +223,7 @@ export function RecordingListSidebar({ currentAudioId, dashboardReturnPath, onCl
                                     >
                                     <div className="flex items-start gap-2">
                                         <span className={cn(
-                                            "line-clamp-2 min-w-0 flex-1 text-sm font-medium leading-snug",
+                                            "whitespace-normal [overflow-wrap:anywhere] min-w-0 flex-1 text-sm font-medium leading-snug",
                                             "text-[var(--text-primary)]",
                                         )}>
                                             {file.title || "Untitled Recording"}

@@ -1178,10 +1178,17 @@ func (h *Handler) ListTranscriptionJobs(c *gin.Context) {
 	}
 
 	// Compute response-only fields for each job.
+	overview := c.Query("view") == "overview"
 	jobIDs := make([]string, len(jobs))
 	for i := range jobs {
 		jobIDs[i] = jobs[i].ID
 		populateJobListComputedFields(&jobs[i])
+		if overview {
+			hasTranscript := jobs[i].Transcript != nil && *jobs[i].Transcript != "" && *jobs[i].Transcript != "null"
+			jobs[i].HasTranscript = &hasTranscript
+			// The recording detail view loads the full transcript on demand.
+			jobs[i].Transcript = nil
+		}
 	}
 
 	// Count pending speaker suggestions per job for badge display.
