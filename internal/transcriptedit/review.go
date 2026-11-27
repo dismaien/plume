@@ -57,50 +57,49 @@ func unpackItems(field json.RawMessage) ([]reviewItem, error) {
 	return out, nil
 }
 
-// Find the exact text span, disambiguating repeated phrases by their position among
-// the source words. Reject an ambiguous legacy alignment instead of editing a neighbor.
-func reviewSpan(section string, words []reviewItem, first, last int, sectionStart float64) (int, int, bool) {
+// Match at the selected token offset. Searching elsewhere could overwrite another
+// occurrence of the same reply in a manually edited transcript.
+func reviewSpan(section, original string, offset int) (int, int, bool) {
 	spans := reviewTokens.FindAllStringIndex(section, -1)
-	wanted := []string{}
-	for _, w := range words[first : last+1] {
-		wanted = append(wanted, strings.Fields(valueText(w, "word"))...)
-	}
-	if len(wanted) == 0 {
+	wanted := strings.Fields(original)
+	if len(wanted) == 0 || offset < 0 || offset+len(wanted) > len(spans) {
 		return 0, 0, false
 	}
-	matches := []int{}
-	for i := 0; i+len(wanted) <= len(spans); i++ {
-		match := true
-		for j, s := range wanted {
-			r := spans[i+j]
-			if section[r[0]:r[1]] != s {
-				match = false
-				break
-			}
-		}
-		if match {
-			matches = append(matches, i)
-		}
-	}
-	if len(matches) == 0 {
-		return 0, 0, false
-	}
-	pos := matches[0]
-	if len(matches) > 1 {
-		index := 0
-		for i := first - 1; i >= 0; i-- {
-			start, ok := words[i]["start"].(float64)
-			if !ok || start < sectionStart {
-				break
-			}
-			index += len(strings.Fields(valueText(words[i], "word")))
-		}
-		if !slices.Contains(matches, index) {
+	for i, token := range wanted {
+		span := spans[offset+i]
+		if section[span[0]:span[1]] != token {
 			return 0, 0, false
 		}
-		pos = index
 	}
-	return spans[pos][0], spans[pos+len(wanted)-1][1], true
+	return spans[offset][0], spans[offset+len(wanted)-1][1], true
+}
+
+// Use the same midpoint boundaries as the review list. Overlapping segments
+// can contain identical replies at the same displayed second.
+func passageWordOffset(segs, words []reviewItem, segment, first, last int) (int, bool) {
+	current, offset := 0, 0
+	for i, word := range words[:last+1] {
+		start, hasStart := word["start"].(float64)
+		end, hasEnd := word["end"].(float64)
+		if hasStart && hasEnd {
+			midpoint := (start + end) / 2
+			for current+1 < len(segs) {
+				sectionEnd, _ := segs[current]["end"].(float64)
+				nextStart, _ := segs[current+1]["start"].(float64)
+				if midpoint < math.Max(sectionEnd, nextStart) {
+					break
+				}
+				current++
+			}
+		}
+		if i >= first && current != segment {
+			return 0, false
+		}
+		if current == segment && i < first {
+			offset += len(strings.Fields(valueText(word, "word")))
+		}
+	}
+	return offset, true
 }
 
 func applyPassage(raw string, r PassageReview) (string, error) {
@@ -132,7 +131,6 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 			fullOffset += len(strings.Fields(valueText(other, "text")))
 		}
 	}
-	var lo, hi int
 	var start, end float64
 	if r.FirstWord == nil || r.LastWord == nil {
 		if len(words) > 0 || seg == nil || r.FirstWord != nil || r.LastWord != nil || strings.TrimSpace(valueText(seg, "text")) != original {
@@ -163,12 +161,15 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 		}
 		if seg != nil {
 			ss, _ := seg["start"].(float64)
-			var ok bool
-			lo, hi, ok = reviewSpan(valueText(seg, "text"), words, first, last, ss)
-			if !ok {
-				return "", ErrInvalid
-			}
 			section := valueText(seg, "text")
+			offset, ok := passageWordOffset(segs, words, r.Segment, first, last)
+			if !ok {
+				return "", ErrConflict
+			}
+			lo, hi, ok := reviewSpan(section, original, offset)
+			if !ok {
+				return "", ErrConflict
+			}
 			before, after := section[:lo], section[hi:]
 			fullOffset += len(strings.Fields(before))
 			sectionEnd, _ := seg["end"].(float64)
@@ -240,35 +241,11 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 		}
 		var full string
 		if json.Unmarshal(doc["text"], &full) == nil && full != "" {
-			spans := reviewTokens.FindAllStringIndex(full, -1)
-			old := strings.Fields(original)
-			matches := func(pos int) bool {
-				if pos < 0 || pos+len(old) > len(spans) || len(old) == 0 {
-					return false
-				}
-				for j, token := range old {
-					span := spans[pos+j]
-					if full[span[0]:span[1]] != token {
-						return false
-					}
-				}
-				return true
+			lo, hi, ok := reviewSpan(full, original, fullOffset)
+			if !ok {
+				return "", ErrConflict
 			}
-			if !matches(fullOffset) {
-				fullOffset = -1
-				for i := range spans {
-					if matches(i) {
-						if fullOffset != -1 {
-							return "", ErrConflict
-						}
-						fullOffset = i
-					}
-				}
-				if fullOffset < 0 {
-					return "", ErrConflict
-				}
-			}
-			full = full[:spans[fullOffset][0]] + text + full[spans[fullOffset+len(old)-1][1]:]
+			full = full[:lo] + text + full[hi:]
 		} else {
 			var blocks []string
 			for _, s := range segs {

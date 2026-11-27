@@ -1,8 +1,12 @@
 package transcriptedit
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+
+	"quill/internal/models"
 )
 
 func TestReviewInsideLabelledSegmentPreservesOtherWords(t *testing.T) {
@@ -47,5 +51,67 @@ func TestReviewLegacySegmentAndRejectStaleText(t *testing.T) {
 	r.Original = "Other."
 	if _, err := applyPassage(raw, r); err == nil {
 		t.Fatal("accepted stale content")
+	}
+}
+
+func TestReviewNeverMovesCorrectionToAnotherReply(t *testing.T) {
+	for _, tc := range []struct{ name, full, section string }{
+		{"edited full text", "No. Yeah.", "Yeah. Yeah."},
+		{"edited segment", "No. Yeah.", "No. Yeah."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := reviewItem{
+				"text":     tc.full,
+				"segments": []reviewItem{{"start": 1, "end": 3, "text": tc.section}},
+				"word_segments": []reviewItem{
+					{"start": 1, "end": 2, "word": "Yeah."},
+					{"start": 2, "end": 3, "word": "Yeah.", "speaker": "B"},
+				},
+			}
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, _ := setup(t)
+			if err := s.DB.Model(&models.TranscriptionJob{}).Where("id = ?", "one").Update("transcript", string(raw)).Error; err != nil {
+				t.Fatal(err)
+			}
+			before := current(t, s, "one")
+			first := 0
+			_, err = s.Save(context.Background(), "one", Request{ExpectedVersion: before.Version, PassageReview: &PassageReview{
+				Segment: 0, FirstWord: &first, LastWord: &first, Original: "Yeah.", Text: "Yes.", Speaker: "A",
+			}})
+			if !errors.Is(err, ErrConflict) {
+				t.Fatalf("expected a conflict, got %v", err)
+			}
+			after := current(t, s, "one")
+			if after.Version != before.Version || string(after.Transcript) != string(before.Transcript) {
+				t.Fatal("review changed the saved transcript")
+			}
+		})
+	}
+}
+
+func TestReviewOverlappingRepliesStayWithTheirOwnSegment(t *testing.T) {
+	raw := `{"text":"Yeah. Yeah.","segments":[{"start":0,"end":1.5,"text":"Yeah.","speaker":"A"},{"start":1,"end":2,"text":"Yeah."}],"word_segments":[{"start":1,"end":1.4,"word":"Yeah.","speaker":"A"},{"start":1.4,"end":1.8,"word":"Yeah."}]}`
+	second := 1
+	r := PassageReview{Segment: 0, FirstWord: &second, LastWord: &second, Original: "Yeah.", Text: "Yes.", Speaker: "B"}
+	if _, err := applyPassage(raw, r); !errors.Is(err, ErrConflict) {
+		t.Fatalf("accepted the neighboring segment: %v", err)
+	}
+	r.Segment = 1
+	next, err := applyPassage(raw, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Text     string
+		Segments []reviewItem
+	}
+	if err := json.Unmarshal([]byte(next), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Text != "Yeah. Yes." || len(doc.Segments) != 2 || doc.Segments[0]["speaker"] != "A" || doc.Segments[1]["speaker"] != "B" {
+		t.Fatal(next)
 	}
 }
