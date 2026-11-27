@@ -19,7 +19,7 @@ const textOf = (raw: Transcript | string, mappings: Record<string, string>) => {
     const t = normalize(raw);
     return t.segments?.length ? t.segments.map(s => `${s.speaker ? (mappings[s.speaker] || s.speaker_name || s.speaker) + ': ' : ''}${s.text}`).join('\n\n') : t.text || '';
 };
-const revisionLabel = (kind: string) => ({ original: 'Original transcript', edit: 'Text correction', speaker_edit: 'Speaker correction', restore: 'Restored version', before_edit: 'Before correction', before_rerun: 'Before rerun', candidate: 'Rerun candidate — review before accepting', candidate_accept: 'Accepted rerun' }[kind] || 'Saved version');
+const revisionLabel = (kind: string) => ({ original: 'Original transcript', edit: 'Text correction', speaker_edit: 'Speaker correction', passage_review: 'Passage review', restore: 'Restored version', before_edit: 'Before correction', before_rerun: 'Before rerun', candidate: 'Rerun candidate — review before accepting', candidate_accept: 'Accepted rerun' }[kind] || 'Saved version');
 const time = (seconds: number) => Number.isFinite(seconds) ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}` : '';
 
 export function TranscriptEditor({ audioId, speakerMappings, contextualTarget = null }: {

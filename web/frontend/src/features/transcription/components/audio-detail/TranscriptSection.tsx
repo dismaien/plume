@@ -22,12 +22,16 @@ import { cn } from "@/lib/utils";
 import { useTranscriptSearch } from "@/features/transcription/hooks/useTranscriptSearch";
 import { TranscriptSearchBar } from "@/components/transcript/TranscriptSearchBar";
 
+import { PassageReview } from './PassageReview';
+import { getReviewPassages, samePassage, type ReviewPassage } from './passage-review';
+
 interface TranscriptSectionProps {
     audioId: string;
     currentWordIndex: number | null;
     currentTime: number;
     isPlaying: boolean;
     onSeek: (time: number) => void;
+    onPlayFrom: (time: number) => void;
     // Lifted State Props
     transcript: Transcript | undefined;
     speakerMappings: Record<string, string>;
@@ -82,6 +86,7 @@ export function TranscriptSection({
     currentTime,
     isPlaying,
     onSeek,
+    onPlayFrom,
     transcript,
     speakerMappings,
     transcriptMode,
@@ -115,7 +120,10 @@ export function TranscriptSection({
     const highlightedWordRef = useRef<HTMLSpanElement>(null);
     const reviewRequestId = useRef(0);
     const [editTarget, setEditTarget] = useState<TranscriptEditTarget | null>(null);
-    const [reviewTarget, setReviewTarget] = useState<{ time: number; requestId: number } | null>(null);
+    const [reviewTarget, setReviewTarget] = useState<{ time: number; requestId: number; passage: ReviewPassage } | null>(null);
+    const reviewFallback = useRef<HTMLDivElement>(null);
+    const [reviewAnchor, setReviewAnchor] = useState<HTMLElement | null>(null);
+    const [reviewMessage, setReviewMessage] = useState('');
 
     useEffect(() => {
         if (!reviewTarget) return;
@@ -124,6 +132,7 @@ export function TranscriptSection({
         const outerFrame = window.requestAnimationFrame(() => {
             innerFrame = window.requestAnimationFrame(() => {
                 const target = transcriptRef.current?.querySelector<HTMLElement>('[data-review-target="true"]');
+                setReviewAnchor(target ?? reviewFallback.current);
                 if (!target) return;
                 target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 target.focus({ preventScroll: true });
@@ -254,37 +263,35 @@ export function TranscriptSection({
         window.getSelection()?.removeAllRanges();
     };
 
-    const unclearPassages = useMemo(() => {
-        const items = transcript?.word_segments?.length ? transcript.word_segments : transcript?.segments ?? [];
-        const runs: { start: number; end: number }[] = [];
-        let inRun = false;
-        for (const item of items) {
-            if (item.speaker || !Number.isFinite(item.start) || !Number.isFinite(item.end)) {
-                inRun = false;
-                continue;
-            }
-            const previous = runs[runs.length - 1];
-            if (inRun && previous && item.start <= previous.end + 0.75) previous.end = Math.max(previous.end, item.end);
-            else runs.push({ start: item.start, end: item.end });
-            inRun = true;
-        }
-        const missingVoiceStart = Number(transcript?.metadata?.speaker_review_start ?? NaN);
-        if (Number.isFinite(missingVoiceStart) && missingVoiceStart >= 0) runs.push({ start: missingVoiceStart, end: missingVoiceStart });
-        return runs.sort((a, b) => a.start - b.start);
-    }, [transcript]);
+    const unclearPassages = useMemo(() => transcript ? getReviewPassages(transcript) : [], [transcript]);
     const unlabelledWordCount = transcript?.word_segments?.filter(word => !word.speaker).length ?? 0;
 
-    const handleReviewNavigation = useCallback(() => {
-        const reviewCursor = Math.max(currentTime, reviewTarget?.time ?? 0);
-        const target = unclearPassages.find(passage => passage.start > reviewCursor + 0.25) ?? unclearPassages[0];
-        if (!target) return;
-
-        reviewRequestId.current += 1;
+    const beginReview = (target: ReviewPassage) => {
+        reviewRequestId.current++;
         onReviewNavigationRequested?.();
-        setReviewTarget({ time: Math.max(0, target.start), requestId: reviewRequestId.current });
-        onSeek(Math.max(0, target.start));
-    }, [currentTime, onReviewNavigationRequested, onSeek, reviewTarget?.time, unclearPassages]);
-
+        setReviewAnchor(null);
+        setReviewTarget({time: target.start, requestId: reviewRequestId.current, passage: target});
+        onSeek(target.start);
+    };
+    const handleReviewNavigation = () => {
+        if (!unclearPassages.length) return;
+        const i = reviewTarget ? unclearPassages.findIndex(p => samePassage(p, reviewTarget.passage)) : -1;
+        const next = i >= 0 ? unclearPassages[(i+1)%unclearPassages.length] :
+            unclearPassages.find(p=>p.end >= currentTime) ?? unclearPassages[0];
+        setReviewMessage('');
+        beginReview(next);
+    };
+    const reviewForm = reviewTarget && <PassageReview key={reviewTarget.requestId}
+        audioId={audioId} target={reviewTarget.passage}
+        speakers={[...new Set([...detectedSpeakers, ...Object.keys(speakerMappings), reviewTarget.passage.speaker].filter(Boolean))]}
+        mappings={speakerMappings} onSkip={handleReviewNavigation} onClose={()=>setReviewTarget(null)}
+        onReplay={()=>onPlayFrom(Math.max(0,reviewTarget.time-1))}
+        onSaved={(updated, warning)=>{
+            const pending=getReviewPassages(updated);
+            setReviewMessage(warning || (pending.length ? 'Passage review saved.' : 'All passages reviewed.'));
+            const next=pending.find(p=>p.start>=reviewTarget.time) ?? pending[0];
+            if (next) beginReview(next); else setReviewTarget(null);
+        }} />;
     if (!transcript) return null;
 
     return (
@@ -295,7 +302,7 @@ export function TranscriptSection({
             {transcript.metadata?.text_status === 'needs_review' && (
                 <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text needs review: no usable text was returned. This recording has not been verified as silence.</p>
             )}
-            {transcript.metadata?.text_status !== 'needs_review' && ['uncertain', 'failed'].includes(transcript.metadata?.diarization_status || '') && (
+            {transcript.metadata?.text_status !== 'needs_review' && (['uncertain', 'failed'].includes(transcript.metadata?.diarization_status || '') || transcript.metadata?.word_refinement_status === 'applied_needs_review') && (
                 <div role="status" className="mb-4 text-sm text-[var(--text-secondary)]">
                     <p>Text ready · speakers need review. {unlabelledWordCount > 0
                         ? `${unlabelledWordCount} of ${transcript.word_segments!.length} words have no speaker label. `
@@ -317,6 +324,9 @@ export function TranscriptSection({
             {transcript.metadata?.alignment_status === 'failed' && (
                 <p role="status" className="mb-4 text-sm text-[var(--text-secondary)]">Text recovered · alignment needs review. Word times come from the speech decoder.</p>
             )}
+            {reviewMessage && <p role="status" className="mb-2">{reviewMessage}</p>}
+            <div ref={reviewFallback} />
+            {reviewForm && reviewAnchor?.isConnected && createPortal(reviewForm, reviewAnchor)}
             <TranscriptEditor
                 audioId={audioId}
                 speakerMappings={speakerMappings}

@@ -451,3 +451,42 @@ test('marks a sentence onset inline and keeps a short reply on its own', async (
   await expect(passages.first().getByTitle('Speaker unclear')).toHaveText('Before');
   await expect(passages.nth(1)).toHaveText('Yeah.');
 });
+
+test('review an unclear passage inline, keep a reply separate and persist a still-unclear decision', async ({page}) => {
+  const transcript = {
+    text: "Hello it's like yes",
+    metadata: { text_status: 'ready', diarization_status: 'uncertain' },
+    segments: [
+      { start: 0, end: 1, text: 'Hello', speaker: 'SPEAKER_00', speaker_reviewed: false },
+      { start: 1, end: 2, text: "it's like", speaker: '', speaker_reviewed: false },
+      { start: 2, end: 3, text: 'yes', speaker: '', speaker_reviewed: false },
+    ],
+  };
+  let version = 1;
+  await page.route('**/api/v1/transcription/1/transcript',route=>route.fulfill({json:{available:true,transcript}}));
+  await page.route('**/api/v1/transcription/1/transcript/editor', async route=>{
+    if(route.request().method()==='PUT'){
+      const body=route.request().postDataJSON();
+      expect(body.expected_version).toBe(String(version));
+      const r=body.passage_review;
+      const seg=transcript.segments[r.segment];
+      expect(r.original).toBe(seg.text);
+      Object.assign(seg,{text:r.text,speaker:r.speaker,speaker_reviewed:true});
+      version++;
+    }
+    return route.fulfill({json:{version:String(version),transcript}});
+  });
+  await page.goto('/audio/1');
+  await page.getByRole('button',{name:'Review next unclear passage'}).click();
+  const form=page.locator('[data-review-target="true"]').getByRole('form',{name:'Review passage'});
+  await expect(form.getByLabel('Passage words')).toHaveValue("it's like");
+  await form.getByLabel('Passage words').fill("it’s like");
+  await form.getByLabel('Passage speaker').selectOption('SPEAKER_00');
+  await form.getByRole('button',{name:'Save correction'}).click();
+  await expect(form.getByLabel('Passage words')).toHaveValue('yes');
+  await form.getByRole('button',{name:'Mark reviewed and unclear'}).click();
+  await expect(page.getByText('All passages reviewed.',{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button',{name:'Review next unclear passage'})).toHaveCount(0);
+  expect(transcript.segments.map(s=>[s.speaker,s.text])).toEqual([['SPEAKER_00','Hello'],['SPEAKER_00','it’s like'],['','yes']]);
+});

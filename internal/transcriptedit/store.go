@@ -21,6 +21,7 @@ var (
 )
 
 type Request struct {
+	PassageReview   *PassageReview  `json:"passage_review"`
 	ExpectedVersion string          `json:"expected_version"`
 	SegmentTexts    []string        `json:"segment_texts"`
 	Text            *string         `json:"text"`
@@ -125,7 +126,7 @@ func (s Store) Save(ctx context.Context, jobID string, request Request) (Documen
 		var restoreDiarization *bool
 		var next string
 		if request.RestoreID != nil {
-			if request.Text != nil || request.SegmentTexts != nil || request.SegmentParts != nil {
+			if request.Text != nil || request.SegmentTexts != nil || request.SegmentParts != nil || request.PassageReview != nil {
 				return ErrInvalid
 			}
 			var r models.TranscriptRevision
@@ -146,7 +147,9 @@ func (s Store) Save(ctx context.Context, jobID string, request Request) (Documen
 			restoreDiarization = r.DiarizationRequested
 			next = r.Transcript
 		} else {
-			if request.SegmentParts != nil {
+			if request.PassageReview != nil {
+				kind = "passage_review"
+			} else if request.SegmentParts != nil {
 				kind = "speaker_edit"
 			}
 			next, err = apply(previous, request)
@@ -238,6 +241,12 @@ func (s Store) Save(ctx context.Context, jobID string, request Request) (Documen
 }
 
 func apply(raw string, request Request) (string, error) {
+	if request.PassageReview != nil {
+		if request.SegmentParts != nil || request.SegmentTexts != nil || request.Text != nil {
+			return "", ErrInvalid
+		}
+		return applyPassage(raw, *request.PassageReview)
+	}
 	if request.SegmentParts != nil {
 		return applyParts(raw, request)
 	}

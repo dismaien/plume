@@ -851,6 +851,11 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     audioId={audioId}
                                     currentTime={currentTime}
                                     onSeek={handleSeek}
+                                    onPlayFrom={(time) => {
+                                        handleSeek(time);
+                                        const player = audioPlayerRef.current;
+                                        if (player && !player.isPlaying()) player.playPause();
+                                    }}
                                     transcript={transcript}
                                     speakerMappings={speakerMappings}
                                     transcriptMode={transcriptMode}

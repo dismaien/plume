@@ -1155,7 +1155,11 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 														</>
 													);
 												})()}
-											</div>
+											{(file.has_transcript || file.status === 'uploaded') && <>
+                                                    <span aria-hidden="true">·</span>
+                                                    <span>{file.has_transcript ? 'Transcribed' : 'Awaiting transcription'}</span>
+                                                </>}
+                                            </div>
 										</div>
 									</div>
 

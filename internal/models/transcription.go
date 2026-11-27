@@ -48,8 +48,9 @@ type TranscriptionJob struct {
 	Parameters WhisperXParams `json:"parameters" gorm:"embedded"`
 
 	// Computed fields (not persisted)
-	HasAudio bool  `json:"has_audio" gorm:"-"`
-	Duration int64 `json:"duration,omitempty" gorm:"-"` // Recording duration in milliseconds
+	HasTranscript *bool `json:"has_transcript,omitempty" gorm:"-"`
+	HasAudio      bool  `json:"has_audio" gorm:"-"`
+	Duration      int64 `json:"duration,omitempty" gorm:"-"` // Recording duration in milliseconds
 
 	// Relationships
 	MultiTrackFiles []MultiTrackFile `json:"multi_track_files,omitempty" gorm:"foreignKey:TranscriptionJobID"`
