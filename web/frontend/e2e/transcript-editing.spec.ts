@@ -490,3 +490,34 @@ test('review an unclear passage inline, keep a reply separate and persist a stil
   await expect(page.getByRole('button',{name:'Review next unclear passage'})).toHaveCount(0);
   expect(transcript.segments.map(s=>[s.speaker,s.text])).toEqual([['SPEAKER_00','Hello'],['SPEAKER_00','it’s like'],['','yes']]);
 });
+
+test('independent wording differences open the correct speaker turn without applying a suggestion', async ({ page }) => {
+  const transcript = {
+    text: 'Ja. Yeah. Das klappt.',
+    segments: [
+      { start: 0, end: 1, text: 'Ja.', speaker: 'A' },
+      { start: 1, end: 1.5, text: 'Yeah.', speaker: 'B' },
+      { start: 1.5, end: 4, text: 'Das klappt.', speaker: 'A' },
+    ],
+    wording_check: { status: 'complete', checked: 1, differences: [
+      { start: 0, end: 4, target: 1.25, original: 'Ja. Yeah. Das klappt.', alternative: 'Ja. Das klappt.' },
+      { start: 0, end: 4, target: 2, original: 'Das klappt.', alternative: 'Das klappt schon.' },
+    ] },
+  };
+  await page.route('**/api/v1/transcription/1/transcript', route => route.fulfill({ json: { available: true, transcript } }));
+  await page.route('**/api/v1/transcription/1/transcript/editor', route => {
+    expect(route.request().method()).toBe('GET');
+    return route.fulfill({ json: { version: 'v0', transcript } });
+  });
+  await page.goto('/audio/1');
+  await page.getByText('Wording check · 2 differences').click();
+  const check = page.locator('details').filter({ hasText: 'Second pass' });
+  await expect(check).toContainText('Ja. Das klappt.');
+  await check.getByRole('button', { name: 'Next' }).click();
+  await expect(check).toContainText('Das klappt schon.');
+  await check.getByRole('button', { name: 'Previous' }).click();
+  await check.getByRole('button', { name: 'Edit passage' }).click();
+  const reply = check.getByRole('textbox', { name: 'Passage words' });
+  await expect(check.getByRole('button', { name: 'Save correction' })).toBeDisabled();
+  await expect(reply).toHaveValue('Yeah.');
+});

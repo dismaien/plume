@@ -143,6 +143,12 @@ Quill works out of the box with sensible defaults. Customize with environment va
 | `TRANSCRIPTION_BACKEND` | `whisperx` | Transcription backend (`whisperx`, `mlx_whisper`, `whisper_cpp`). Auto-detected as `mlx_whisper` on Apple Silicon. |
 | `WHISPER_MODEL` | `small` | Whisper model to pre-download during warmup (e.g. `small`, `large-v3-turbo`) |
 
+### Independent wording check
+
+Run `scripts/setup-wording-check.sh` once to install Qwen3-ASR for the macOS desktop app. For a server, pass its `WHISPERX_ENV` directory to the script. Setup requires `uv` and downloads the model. Subsequent checks run locally.
+
+New original-language transcriptions compare short excerpts of the source audio with a second reading. Open **Wording check** in the transcript to listen to a difference and edit the passage. The comparison preserves the first pass, including speaker changes and word times. Reruns of existing transcripts go to edit history for review.
+
 ## License
 
 Open source. See [LICENSE](LICENSE) for details.

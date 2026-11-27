@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { useTranscriptSearch } from "@/features/transcription/hooks/useTranscriptSearch";
 import { TranscriptSearchBar } from "@/components/transcript/TranscriptSearchBar";
 
+import { WordingCheck } from './WordingCheck';
 import { PassageReview } from './PassageReview';
 import { getReviewPassages, samePassage, type ReviewPassage } from './passage-review';
 
@@ -327,6 +328,10 @@ export function TranscriptSection({
             {reviewMessage && <p role="status" className="mb-2">{reviewMessage}</p>}
             <div ref={reviewFallback} />
             {reviewForm && reviewAnchor?.isConnected && createPortal(reviewForm, reviewAnchor)}
+            {transcript.wording_check && <WordingCheck key={audioId} audioId={audioId} transcript={transcript} report={transcript.wording_check}
+                onListen={onPlayFrom} onEdit={time => setEditTarget({
+                    requestId: ++reviewRequestId.current, startTime: time, selectedText: '',
+                })} />}
             <TranscriptEditor
                 audioId={audioId}
                 speakerMappings={speakerMappings}

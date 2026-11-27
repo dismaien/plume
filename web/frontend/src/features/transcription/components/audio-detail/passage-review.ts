@@ -12,7 +12,7 @@ export interface ReviewPassage {
 }
 
 // Keep separate turns at the same displayed second distinct by their source indices.
-export function getReviewPassages(t: Transcript): ReviewPassage[] {
+export function getReviewPassages(t: Transcript, wordingOnly = false): ReviewPassage[] {
     const segments = t.segments ?? [];
     const words = t.word_segments ?? [];
     const items = words.length ? words : segments;
@@ -47,13 +47,16 @@ export function getReviewPassages(t: Transcript): ReviewPassage[] {
             nearestDistance = distance;
             nearest = part;
         }
-        if (item.speaker_reviewed || (item.speaker && !item.speaker_review)) continue;
+        if (!wordingOnly && (item.speaker_reviewed || (item.speaker && !item.speaker_review))) continue;
         const prev = result[result.length - 1];
         if (
             words.length &&
             prev?.segment === part.segment &&
             prev.last_word === i - 1 &&
             prev.speaker === part.speaker &&
+            (!wordingOnly || (words[i - 1].speaker_review === item.speaker_review &&
+                words[i - 1].speaker_reviewed === item.speaker_reviewed &&
+                words[i - 1].speaker_name === item.speaker_name)) &&
             part.start <= prev.end + 0.75
         ) {
             prev.original += ' ' + part.original;
@@ -61,7 +64,7 @@ export function getReviewPassages(t: Transcript): ReviewPassage[] {
             prev.end = Math.max(prev.end, part.end);
         } else result.push(part);
     }
-    if (nearest && Number.isFinite(cue) && cue >= 0) {
+    if (!wordingOnly && nearest && Number.isFinite(cue) && cue >= 0) {
         const cueItem = nearest;
         const existing = result.find(
             (p) =>

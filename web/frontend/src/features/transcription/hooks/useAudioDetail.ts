@@ -92,7 +92,15 @@ export interface TranscriptSegment {
     speaker_name?: string;
 }
 
+export interface WordingReport {
+    status: 'complete' | 'unavailable' | 'failed';
+    checked: number;
+    incomplete?: number;
+    differences?: { start: number; end: number; target: number; original: string; alternative: string }[];
+}
+
 export interface Transcript {
+    wording_check?: WordingReport;
     metadata?: Record<string, string>;
     text: string;
     segments?: TranscriptSegment[];
@@ -148,6 +156,7 @@ export function useTranscript(audioId: string, enabled: boolean) {
                     segments: data.transcript.segments,
                     word_segments: data.transcript.word_segments,
                     metadata: data.transcript.metadata,
+                    wording_check: data.transcript.wording_check,
                 } as Transcript;
             } else if (data.transcript.segments) {
                 const fullText = data.transcript.segments
@@ -159,6 +168,7 @@ export function useTranscript(audioId: string, enabled: boolean) {
                     segments: data.transcript.segments,
                     word_segments: data.transcript.word_segments,
                     metadata: data.transcript.metadata,
+                    wording_check: data.transcript.wording_check,
                 } as Transcript;
             }
 

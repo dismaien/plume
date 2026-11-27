@@ -149,6 +149,9 @@ func (s Store) Save(ctx context.Context, jobID string, request Request) (Documen
 		} else {
 			if request.PassageReview != nil {
 				kind = "passage_review"
+				if request.PassageReview.WordingOnly {
+					kind = "edit"
+				}
 			} else if request.SegmentParts != nil {
 				kind = "speaker_edit"
 			}

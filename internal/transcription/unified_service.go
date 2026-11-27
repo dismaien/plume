@@ -573,6 +573,18 @@ func (u *UnifiedTranscriptionService) processSingleTrackJob(ctx context.Context,
 			}
 		}
 
+		if job.Parameters.Task != "translate" && (strings.TrimSpace(transcriptResult.Text) != "" || len(transcriptResult.Segments) > 0 || len(transcriptResult.WordSegments) > 0) {
+			check, checkErr := u.checkWording(ctx, processingAudioPath, transcriptResult)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if checkErr != nil {
+				logger.Warn("Independent wording check failed", "job_id", job.ID, "error", checkErr)
+				check = &interfaces.WordingCheck{Status: "failed"}
+			}
+			transcriptResult.WordingCheck = check
+		}
+
 		if err := u.saveTranscriptionResults(job.ID, transcriptResult, audioInput.Duration.Milliseconds()); err != nil {
 			return fmt.Errorf("failed to save transcription results: %w", err)
 		}

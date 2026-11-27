@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"quill/internal/models"
@@ -113,5 +114,37 @@ func TestReviewOverlappingRepliesStayWithTheirOwnSegment(t *testing.T) {
 	}
 	if doc.Text != "Yeah. Yes." || len(doc.Segments) != 2 || doc.Segments[0]["speaker"] != "A" || doc.Segments[1]["speaker"] != "B" {
 		t.Fatal(next)
+	}
+}
+
+func TestWordingCorrectionPreservesRepliesAndSpeakerReview(t *testing.T) {
+	raw := `{"text":"Ja gut. Yeah. Ja.","segments":[{"start":0,"end":4,"text":"Ja gut. Yeah. Ja.","speaker":"A"}],"word_segments":[{"word":"Ja","start":0,"end":0.4,"speaker":"A","score":0.99},{"word":"gut.","start":0.5,"end":1,"speaker":"A"},{"word":"Yeah.","start":1.1,"end":1.4,"speaker":"B","speaker_reviewed":true},{"word":"Ja.","start":1.5,"end":2,"speaker":"A","speaker_review":true}]}`
+	a, b := 0, 1
+	request := PassageReview{WordingOnly: true, Segment: 0, FirstWord: &a, LastWord: &b, Original: "Ja gut.", Text: "Ja sehr gut."}
+	updated, err := applyPassage(raw, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type snapshot struct {
+		Text     string
+		Words    []reviewItem `json:"word_segments"`
+		Segments []reviewItem
+	}
+	var before, after snapshot
+	if err = json.Unmarshal([]byte(raw), &before); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(updated), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Text != "Ja sehr gut. Yeah. Ja." || len(after.Segments) != 1 || after.Segments[0]["speaker"] != "A" ||
+		!reflect.DeepEqual(after.Words[0], before.Words[0]) || !reflect.DeepEqual(after.Words[2:], before.Words[1:]) ||
+		after.Words[1]["speaker"] != "A" || after.Words[1]["speaker_reviewed"] != nil {
+		t.Fatalf("Unexpected correction: %s", updated)
+	}
+	b = 2
+	request.Original = "Ja gut. Yeah."
+	if _, err = applyPassage(raw, request); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Expected conflict at speaker boundary, got %v", err)
 	}
 }

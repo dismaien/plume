@@ -74,8 +74,25 @@ type TranscriptWord struct {
 	Speaker       *string `json:"speaker,omitempty"`
 }
 
-// TranscriptResult represents the output of transcription
+// WordingDifference retains both readings with their location in the source audio.
+type WordingDifference struct {
+	Start       float64 `json:"start"`
+	End         float64 `json:"end"`
+	Target      float64 `json:"target"`
+	Original    string  `json:"original"`
+	Alternative string  `json:"alternative"`
+}
+
+type WordingCheck struct {
+	Status      string              `json:"status"`
+	Checked     int                 `json:"checked"`
+	Incomplete  int                 `json:"incomplete,omitempty"`
+	Differences []WordingDifference `json:"differences,omitempty"`
+}
+
+// TranscriptResult represents the output of transcription.
 type TranscriptResult struct {
+	WordingCheck   *WordingCheck       `json:"wording_check,omitempty"`
 	Diarization    *DiarizationResult  `json:"diarization_result,omitempty"`
 	Text           string              `json:"text"`
 	Language       string              `json:"language"`

@@ -3,6 +3,7 @@ package transcriptedit
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -10,13 +11,14 @@ import (
 )
 
 type PassageReview struct {
-	Segment   int    `json:"segment"`
-	FirstWord *int   `json:"first_word"`
-	LastWord  *int   `json:"last_word"`
-	Original  string `json:"original"`
-	Text      string `json:"text"`
-	Speaker   string `json:"speaker"`
-	Cue       bool   `json:"cue"`
+	WordingOnly bool   `json:"wording_only,omitempty"`
+	Segment     int    `json:"segment"`
+	FirstWord   *int   `json:"first_word"`
+	LastWord    *int   `json:"last_word"`
+	Original    string `json:"original"`
+	Text        string `json:"text"`
+	Speaker     string `json:"speaker"`
+	Cue         bool   `json:"cue"`
 }
 
 type reviewItem = map[string]any
@@ -136,7 +138,9 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 		if len(words) > 0 || seg == nil || r.FirstWord != nil || r.LastWord != nil || strings.TrimSpace(valueText(seg, "text")) != original {
 			return "", ErrInvalid
 		}
-		reviewed(seg, speaker)
+		if !r.WordingOnly {
+			reviewed(seg, speaker)
+		}
 		if original != text {
 			seg["text"] = text
 			clearAlignment(seg)
@@ -177,37 +181,51 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 				return "", ErrInvalid
 			}
 			splitStart, splitEnd := math.Max(start, ss), math.Min(end, sectionEnd)
-			parts := []reviewItem{}
-			center := copied(seg)
-			clearAlignment(center)
-			reviewed(center, speaker)
-			if strings.TrimSpace(before) != "" {
-				left := copied(seg)
-				clearAlignment(left)
-				left["text"] = before
-				left["end"] = splitStart
-				parts = append(parts, left)
-				center["start"] = splitStart
-				before = ""
+			if r.WordingOnly {
+				seg["text"] = before + text + after
+				clearAlignment(seg)
+			} else {
+				parts := []reviewItem{}
+				center := copied(seg)
+				clearAlignment(center)
+				reviewed(center, speaker)
+				if strings.TrimSpace(before) != "" {
+					left := copied(seg)
+					clearAlignment(left)
+					left["text"] = before
+					left["end"] = splitStart
+					parts = append(parts, left)
+					center["start"] = splitStart
+					before = ""
+				}
+				if strings.TrimSpace(after) != "" {
+					center["end"] = splitEnd
+				}
+				center["text"] = before + text
+				if strings.TrimSpace(after) == "" {
+					center["text"] = before + text + after
+				}
+				parts = append(parts, center)
+				if strings.TrimSpace(after) != "" {
+					right := copied(seg)
+					clearAlignment(right)
+					right["text"] = after
+					right["start"] = splitEnd
+					parts = append(parts, right)
+				}
+				segs = slices.Replace(segs, r.Segment, r.Segment+1, parts...)
 			}
-			if strings.TrimSpace(after) != "" {
-				center["end"] = splitEnd
-			}
-			center["text"] = before + text
-			if strings.TrimSpace(after) == "" {
-				center["text"] = before + text + after
-			}
-			parts = append(parts, center)
-			if strings.TrimSpace(after) != "" {
-				right := copied(seg)
-				clearAlignment(right)
-				right["text"] = after
-				right["start"] = splitEnd
-				parts = append(parts, right)
-			}
-			segs = slices.Replace(segs, r.Segment, r.Segment+1, parts...)
 		}
-		if original == text {
+		if r.WordingOnly {
+			if original == text {
+				return raw, nil
+			}
+			updated, err := replaceWording(words[first:last+1], strings.Fields(text))
+			if err != nil {
+				return "", err
+			}
+			words = slices.Replace(words, first, last+1, updated...)
+		} else if original == text {
 			for _, w := range words[first : last+1] {
 				reviewed(w, speaker)
 			}
@@ -260,7 +278,7 @@ func applyPassage(raw string, r PassageReview) (string, error) {
 		}
 		doc["text"], _ = json.Marshal(full)
 	}
-	if r.Cue {
+	if r.Cue && !r.WordingOnly {
 		var m map[string]string
 		if json.Unmarshal(doc["metadata"], &m) == nil && m != nil {
 			delete(m, "speaker_review_start")
@@ -277,4 +295,60 @@ func clearAlignment(s reviewItem) {
 	for _, k := range []string{"words", "tokens", "chars"} {
 		delete(s, k)
 	}
+}
+
+// Retain the exact timing and attribution of matching words on either side of a
+// correction. Inserted words inherit the selected turn, never a nearby reply.
+func replaceWording(words []reviewItem, tokens []string) ([]reviewItem, error) {
+	first := words[0]
+	for _, w := range words {
+		for _, key := range []string{"speaker", "speaker_name", "speaker_review", "speaker_reviewed"} {
+			if !reflect.DeepEqual(w[key], first[key]) {
+				return nil, ErrConflict
+			}
+		}
+	}
+	left, right := 0, 0
+	for left < len(words) && left < len(tokens) && strings.TrimSpace(valueText(words[left], "word")) == tokens[left] {
+		left++
+	}
+	for right < len(words)-left && right < len(tokens)-left &&
+		strings.TrimSpace(valueText(words[len(words)-1-right], "word")) == tokens[len(tokens)-1-right] {
+		right++
+	}
+	old := words[left : len(words)-right]
+	middle := tokens[left : len(tokens)-right]
+	start, _ := first["start"].(float64)
+	end, _ := words[len(words)-1]["end"].(float64)
+	if left > 0 {
+		start, _ = words[left-1]["end"].(float64)
+	}
+	if right > 0 {
+		end, _ = words[len(words)-right]["start"].(float64)
+	}
+	if len(old) > 0 {
+		start, _ = old[0]["start"].(float64)
+		end, _ = old[len(old)-1]["end"].(float64)
+	}
+	if end < start {
+		end = start
+	}
+	out := slices.Clone(words[:left])
+	for i, token := range middle {
+		var w reviewItem
+		if len(old) == len(middle) {
+			w = copied(old[i])
+			delete(w, "score")
+		} else {
+			w = reviewItem{"start": start + (end-start)*float64(i)/float64(len(middle)), "end": start + (end-start)*float64(i+1)/float64(len(middle)), "timing_approximate": true}
+			for _, key := range []string{"speaker", "speaker_name", "speaker_review", "speaker_reviewed"} {
+				if v, ok := first[key]; ok {
+					w[key] = v
+				}
+			}
+		}
+		w["word"] = token
+		out = append(out, w)
+	}
+	return append(out, words[len(words)-right:]...), nil
 }

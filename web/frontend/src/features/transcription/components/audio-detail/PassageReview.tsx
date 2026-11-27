@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 
 export function PassageReview({
     audioId,
+    wordingOnly = false,
     target,
     speakers,
     mappings,
@@ -17,6 +18,7 @@ export function PassageReview({
     onReplay,
 }: {
     audioId: string;
+    wordingOnly?: boolean;
     target: ReviewPassage;
     speakers: string[];
     mappings: Record<string, string>;
@@ -54,14 +56,14 @@ export function PassageReview({
             const res = await fetch(endpoint, { headers: headers.current(), signal: controller.signal });
             if (!res.ok) throw Error('Could not open the saved passage.');
             const doc = await res.json();
-            if (!getReviewPassages(doc.transcript).some((p) => samePassage(p, target)))
+            if (!getReviewPassages(doc.transcript, wordingOnly).some((p) => samePassage(p, target)))
                 throw Error('This passage has changed. Close review and reopen the latest transcript.');
             setVersion(doc.version);
         })().catch((e) => {
             if (!controller.signal.aborted) setError(e.message);
         });
         return () => controller.abort();
-    }, [endpoint, target, attempt]);
+    }, [endpoint, target, attempt, wordingOnly]);
     const save = async (who: string) => {
         if (!version || busy || !text.trim()) return;
         setBusy(true);
@@ -72,7 +74,7 @@ export function PassageReview({
                 headers: { ...headers.current(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     expected_version: version,
-                    passage_review: { ...target, speaker: who, text: text.trim() },
+                    passage_review: { ...target, wording_only: wordingOnly, speaker: who, text: text.trim() },
                 }),
             });
             const doc = await res.json();
@@ -106,7 +108,7 @@ export function PassageReview({
             }}
         >
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong>Review passage</strong>
+                <strong>{wordingOnly ? 'Edit wording' : 'Review passage'}</strong>
                 <Button type="button" variant="ghost" size="sm" onClick={onReplay}>
                     Listen from here
                 </Button>
@@ -122,7 +124,7 @@ export function PassageReview({
                     className="mt-1 block w-full rounded border bg-transparent p-2"
                 />
             </label>
-            <label className="block">
+            {!wordingOnly && <label className="block">
                 Speaker
                 <select
                     aria-label="Passage speaker"
@@ -139,7 +141,7 @@ export function PassageReview({
                     ))}
                     <option value={newSpeakerOption}>Enter a name…</option>
                 </select>
-            </label>
+            </label>}
             {speaker === newSpeakerOption && (
                 <label className="block">
                     Speaker name
@@ -166,15 +168,15 @@ export function PassageReview({
                 <Button
                     type="submit"
                     size="sm"
-                    disabled={busy || !version || !text.trim() || !selectedSpeaker}
+                    disabled={busy || !version || !text.trim() || (wordingOnly ? text.trim() === target.original : !selectedSpeaker)}
                 >
                     {busy
                         ? 'Saving…'
-                        : speaker === target.speaker && text.trim() === target.original
+                        : !wordingOnly && speaker === target.speaker && text.trim() === target.original
                           ? 'Confirm speaker'
                           : 'Save correction'}
                 </Button>
-                <Button
+                {!wordingOnly && <Button
                     type="button"
                     size="sm"
                     variant="outline"
@@ -182,10 +184,10 @@ export function PassageReview({
                     onClick={() => void save('')}
                 >
                     Mark reviewed and unclear
-                </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onSkip}>
+                </Button>}
+                {!wordingOnly && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onSkip}>
                     Skip
-                </Button>
+                </Button>}
                 <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onClose}>
                     Close
                 </Button>
