@@ -851,7 +851,7 @@ export const AudioDetailView = function AudioDetailView({ audioId: propAudioId }
                                     audioId={audioId}
                                     currentTime={currentTime}
                                     onSeek={handleSeek}
-                                    onPlayFrom={(time) => {
+                                    onPlayFrom={(time: number) => {
                                         handleSeek(time);
                                         const player = audioPlayerRef.current;
                                         if (player && !player.isPlaying()) player.playPause();
