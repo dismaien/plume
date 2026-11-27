@@ -20,6 +20,7 @@ export class DuplicateUploadError extends Error {
 }
 
 export interface AudioFile {
+    has_transcript?: boolean;
     id: string;
     title?: string;
     status: "uploaded" | "pending" | "processing" | "completed" | "failed";
@@ -88,6 +89,7 @@ export function useAudioListInfinite(params: Omit<AudioListParams, 'page'>) {
         queryKey: ['audioFiles', 'infinite', params],
         queryFn: async ({ pageParam = 1 }) => {
             const searchParams = new URLSearchParams({
+                view: "overview",
                 page: pageParam.toString(),
                 limit: params.limit.toString(),
             });

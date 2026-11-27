@@ -72,6 +72,8 @@ export interface AudioFile {
 }
 
 export interface WordSegment {
+    speaker_review?: boolean;
+    speaker_reviewed?: boolean;
     start: number;
     end: number;
     word: string;
@@ -81,6 +83,8 @@ export interface WordSegment {
 }
 
 export interface TranscriptSegment {
+    speaker_review?: boolean;
+    speaker_reviewed?: boolean;
     start: number;
     end: number;
     text: string;
