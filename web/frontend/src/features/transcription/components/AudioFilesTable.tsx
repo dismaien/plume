@@ -1067,7 +1067,7 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 										e.dataTransfer.effectAllowed = "move";
 									}}
 									className={cn(
-										"group relative flex justify-between items-center p-4",
+										"group relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 p-4 sm:gap-x-4",
 										"bg-[var(--bg-elevated)] rounded-[var(--radius-btn)] border border-[var(--border-subtle)]",
 										"shadow-[var(--shadow-card)] hover:border-[var(--brand-solid)]/30 transition-all duration-200 cursor-pointer select-none",
 										rowSelection[file.id as keyof typeof rowSelection] && "border-[var(--brand-solid)] ring-1 ring-[var(--brand-solid)]/10 bg-[var(--brand-light)] dark:bg-[var(--accent)]"
@@ -1080,91 +1080,89 @@ export const AudioFilesTable = memo(function AudioFilesTable({
 									onTouchMove={handleTouchMove}
 									onTouchEnd={clearLongPress}
 								>
-									<div className="flex items-center gap-4 min-w-0 transition-[padding] duration-200">
-										{/* Icon (Tinted Pastel Square) - Lighter Shade */}
-										<div className="flex-shrink-0 w-12 h-12 flex items-center justify-center rounded-[var(--radius-btn)] bg-[var(--bg-card)] text-[var(--brand-solid)] transition-opacity duration-200 border border-[var(--border-subtle)]">
-											<FileAudio className="h-6 w-6" strokeWidth={2} />
-										</div>
+									{/* Icon (Tinted Pastel Square) - Lighter Shade */}
+									<div className="row-span-2 self-start w-12 h-12 flex items-center justify-center rounded-[var(--radius-btn)] bg-[var(--bg-card)] text-[var(--brand-solid)] transition-opacity duration-200 border border-[var(--border-subtle)]">
+										<FileAudio className="h-6 w-6" strokeWidth={2} />
+									</div>
 
-										{/* Text */}
-										<div className="min-w-0">
-											<div className="flex items-center gap-2">
-												<h4 className="recording-title text-[var(--text-primary)] truncate text-[1.02rem] sm:text-[1.1rem] group-hover:text-[var(--brand-solid)] transition-colors">
-													{file.title || getFileName(file.audio_path)}
-												</h4>
-												{/* Speaker attention badges */}
-												{(() => {
-													const attention = speakerAttention[file.id];
-													const pending = pendingSuggestions[file.id] ?? 0;
-													if (!attention && pending === 0) return null;
+									{/* The title spans the card, with actions alongside the metadata below. */}
+									<div className="col-start-2 col-end-4 row-start-1 flex min-w-0 items-start gap-2">
+										<h4 className="recording-title min-w-0 whitespace-normal [overflow-wrap:anywhere] text-[var(--text-primary)] text-[1.02rem] sm:text-[1.1rem] group-hover:text-[var(--brand-solid)] transition-colors">
+											{file.title || getFileName(file.audio_path)}
+										</h4>
+										{/* Speaker attention badges */}
+										{(() => {
+											const attention = speakerAttention[file.id];
+											const pending = pendingSuggestions[file.id] ?? 0;
+											if (!attention && pending === 0) return null;
 
-													const totalMappings = attention?.total_mappings ?? 0;
-													const renamedCount = attention?.renamed ?? 0;
-													const suggestCount = pending || (attention?.pending_suggestions ?? 0);
-													const unidentifiedCount = Math.max(0, totalMappings - renamedCount - suggestCount);
+											const totalMappings = attention?.total_mappings ?? 0;
+											const renamedCount = attention?.renamed ?? 0;
+											const suggestCount = pending || (attention?.pending_suggestions ?? 0);
+											const unidentifiedCount = Math.max(0, totalMappings - renamedCount - suggestCount);
 
-													return (
-														<>
-															{renamedCount > 0 && (
-																<Tooltip>
-																	<TooltipTrigger asChild>
-																		<span className="flex-shrink-0 inline-flex items-center text-[var(--brand-solid)] animate-in fade-in duration-300">
-																			<InkDropFilled className="w-4 h-5" count={renamedCount} />
-																		</span>
-																	</TooltipTrigger>
-																	<TooltipContent>
-																		{renamedCount === 1
-																			? "1 speaker identified"
-																			: `${renamedCount} speakers identified`}
-																	</TooltipContent>
-																</Tooltip>
-															)}
-															{unidentifiedCount > 0 && (
-																<Tooltip>
-																	<TooltipTrigger asChild>
-																		<span className="flex-shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500 animate-in fade-in duration-300">
-																			<InkDropEmpty className="w-4 h-5" count={unidentifiedCount} />
-																		</span>
-																	</TooltipTrigger>
-																	<TooltipContent>
-																		{unidentifiedCount === 1
-																			? "1 speaker unidentified"
-																			: `${unidentifiedCount} speakers unidentified`}
-																	</TooltipContent>
-																</Tooltip>
-															)}
-															{suggestCount > 0 && (
-																<SpeakerSuggestionPopover
-																	jobId={file.id}
-																	count={suggestCount}
-																/>
-															)}
-														</>
-													);
-												})()}
-											</div>
-											<div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
-												{formatRecordingOverviewDateTime(file.recorded_at, file.created_at, file.title)}
-												{(() => {
-													const formattedDuration = formatRecordingDuration(file.duration || durationFromTitle(file.title));
-													if (!formattedDuration) return null;
-													return (
-														<>
-															<span className="w-1 h-1 rounded-full bg-current opacity-45" />
-															<span>{formattedDuration}</span>
-														</>
-													);
-												})()}
-											{(file.has_transcript || file.status === 'uploaded') && <>
-                                                    <span aria-hidden="true">·</span>
-                                                    <span>{file.has_transcript ? 'Transcribed' : 'Awaiting transcription'}</span>
-                                                </>}
-                                            </div>
-										</div>
+											return (
+												<>
+													{renamedCount > 0 && (
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<span className="flex-shrink-0 inline-flex items-center text-[var(--brand-solid)] animate-in fade-in duration-300">
+																	<InkDropFilled className="w-4 h-5" count={renamedCount} />
+																</span>
+															</TooltipTrigger>
+															<TooltipContent>
+																{renamedCount === 1
+																	? "1 speaker identified"
+																	: `${renamedCount} speakers identified`}
+															</TooltipContent>
+														</Tooltip>
+													)}
+													{unidentifiedCount > 0 && (
+														<Tooltip>
+															<TooltipTrigger asChild>
+																<span className="flex-shrink-0 inline-flex items-center text-zinc-400 dark:text-zinc-500 animate-in fade-in duration-300">
+																	<InkDropEmpty className="w-4 h-5" count={unidentifiedCount} />
+																</span>
+															</TooltipTrigger>
+															<TooltipContent>
+																{unidentifiedCount === 1
+																	? "1 speaker unidentified"
+																	: `${unidentifiedCount} speakers unidentified`}
+															</TooltipContent>
+														</Tooltip>
+													)}
+													{suggestCount > 0 && (
+														<SpeakerSuggestionPopover
+															jobId={file.id}
+															count={suggestCount}
+														/>
+													)}
+												</>
+											);
+										})()}
+									</div>
+									<div className="col-start-2 row-start-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
+										{formatRecordingOverviewDateTime(file.recorded_at, file.created_at, file.title)}
+										{(() => {
+											const formattedDuration = formatRecordingDuration(file.duration || durationFromTitle(file.title));
+											if (!formattedDuration) return null;
+											return (
+												<>
+													<span className="w-1 h-1 rounded-full bg-current opacity-45" />
+													<span>{formattedDuration}</span>
+												</>
+											);
+										})()}
+										{(file.has_transcript || file.status === 'uploaded') && (
+											<>
+												<span aria-hidden="true">·</span>
+												<span>{file.has_transcript ? 'Transcribed' : 'Awaiting transcription'}</span>
+											</>
+										)}
 									</div>
 
 									{/* Right: Cluster (Actions • Status) */}
-									<div className="flex items-center gap-6">
+									<div className="col-start-3 row-start-2 flex items-center gap-2 sm:gap-4">
 										{/* Desktop Actions (Hover) - Hidden on mobile */}
 										<div
 											className="hidden md:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
